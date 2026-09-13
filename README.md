@@ -136,6 +136,26 @@ zlib + CRC，解码 = inflate + 反滤波），仓库因此不引图像库。
 > DeepSeek 的鲸鱼是 DeepSeek 的商标，`@lobehub/icons` 只提供矢量/位图文件（MIT）。
 > 自己用没问题；若要公开分发，商标那关得自己把握。
 
+### 发布新版本（GitHub Actions）
+
+推一个 `v*` 标签，CI 就会打包并创建 Release **草稿**：
+
+```powershell
+npm version patch        # 改版本号 + 提交 + 打标签 v0.1.1
+git push --follow-tags   # 提交与标签一起推
+```
+
+等一两分钟，到仓库的 Releases 页面看一眼草稿（`DSH Console Setup x.y.z.exe` 安装包、
+便携版、`latest.yml` 与 `.blockmap`），确认后点发布即可 —— 草稿是 electron-builder 的默认行为，
+留给人过一眼。
+
+在 Actions 页面**手动触发** `release` 工作流则只构建、不发版，产物挂在这次运行的
+Artifacts 里 —— 用来验证流水线，不会污染 Releases。
+
+工作流在 `.github/workflows/release.yml`，两个要点：runner 必须是 `windows-latest`
+（node-pty 是原生模块，只能在本平台编），以及 **不要**加 `--config.npmRebuild=false`
+（runner 上有 C++ 工具链，让 electron-builder 对着打包用的 Electron 版本重编才对）。
+
 ### 覆盖升级
 
 **给别人新版安装包，对方直接装就是原地覆盖**，不会新开目录 —— 这是 electron-builder

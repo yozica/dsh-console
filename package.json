@@ -52,6 +52,13 @@
     "appId": "com.dsh.console",
     "productName": "DSH Console",
     "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "yozica",
+        "repo": "dsh-console"
+      }
+    ],
     "asarUnpack": [
       "**/node_modules/node-pty/**"
     ],

@@ -1,0 +1,78 @@
+# 发布新版本：打一个 v* 标签，这里自动打包并创建一个 Release 草稿。
+#
+# 日常用法（本地跑这两条，剩下交给 CI）：
+#   npm version patch          # 改版本号 + 提交 + 打 v0.1.1 标签
+#   git push --follow-tags     # 把提交和标签一起推上去
+#
+# 然后在仓库的 Releases 页面会看到一个 **草稿**（electron-builder 默认发草稿，
+# 留给人过一眼再点发布）。产物包含：
+#   DSH Console Setup x.y.z.exe     NSIS 安装包（给别人覆盖升级用这个）
+#   DSH Console x.y.z.exe           便携版
+#   latest.yml + *.blockmap         更新元数据（差分下载用；现在没接自动更新，先留着）
+#
+# 在 Actions 页面手动触发时**只构建不发 Release**（用来验证流水线），
+# 产物可以从这次运行的 Artifacts 里下载。
+#
+# 说明：Windows 目标必须在 Windows 上打包（node-pty 是原生模块），所以 runner 是
+# windows-latest；原生模块由 electron-builder 自动对着打包用的 Electron 版本重编，
+# 所以这里**不要**加 --config.npmRebuild=false（runner 上有 C++ 工具链）。
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 自检
+        run: npm test
+
+      # 打标签时发布到 Release；手动触发时只构建（--publish never）
+      - name: 打包
+        shell: pwsh
+        run: |
+          npm run build
+          # 写成 if 语句而不是 `$x = if (...)`：后者是 PowerShell 7 的写法
+          $publish = 'never'
+          if ($env:GITHUB_REF -like 'refs/tags/*') { $publish = 'always' }
+          Write-Host "electron-builder --publish $publish"
+          npx electron-builder --win --publish $publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 列出产物
+        shell: pwsh
+        run: |
+          Get-ChildItem release -File |
+            Where-Object { $_.Extension -in '.exe', '.yml', '.blockmap' } |
+            ForEach-Object { "{0,-40} {1,5} MB" -f $_.Name, [int]($_.Length / 1MB) }
+
+      # 手动触发时把产物挂到这次运行上，方便下载试用
+      - name: 上传产物（仅手动触发）
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-console-windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          retention-days: 7
