@@ -1,0 +1,21 @@
+# 依赖与产物
+node_modules/
+dist/
+release/
+.npm-cache/
+.electron-cache/
+.downloads/
+.verify/
+.verify-userdata/
+*.log
+
+# 打包时留下的调试配置（electron-builder 每次生成）
+builder-debug.yml
+builder-effective-config.yaml
+
+# 编辑器
+.vscode/
+.idea/
+
+# 开发这个仓库时用的临时工具与截图（不属于应用本身）
+.dsh/

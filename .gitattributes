@@ -1,0 +1,8 @@
+# 统一换行符：仓库里存 LF，检出时不要自动改成 CRLF
+# （否则每次换机器都会看到一堆"整文件被改动"的假 diff）
+* text=auto eol=lf
+
+# 二进制资源
+*.png binary
+*.ico binary
+*.exe binary

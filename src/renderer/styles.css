@@ -1,0 +1,1509 @@
+/* ============================================================================
+   DSH Console — 样式表
+
+   设计计划（第二版）：
+     · 层次：4 级表面（页底 / 面板 / 抬升 / 下沉井）+ 半透明发丝线；
+       阴影只用在唯一那块焦点卡上 —— 避免「每张卡片同款阴影」那套模板味
+     · 圆角分级表达层级：容器 14 / 内嵌面板 10 / 控件 8 / 状态 pill 全圆
+     · 强调色只用于交互（主操作、焦点、选中）；状态另有一套语义色，色相互不相撞
+     · 字体：IBM Plex Sans（界面）+ IBM Plex Mono（机器输出的字节），随包分发
+     · 颜色只出现在下面两个变量块里（自检会查），组件一律 var()
+   ========================================================================== */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../../node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../../node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../../node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+
+:root {
+  /* 尺度与字体：主题无关 */
+  --t-xs: 11.5px;
+  --t-sm: 12.5px;
+  --t-md: 13.5px;
+  --t-lg: 15px;
+  --t-num: 22px;
+  --t-state: 22px;
+
+  --r-card: 14px;
+  --r-panel: 10px;
+  --r-control: 8px;
+  --rail-w: 188px;
+  --bar-h: 36px;
+  --dur: 140ms;
+
+  --sans: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* 表面：页底 → 面板 → 抬升 → 下沉井 */
+  --bg: #0a0c10;
+  --surface: #12151b;
+  --surface-2: #181c24;
+  --well: #0c0f14;
+  --rail: #0e1117;
+
+  /* 终端面板的底色与前景色：真正的值由 JS 按 xterm 主题写在容器上
+     （见 lib/xterm.js 的 applyTerminalSurface），这里是首帧兜底，
+     免得 JS 还没跑时闪一下错误的颜色。数值与 TERM_THEMES 对应。 */
+  --term-bg: #0b0e13;
+  --term-fg: #e6e9ef;
+
+  /* 半透明发丝线：比实心灰线干净得多 */
+  --hairline: rgba(255, 255, 255, 0.07);
+  --hairline-strong: rgba(255, 255, 255, 0.13);
+
+  /* 墨 */
+  --ink: #e8eaf0;
+  --ink-dim: #a3aabb;
+  --ink-faint: #767e90;
+
+  /* 交互强调色（青蓝） */
+  --accent: #22d3ee;
+  --accent-ink: #04262c;
+  --accent-soft: rgba(34, 211, 238, 0.13);
+
+  /* 状态语义色 */
+  --run: #34d399;
+  --run-soft: rgba(52, 211, 153, 0.13);
+  --sky: #38bdf8;
+  --sky-soft: rgba(56, 189, 248, 0.13);
+  --amber: #fbbf24;
+  --amber-soft: rgba(251, 191, 36, 0.13);
+  --rose: #fb7185;
+  --rose-soft: rgba(251, 113, 133, 0.13);
+
+  --focus: rgba(34, 211, 238, 0.45);
+  --code-ink: #7fd3c4;
+  --scroll-thumb: rgba(255, 255, 255, 0.14);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.24);
+
+  /* 浮层与那一处阴影 */
+  --overlay-bg: rgba(8, 10, 14, 0.94);
+  --overlay-fg: #fbc4cd;
+  --shadow-focus: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -24px rgba(0, 0, 0, 0.8);
+}
+
+:root[data-theme='light'] {
+  /* 浅色主题专项：这一轮要解决的是"什么都灰在一起"——栅栏/页底/面板三档几乎同色，
+     发丝线在白底上不可见，选中的导航项淡到要仔细找，accent 配白字只有 3.4:1。 */
+  /* 三级表面拉开距离：栅栏最深、页底居中、面板纯白。 */
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --surface-2: #f5f7fb;
+  --well: #f2f5f9;
+  --rail: #e6ebf2;
+
+  /* 终端面板的首帧兜底（亮色），见深色块里的说明 */
+  --term-bg: #ffffff;
+  --term-fg: #1b1f27;
+
+  /* 发丝线原来是 .09，在白底上几乎看不见 */
+  --hairline: rgba(16, 24, 40, 0.12);
+  --hairline-strong: rgba(16, 24, 40, 0.2);
+
+  --ink: #101828;
+  --ink-dim: #4a566b;
+  /* 原来是 #7c8699，对白底只有约 4.2:1；11.5px 的小字要够黑才读得清 */
+  --ink-faint: #6b7688;
+
+  /* 原 #0891b2 配白字只有约 3.4:1，不达 AA；加深到 4.9:1 */
+  --accent: #0e7490;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(8, 145, 178, 0.16);
+
+  --run: #059669;
+  --run-soft: rgba(5, 150, 105, 0.15);
+  --sky: #0284c7;
+  --sky-soft: rgba(2, 132, 199, 0.15);
+  --amber: #b45309;
+  --amber-soft: rgba(180, 83, 9, 0.14);
+  --rose: #e11d48;
+  --rose-soft: rgba(225, 29, 72, 0.14);
+
+  --focus: rgba(14, 116, 144, 0.35);
+  --code-ink: #0f766e;
+  --scroll-thumb: rgba(16, 24, 40, 0.22);
+  --scroll-thumb-hover: rgba(16, 24, 40, 0.36);
+
+  --overlay-bg: rgba(249, 250, 252, 0.96);
+  --overlay-fg: #be123c;
+  --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+}
+
+/* ============================================================ 基础 */
+
+* {
+  box-sizing: border-box;
+}
+
+/* 外壳与页面的挂载点：本身不参与布局，让组件渲染出的 aside/header/footer/内容
+   仍然是原来那层网格/弹性布局的直接子元素。
+   漏掉任何一个都会把 flex 链断掉 —— 症状是内嵌页只剩顶上一条（webview 退回默认高度）、
+   或面板不再撑满。自检里有一条守着"每个 *-root 都在这条规则里"。 */
+#rail-root,
+#topbar-root,
+#statusbar-root,
+#dashboard-root,
+#terminal-root,
+#shell-root,
+#ui-root,
+#usage-root,
+#settings-root {
+  display: contents;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--t-md);
+  line-height: 1.5;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+dt,
+ul {
+  margin: 0;
+  padding: 0;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+.sprite {
+  display: none;
+}
+
+.i {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.i-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: content-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ============================================================ 骨架 */
+
+.app {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px 12px;
+  background: var(--rail);
+  border-right: 1px solid var(--hairline);
+}
+
+.rail-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0 6px 16px;
+}
+
+.rail-logo {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.rail-logo-sub {
+  font-size: var(--t-sm);
+  color: var(--ink-faint);
+}
+
+/* 常驻状态块：切页面也在，替代了原先顶栏那枚重复的 pill */
+.rail-service {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+}
+
+.rail-service-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rail-service-state {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-service-meta {
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur) ease, color var(--dur) ease;
+}
+
+.rail-item:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.rail-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rail-foot {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.theme-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+}
+
+.theme-switch button {
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition: background var(--dur) ease, color var(--dur) ease;
+}
+
+.theme-switch button:hover {
+  color: var(--ink);
+}
+
+.theme-switch button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 顶栏同时是窗口的标题栏（titleBarStyle: 'hidden' + 系统控件浮层）：
+   整条可拖动，右侧留出系统按钮的位置，退出全屏按钮就落在系统按钮左边。 */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--bar-h);
+  padding: 0 12px 0 20px;
+  /* 必须用 100vw（窗口宽）而不是 100%：100% 是顶栏所在容器的宽度，非全屏时
+     那个容器已经被左栏切掉 188px，减出来是负数（踩过：顶栏右侧被挤没、
+     地址显示成 "http://127."）。100vw - 可用宽度 = 系统控件占的宽度，
+     最后 +12px 是气口 —— 否则内容右边缘会紧贴系统按钮，看着发闷。 */
+  padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 150px)) + 12px);
+  /* 注意：不要给顶栏加 z-index。启动锁（.boot-lock）要能盖住它 ——
+     否则锁期间左上角会孤零零留一个页面标题，看着就是"没遮住"。 */
+  -webkit-app-region: drag;
+  flex: 0 0 auto;
+}
+
+.topbar button,
+.topbar input,
+.topbar select {
+  -webkit-app-region: no-drag;
+}
+
+.page-title {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.topbar-note {
+  color: var(--ink-faint);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+main {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+/* 所有页面都保留真实的布局尺寸，靠 visibility 隐藏。
+   原因：<webview> 在 display:none 的容器里会以 0 尺寸挂载 guest，
+   切回来时 guest 的视口可能仍是旧的 —— 表现就是内嵌页只画出顶部一小条。
+   顺带也解决了 xterm 在隐藏时无法测量尺寸的问题。 */
+.pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  visibility: hidden;
+}
+
+.pane.active {
+  visibility: visible;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 20px;
+  background: var(--rail);
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  flex: 0 0 auto;
+}
+
+.kbd-hint {
+  color: var(--ink-faint);
+}
+
+/* ============================================================ 指示灯 */
+
+.lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex: 0 0 auto;
+}
+
+.lamp-lg {
+  width: 11px;
+  height: 11px;
+}
+
+.rail-service[data-phase='running'] .lamp {
+  background: var(--run);
+  box-shadow: 0 0 0 3px var(--run-soft);
+}
+
+.rail-service[data-phase='external'] .lamp {
+  background: var(--sky);
+  box-shadow: 0 0 0 3px var(--sky-soft);
+}
+
+.rail-service[data-phase='starting'] .lamp,
+.rail-service[data-phase='stopping'] .lamp {
+  background: var(--amber);
+  animation: breathe 1.2s ease-in-out infinite;
+}
+
+.rail-service[data-phase='degraded'] .lamp,
+.rail-service[data-phase='conflict'] .lamp {
+  background: var(--rose);
+  box-shadow: 0 0 0 3px var(--rose-soft);
+}
+
+#hero-dot[data-phase='running'] {
+  background: var(--run);
+  box-shadow: 0 0 0 5px var(--run-soft);
+}
+
+#hero-dot[data-phase='external'] {
+  background: var(--sky);
+  box-shadow: 0 0 0 5px var(--sky-soft);
+}
+
+#hero-dot[data-phase='starting'],
+#hero-dot[data-phase='stopping'] {
+  background: var(--amber);
+  animation: breathe 1.2s ease-in-out infinite;
+}
+
+#hero-dot[data-phase='degraded'],
+#hero-dot[data-phase='conflict'] {
+  background: var(--rose);
+  box-shadow: 0 0 0 5px var(--rose-soft);
+}
+
+/* 唯一一处动效：状态正在变化时呼吸一下 */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* ============================================================ 按钮 */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur) ease, border-color var(--dur) ease, color var(--dur) ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn[aria-busy='true'] {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.btn[aria-busy='true'] .i {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.btn.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  color: var(--accent-ink);
+}
+
+/* 禁用的主操作不该还像一个可点的 CTA：降级成普通禁用按钮的观感。
+   否则"运行中"时那颗「启动」仍然亮着，看起来可以点。 */
+.btn.primary:disabled,
+.btn.danger:disabled {
+  background: var(--surface-2);
+  border-color: var(--hairline-strong);
+  color: var(--ink-faint);
+  box-shadow: none;
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-dim);
+}
+
+.btn.ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--hairline-strong);
+  color: var(--ink);
+}
+
+.btn.danger {
+  background: transparent;
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--rose-soft);
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.btn.small {
+  height: 27px;
+  padding: 0 10px;
+  font-size: var(--t-xs);
+}
+
+.btn.tiny {
+  height: 23px;
+  padding: 0 9px;
+  font-size: var(--t-xs);
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================ 控制台 */
+
+.dash {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 4px 20px 20px;
+}
+
+/* 焦点卡：全局唯一抬升表面，阴影只在这里 */
+.focus-card {
+  flex: 0 0 auto;
+  padding: 18px 20px 0;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-focus);
+}
+
+.focus-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.focus-text {
+  min-width: 0;
+}
+
+.focus-title {
+  font-size: var(--t-state);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.focus-desc {
+  margin-top: 3px;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+.focus-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rule {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 4px;
+  background: var(--hairline);
+}
+
+/* 读数：卡内的小瓦片，和外面的容器不是同一层圆角 */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+@media (max-width: 900px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.stat {
+  padding: 9px 12px 10px;
+  background: var(--surface-2);
+  border-radius: var(--r-panel);
+  min-width: 0;
+}
+
+.stat dt {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.stat dd {
+  margin-top: 2px;
+  font-size: var(--t-num);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 长字符串（地址、占用进程）走这一行，不再被读数格截断 */
+.meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 14px -20px 0;
+  padding: 11px 20px;
+  border-top: 1px solid var(--hairline);
+}
+
+.meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.meta-key {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.meta-val {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+  word-break: break-all;
+}
+
+.dash-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 344px);
+  gap: 16px;
+}
+
+@media (max-width: 1080px) {
+  .dash-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  flex: 0 0 auto;
+}
+
+.panel-head h3 {
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+
+.panel-block {
+  padding: 14px 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+.log-panel .panel-head {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.side-panel {
+  overflow: auto;
+}
+
+.block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.block-note {
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 64%;
+}
+
+.hint {
+  margin-top: 11px;
+  color: var(--ink-faint);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+}
+
+/* 设置页「已保存 / 已重新载入」的即时反馈，就在按钮正下方 */
+.settings-status {
+  min-height: 1.2em;
+  color: var(--run);
+}
+
+/* 日志：下沉井 + 等宽（机器输出的字节） */
+.event-log {
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow: auto;
+  list-style: none;
+  padding: 6px 0;
+  background: var(--well);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.event-log li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 16px;
+}
+
+.event-log li:hover {
+  background: var(--surface-2);
+}
+
+.event-log .ts {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-log .lv {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  text-align: center;
+  background: var(--surface-2);
+  color: var(--ink-dim);
+}
+
+.event-log li[data-level='info'] .lv {
+  background: var(--sky-soft);
+  color: var(--sky);
+}
+
+.event-log li[data-level='warn'] .lv {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.event-log li[data-level='error'] .lv {
+  background: var(--rose-soft);
+  color: var(--rose);
+}
+
+.event-log .msg {
+  flex: 1 1 auto;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+.event-log li[data-level='error'] .msg {
+  color: var(--ink);
+}
+
+/* 折线图：带横向基线网格 */
+.chart {
+  padding: 6px 0 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--hairline) 0,
+    var(--hairline) 1px,
+    transparent 1px,
+    transparent 33.33%
+  );
+}
+
+.spark {
+  display: block;
+  width: 100%;
+  height: 46px;
+}
+
+.spark-area {
+  fill: var(--accent-soft);
+}
+
+.spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.command {
+  display: block;
+  padding: 9px 11px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ============================================================ 终端类页面 */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.bar-title {
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+
+.bar-note {
+  color: var(--ink-faint);
+  font-size: var(--t-sm);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 解释性的一句话（例如"为什么不读键盘输入"）：用一道竖线分隔，不用符号连接 */
+.bar-hint {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-hint:not(:empty) {
+  padding-left: 10px;
+  border-left: 1px solid var(--hairline);
+}
+
+/* 终端面板：像 VS Code 的集成终端那样"与面板齐平"——
+   不是浮在页面上的卡片，而是一整块延伸到面板边界的区域。
+   所以：没有圆角、没有四周外边距，只用一条 hairline 与工具条分开，
+   底色直接用终端自己的背景色（--term-bg，由 JS 跟着 xterm 主题设）。
+   这样内边距、空状态、字符区是连续的一片颜色，不会"一块一块的"。
+
+   内边距只留 4px/6px（VS Code 那个量级）：它是"字符不要贴着边"的最小让步。
+   注意底部永远还会多出一点 —— 那是字符网格除不尽的余量
+   （行高 15.6px，容器高度不可能是它的整数倍），去不掉，只能让它与终端同色。 */
+.term-host {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 6px;
+  background: var(--term-bg, var(--well));
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.term-host .xterm {
+  height: 100%;
+}
+
+/* xterm 的挂载层：撑满 .term-host，且里面不放任何 Vue 管理的节点
+   （两边抢同一块 DOM 会让终端只画一部分） */
+.term-mount {
+  height: 100%;
+}
+
+/* xterm 自带样式给滚动层写死了黑底（.xterm-viewport { background-color: #000 }）。
+   字符行铺满时看不见它，一旦容器比字符区高就会露出黑块 —— 交给 host 的背景。 */
+.term-host .xterm-viewport {
+  background-color: transparent;
+}
+
+/* 终端面板里的空状态：跟着终端配色走。
+   深色终端上用默认的深色字会看不见，而默认的 .empty-fill 是不透明白底。 */
+#pane-terminal .empty-fill,
+#pane-shell .empty-fill {
+  background: var(--term-bg, var(--well));
+}
+
+#pane-terminal .empty h2,
+#pane-shell .empty h2 {
+  color: var(--term-fg);
+}
+
+#pane-terminal .empty p,
+#pane-shell .empty p {
+  color: var(--term-fg);
+  opacity: 0.72;
+}
+
+#pane-terminal .empty-i,
+#pane-shell .empty-i {
+  color: var(--term-fg);
+  opacity: 0.5;
+}
+
+.chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.shell-tab {
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition: background var(--dur) ease, color var(--dur) ease, border-color var(--dur) ease;
+}
+
+.shell-tab:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.shell-tab.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 重命名时的输入框：沿用标签的外观，只把光标和选中态放出来 */
+.shell-tab-editing {
+  width: 120px;
+  font: inherit;
+  font-size: var(--t-xs);
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--accent);
+  border-radius: 999px;
+  padding: 0 11px;
+  outline: none;
+}
+
+.shell-pane {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+.shell-pane.active {
+  display: block;
+}
+
+/* ============================================================ 空状态 */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 30px;
+  text-align: center;
+  color: var(--ink-faint);
+}
+
+.empty-i {
+  width: 26px;
+  height: 26px;
+  margin-bottom: 6px;
+  opacity: 0.45;
+}
+
+.empty h2 {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.empty p {
+  font-size: var(--t-sm);
+  max-width: 420px;
+}
+
+.empty-fill {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+
+.empty.hidden {
+  display: none;
+}
+
+.empty-body {
+  max-width: 600px;
+  font-size: var(--t-sm);
+  line-height: 1.9;
+  text-align: left;
+}
+
+.empty-body code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  color: var(--code-ink);
+  font-family: var(--mono);
+}
+
+.empty-body b {
+  color: var(--ink);
+}
+
+/* 空状态里的多段说明（段落间距靠这条，全局 reset 把 p 的 margin 清了） */
+.empty-body p + p {
+  margin-top: 8px;
+}
+
+.empty-body ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+/* ============================================================ 内嵌界面 */
+
+/* 应用内全屏：藏掉左栏、状态栏和页面工具条，只留一条 34px 顶栏。
+   顶栏必须留着 —— 退出按钮就住在里面。之前把按钮做成浮层压在页面上，遮内容，已改。 */
+body[data-immersive='true'] .app {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body[data-immersive='true'] .rail,
+body[data-immersive='true'] .statusbar {
+  display: none;
+}
+
+/* 只在全屏时出现的顶栏元素（退出按钮、状态灯） */
+.immersive-only {
+  display: none;
+}
+
+body[data-immersive='true'] .immersive-only {
+  display: inline-flex;
+}
+
+body[data-immersive='true'] .topbar {
+  /* 高度必须和主进程的 TITLEBAR_HEIGHT 一致，否则系统按钮会和顶栏错位 */
+  gap: 8px;
+}
+
+body[data-immersive='true'] .page-title {
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+body[data-immersive='true'] #pane-ui .bar,
+body[data-immersive='true'] #pane-ui .ui-paste {
+  display: none;
+}
+
+body[data-immersive='true'] .webview-wrap {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.webview-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 20px 20px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+/* 两个内嵌页共用这一条尺寸规则。
+   漏写尺寸时 <webview> 会退化成浏览器默认的替换元素大小（约 300×150），
+   页面上就只出现顶部一小条 —— 所以以后新增 webview 必须带上这个 class。 */
+.embedded-view {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.ui-paste {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px 12px;
+  flex: 0 0 auto;
+}
+
+.ui-paste input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.ui-paste input::placeholder {
+  color: var(--ink-faint);
+  font-family: var(--sans);
+}
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 20px 12px;
+  padding: 11px 14px;
+  background: var(--amber-soft);
+  border-radius: var(--r-panel);
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  flex: 0 0 auto;
+}
+
+.banner.hidden {
+  display: none;
+}
+
+.banner .i {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  color: var(--amber);
+}
+
+.banner b {
+  color: var(--ink);
+}
+
+/* ============================================================ 设置 */
+
+.settings {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  /* 行高必须跟着内容走。默认 auto 行 + 卡片上的 min-height:0（看板侧栏需要它才能内部滚动）
+     会让这些卡片被压扁到容器高度以内，多出来的内容被 .panel 的 overflow:hidden 裁掉，
+     而且 scrollHeight == clientHeight → 连滚动条都没有（踩过：设置页最后一项永远看不到）。 */
+  grid-auto-rows: max-content;
+  gap: 16px;
+  padding: 4px 20px 20px;
+  align-content: start;
+  overflow: auto;
+  min-height: 0;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.form-row > label {
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+.form-row input[type='text'],
+.form-row input[type='number'],
+.form-row select {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  transition: border-color var(--dur) ease, box-shadow var(--dur) ease;
+}
+
+.form-row input::placeholder {
+  color: var(--ink-faint);
+}
+
+.form-row input:focus,
+.form-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.input-suffix {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-suffix > span {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.panel-block > .hint {
+  margin-top: 12px;
+}
+
+/* ============================================================ 启动错误浮层 */
+
+#boot-error {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  padding: 40px;
+  background: var(--overlay-bg);
+  color: var(--overlay-fg);
+  font-family: var(--mono);
+  font-size: var(--t-md);
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+/* ============================================================ 启动锁 */
+
+/* 盖满整个窗口，顶栏也盖 —— 左栏是贯穿全高的整列、顶栏又在最上面，
+   留任何一条缝都会露出"DSH Console"或页面标题（两次被用户抓图指出）。
+   锁期间窗口拖不动（拖拽区在顶栏），但系统的最小化/最大化/关闭是 Windows 画的浮层，
+   仍在最上层可用；锁通常只有两三秒，还有「不等了」和 Esc。 */
+.boot-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+
+.boot-lock.hidden {
+  display: none;
+}
+
+.boot-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+  padding: 28px 32px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-focus);
+  text-align: center;
+}
+
+/* 一圈缺口环，只转这个缺口，安静一点 */
+.boot-spinner {
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--hairline-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: boot-spin 900ms linear infinite;
+}
+
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.boot-title {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+.boot-desc {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+.boot-note {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.boot-lock .btn {
+  margin-top: 4px;
+}
+
+/* ============================================================ 尊重系统的减弱动效 */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
