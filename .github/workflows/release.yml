@@ -9,6 +9,10 @@
 #   macOS：  DSH Console-x.y.z-arm64.dmg / -x64.dmg（安装镜像）+ 同名 .zip（免安装）
 #   latest.yml / latest-mac.yml + *.blockmap   更新元数据（差分下载用；现在没接自动更新，先留着）
 #
+# Release 正文来自 **CHANGELOG.md 里对应版本的条目**（`tools/changelog-extract.mjs` 提取，
+# 末尾附一段固定的下载指引）。所以**发版前必须先写 CHANGELOG**：缺条目时提取脚本会非零退出、
+# publish job 直接失败 —— 宁可不发，也不发一个没有说明的 Release。
+#
 # 在 Actions 页面手动触发时**只构建不发 Release**（用来验证流水线），
 # 产物可以从这次运行的 Artifacts 里下载。
 #
@@ -129,6 +133,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      # 取仓库里的 CHANGELOG.md 与提取脚本（Release 正文就来自 CHANGELOG）
+      - uses: actions/checkout@v4
+
       - name: 收齐两个平台的产物
         uses: actions/download-artifact@v4
         with:
@@ -137,6 +144,26 @@ jobs:
 
       - name: 列出待发布文件
         run: ls -lh assets
+
+      # 正文 = CHANGELOG 里这一版的条目 + 一段固定的下载指引。
+      # 条目缺失或为空时提取脚本会非零退出，这一步直接失败 —— 宁可不发版，也不发一个空说明。
+      - name: 从 CHANGELOG 取出这一版的说明
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          node tools/changelog-extract.mjs "$TAG" > notes.md
+          cat >> notes.md <<'FOOTER'
+
+          ---
+
+          **下载**：Windows 用 `Setup` 安装包（推荐，装新版即原地覆盖，同目录同快捷方式、
+          设置与日志保留）或免安装的便携版；macOS 用 `arm64.dmg`（Apple 芯片）或 `.dmg`（Intel）。
+          每个安装包旁边还有对应的 `.zip` 免安装版。macOS 包未签名，首次打开请**右键 →「打开」**，
+          或到「系统设置 → 隐私与安全性」点「仍要打开」。
+          FOOTER
+          echo "---- 本次 Release 正文 ----"
+          cat notes.md
 
       # gh 是 runner 自带的；GH_REPO 显式指定，避免依赖"当前目录是个 git 仓库"
       - name: 创建草稿 Release 并上传产物
@@ -147,10 +174,10 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在，直接补传产物"
+            # 已存在（多半是重跑）：只补产物，正文不动 —— 免得覆盖掉人工改过的说明
+            echo "Release $TAG 已存在：补传产物，正文保持不变"
           else
-            gh release create "$TAG" --draft --title "$TAG" \
-              --notes "由 CI 自动创建的草稿。确认两个平台的产物都在、再填写说明并发布。"
+            gh release create "$TAG" --draft --title "$TAG" --notes-file notes.md
           fi
           gh release upload "$TAG" assets/* --clobber
           echo "---- 传完后的资产清单 ----"

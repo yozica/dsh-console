@@ -700,6 +700,27 @@ async function main() {
     `lock=${lockZ} topbar=${topbarZ}`
   )
 
+  // ---------------------------------------------------------- 8. 发布：CHANGELOG 与版本号对齐
+  //    发版时 Release 正文是按版本号从 CHANGELOG.md 里取的（tools/changelog-extract.mjs）。
+  //    忘了写条目的话，CI 会红在最后那个 publish job —— 这里提前到构建阶段就拦住，
+  //    两个 build job 都会先失败，不会出现"包打好了才发现没说明"。
+  const repoRoot = path.join(__dirname, '..')
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+  let changelogText = ''
+  try {
+    changelogText = fs.readFileSync(path.join(repoRoot, 'CHANGELOG.md'), 'utf8')
+  } catch {
+    changelogText = ''
+  }
+  // 动态 import：提取逻辑只此一份，不在自检里再抄一遍正则
+  const { extractChangelog } = await import('../tools/changelog-extract.mjs')
+  const section = extractChangelog(changelogText, pkg.version)
+  check(
+    `发布：CHANGELOG.md 有当前版本 ${pkg.version} 的条目`,
+    Boolean(section && section.trim()),
+    section ? section.split('\n')[0] : '缺条目 —— 发版前先在 CHANGELOG.md 里写这一版'
+  )
+
   // ---------------------------------------------------------- 汇总
   const failed = results.filter((item) => !item.ok)
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`)

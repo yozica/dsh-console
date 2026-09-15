@@ -186,20 +186,26 @@ zlib + CRC，解码 = inflate + 反滤波），仓库因此不引图像库。
 
 ### 发布新版本（GitHub Actions）
 
-推一个 `v*` 标签，CI 就会打包并创建 Release **草稿**：
+发版的**内容**写在 `CHANGELOG.md` 里，**打标签**之后 CI 自动打包并建一个 Release 草稿：
 
 ```powershell
-npm version patch        # 改版本号 + 提交 + 打标签 v0.1.1
-git push --follow-tags   # 提交与标签一起推
+# 1. 先在 CHANGELOG.md 里写好这一版的条目（格式见该文件顶部）
+# 2. 改版本号 + 提交 + 打标签 + 推
+npm version patch        # → v0.1.1
+git push --follow-tags
 ```
 
-等一两分钟，到仓库的 Releases 页面看一眼草稿（Windows 的 `DSH Console Setup x.y.z.exe` 安装包与
-便携版、macOS 的 `DSH Console-x.y.z-arm64.dmg` / `-x64.dmg` 与对应 zip，以及 `latest.yml` /
-`latest-mac.yml` 与 `.blockmap`），确认后点发布即可 —— 草稿是 electron-builder 的默认行为，
-留给人过一眼。
+**Release 正文就是 CHANGELOG 里这一版的条目**（`tools/changelog-extract.mjs` 按版本号取出来，
+末尾再附一段固定的下载指引）。所以忘了写条目会**直接失败**：提取脚本非零退出 → `publish` job 红，
+不会发出一个没有说明的 Release。自检里也有一条守着这件事（`npm test` 会报「CHANGELOG.md 有当前
+版本的条目」），免得包都打好了才发现。
+
+等一两分钟，到仓库的 Releases 页面看一眼草稿的产物是否齐全（Windows 的安装包与便携版、
+macOS 的 arm64 / x64 的 dmg 与 zip，以及 `latest.yml` / `latest-mac.yml` 与 `.blockmap`），
+确认后点发布。
 
 在 Actions 页面**手动触发** `release` 工作流则只构建、不发版，产物挂在这次运行的
-Artifacts 里 —— 用来验证流水线，不会污染 Releases。
+Artifacts 里 —— 用来验证流水线，不会污染 Releases（不发版自然也不需要 CHANGELOG 条目）。
 
 工作流在 `.github/workflows/release.yml`。三个要点：
 
@@ -213,8 +219,9 @@ Artifacts 里 —— 用来验证流水线，不会污染 Releases。
    `getOrCreateRelease()`，各自发现"没有 release"就各建一个，Windows 的安装包与 `latest.yml`
    因此没传上去；更麻烦的是 electron-builder 默认 `releaseType=draft`，release 一旦被人点成
    「已发布」，后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn 一句），
-   所以"重跑一次 CI 把缺的补上"这条路走不通。现在换成 `gh release upload --clobber`，
-   重跑可以放心覆盖同名产物。
+   所以"重跑一次 CI 把缺的补上"这条路走不通。现在草稿由 `gh release create` 自己建、
+   产物用 `gh release upload --clobber` 传，重跑可以放心覆盖同名产物（正文则保持不动，
+   免得盖掉人工修改）。
 
 ### 覆盖升级
 
