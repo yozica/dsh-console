@@ -1,17 +1,29 @@
-# 发布新版本：打一个 v* 标签，这里自动打包并创建一个 Release 草稿。
+# 发布新版本：打一个 v* 标签，CI 打包两个平台并创建一个 Release **草稿**。
 #
 # 日常用法（本地跑这两条，剩下交给 CI）：
 #   npm version patch          # 改版本号 + 提交 + 打 v0.1.1 标签
 #   git push --follow-tags     # 把提交和标签一起推上去
 #
-# 然后在仓库的 Releases 页面会看到一个 **草稿**（electron-builder 默认发草稿，
-# 留给人过一眼再点发布）。产物包含：
+# 产物包含：
 #   Windows：DSH Console Setup x.y.z.exe（NSIS 安装包）、DSH Console x.y.z.exe（便携版）
 #   macOS：  DSH Console-x.y.z-arm64.dmg / -x64.dmg（安装镜像）+ 同名 .zip（免安装）
 #   latest.yml / latest-mac.yml + *.blockmap   更新元数据（差分下载用；现在没接自动更新，先留着）
 #
 # 在 Actions 页面手动触发时**只构建不发 Release**（用来验证流水线），
 # 产物可以从这次运行的 Artifacts 里下载。
+#
+# ── 为什么分成 build-* / publish 三步，而不是两个平台各自 publish ──
+#
+# v0.2.0 丢过 Windows 产物：两个 runner 各自跑 `electron-builder --publish always`，
+# 两边并发走到 `getOrCreateRelease()` 都发现"没有 release"就各建一个，互相打架；
+# 更麻烦的是 electron-builder 默认 releaseType=draft —— release 一旦被人点成"已发布"，
+# 后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn 一句），所以"重跑一次 CI 补上"
+# 这条路走不通。
+#
+# 现在改成：两个平台只打包（--publish never），产物挂成 Artifacts；标签构建时由
+# **单独一个 publish job** 收齐两边的产物，一次建草稿、一次上传。没有并发建 release
+# 的窗口，也不再依赖 electron-builder 的发布逻辑（重跑时 gh release upload --clobber
+# 会覆盖同名产物，可以放心重试）。
 #
 # 说明：两个平台各在自己的 runner 上打包（node-pty 是原生模块，必须对目标平台构建）。
 # 原生模块由 electron-builder 自动对着打包用的 Electron 版本重编，所以这里**不要**加
@@ -30,6 +42,7 @@ permissions:
   contents: write
 
 jobs:
+  # ---------------------------------------------------------------- 打包（不发布）
   build-windows:
     runs-on: windows-latest
     steps:
@@ -46,18 +59,12 @@ jobs:
       - name: 自检
         run: npm test
 
-      # 打标签时发布到 Release；手动触发时只构建（--publish never）
       - name: 打包
         shell: pwsh
         run: |
           npm run build
-          # 写成 if 语句而不是 `$x = if (...)`：后者是 PowerShell 7 的写法
-          $publish = 'never'
-          if ($env:GITHUB_REF -like 'refs/tags/*') { $publish = 'always' }
-          Write-Host "electron-builder --win --publish $publish"
-          npx electron-builder --win --publish $publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 只打包不发布：Release 由下面的 publish job 统一创建
+          npx electron-builder --win --publish never
 
       - name: 列出产物
         shell: pwsh
@@ -66,9 +73,8 @@ jobs:
             Where-Object { $_.Extension -in '.exe', '.yml', '.blockmap' } |
             ForEach-Object { "{0,-40} {1,5} MB" -f $_.Name, [int]($_.Length / 1MB) }
 
-      # 手动触发时把产物挂到这次运行上，方便下载试用
-      - name: 上传产物（仅手动触发）
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      # 无条件上传：publish job 要靠这两个 artifact 建 Release
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: dsh-console-windows
@@ -99,19 +105,14 @@ jobs:
       - name: 打包（macOS，arm64 + x64）
         run: |
           npm run build
-          PUBLISH='never'
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then PUBLISH='always'; fi
-          echo "electron-builder --mac --publish $PUBLISH"
-          npx electron-builder --mac --publish "$PUBLISH"
+          npx electron-builder --mac --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: 列出产物
         run: ls -lh release
 
-      - name: 上传产物（仅手动触发）
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: dsh-console-macos
@@ -121,3 +122,36 @@ jobs:
             release/*.blockmap
             release/latest-mac.yml
           retention-days: 7
+
+  # ---------------------------------------------------------------- 建草稿并上传（仅标签）
+  publish:
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 收齐两个平台的产物
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: 列出待发布文件
+        run: ls -lh assets
+
+      # gh 是 runner 自带的；GH_REPO 显式指定，避免依赖"当前目录是个 git 仓库"
+      - name: 创建草稿 Release 并上传产物
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，直接补传产物"
+          else
+            gh release create "$TAG" --draft --title "$TAG" \
+              --notes "由 CI 自动创建的草稿。确认两个平台的产物都在、再填写说明并发布。"
+          fi
+          gh release upload "$TAG" assets/* --clobber
+          echo "---- 传完后的资产清单 ----"
+          gh release view "$TAG" --json assets --jq '.assets[].name'

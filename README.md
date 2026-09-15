@@ -201,10 +201,20 @@ git push --follow-tags   # 提交与标签一起推
 在 Actions 页面**手动触发** `release` 工作流则只构建、不发版，产物挂在这次运行的
 Artifacts 里 —— 用来验证流水线，不会污染 Releases。
 
-工作流在 `.github/workflows/release.yml`，两个要点：两个平台各在自己的 runner 上打包
-（`windows-latest` / `macos-latest`，node-pty 是原生模块，只能对本平台编），以及 **不要**加
-`--config.npmRebuild=false`（runner 上有 C++ 工具链，让 electron-builder 对着打包用的
-Electron 版本重编才对）。
+工作流在 `.github/workflows/release.yml`。三个要点：
+
+1. **两个平台各在自己的 runner 上打包**（`windows-latest` / `macos-latest`）—— node-pty 是原生
+   模块，只能对本平台编；**不要**加 `--config.npmRebuild=false`（runner 上有 C++ 工具链，让
+   electron-builder 对着打包用的 Electron 版本重编才对）。
+2. **打包与发布分开**：两个 `build-*` job 只打包（`--publish never`），产物挂成 Artifacts；
+   标签构建时再由单独的 `publish` job 收齐两边产物，**一次**建草稿、**一次**上传 ——
+   两个 runner 因此没有并发去建同一个 Release 的窗口。
+3. 这么分是拿教训换来的：v0.2.0 时两个 runner 并发调 electron-builder 的
+   `getOrCreateRelease()`，各自发现"没有 release"就各建一个，Windows 的安装包与 `latest.yml`
+   因此没传上去；更麻烦的是 electron-builder 默认 `releaseType=draft`，release 一旦被人点成
+   「已发布」，后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn 一句），
+   所以"重跑一次 CI 把缺的补上"这条路走不通。现在换成 `gh release upload --clobber`，
+   重跑可以放心覆盖同名产物。
 
 ### 覆盖升级
 
