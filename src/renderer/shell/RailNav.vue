@@ -19,6 +19,7 @@ const TABS = [
   { id: 'shell', icon: 'i-shell', label: '本地 Shell' },
   { id: 'ui', icon: 'i-browser', label: 'DeepSeek Harness' },
   { id: 'usage', icon: 'i-usage', label: 'DeepSeek 用量' },
+  { id: 'archive', icon: 'i-archive', label: '归档会话' },
   { id: 'settings', icon: 'i-sliders', label: '设置' }
 ]
 

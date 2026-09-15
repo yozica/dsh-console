@@ -14,6 +14,7 @@ const PAGE_TITLES = {
   shell: '本地 Shell',
   ui: 'DeepSeek Harness',
   usage: 'DeepSeek 用量',
+  archive: '归档会话',
   settings: '设置'
 }
 
