@@ -418,15 +418,17 @@ function resolveDshInvocation(settings) {
   )
 }
 
-/** 选择本地 Shell（用于"新建本地 Shell"标签） */
+/**
+ * 选择本地 Shell（用于"新建本地 Shell"标签）。
+ * Windows：pwsh > powershell > cmd；macOS/Linux：$SHELL > zsh > bash > sh。
+ */
 function resolveShell(settings) {
   const override = String(settings.shell || '').trim()
   if (override) return { file: override, args: [], display: override }
 
-  const pwsh = whichSync(isWindows ? 'pwsh.exe' : 'pwsh')
-  if (pwsh) return { file: pwsh, args: ['-NoLogo'], display: pwsh }
-
   if (isWindows) {
+    const pwsh = whichSync('pwsh.exe')
+    if (pwsh) return { file: pwsh, args: ['-NoLogo'], display: pwsh }
     const powershell = whichSync('powershell.exe')
     if (powershell) return { file: powershell, args: ['-NoLogo'], display: powershell }
     return { file: COMSPEC, args: [], display: COMSPEC }
@@ -434,6 +436,10 @@ function resolveShell(settings) {
 
   // macOS/Linux：优先用户当前交互 shell（登录模式，PATH 与终端里一致），
   // 依次回退 zsh / bash / sh。GUI 启动的应用 PATH 很窄，不加 -l 会找不到 homebrew 装的东西。
+  //
+  // 注意：POSIX 上**不要**自动优先 pwsh。装了 PowerShell 的 mac 不少（GitHub 的 macOS
+  // runner 就自带），自动挑它会让"新建本地 Shell"意外开出 PowerShell，而不是用户自己的 zsh；
+  // 自检也因此在 CI 上红过一条。想用 pwsh / fish 之类，就在设置里显式填路径。
   const fromEnv = String(process.env.SHELL || '').trim()
   if (fromEnv && fs.existsSync(fromEnv)) return { file: fromEnv, args: ['-l'], display: fromEnv }
   for (const candidate of ['/bin/zsh', '/bin/bash', '/bin/sh']) {

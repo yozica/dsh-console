@@ -689,6 +689,10 @@ powershell -File ..\.dsh\click-app.ps1 -Keys '^+d'     # Ctrl+Shift+D
   一旦 npm 缓存权限、网络或 registry 有问题，dsh 会瞬间结束，界面上只看到"启动不了"。
   所以解析器会额外扫 nvm / fnm / nodenv 各版本目录、homebrew、`~/.npm-global`、pnpm 全局目录。自检里有
   一条专门在 `PATH=/usr/bin:/bin` 下验证它仍能解析出 `node-bin`，还有一条验证"解析出的解释器实测能跑 dsh"。
+- **本地 Shell 选哪个**：Windows 是 pwsh > powershell > cmd；macOS/Linux 是 `$SHELL` > zsh > bash > sh，
+  而且 POSIX 上**不会**自动挑 pwsh —— 装了 PowerShell 的 mac 不少（GitHub 的 macOS runner 就自带），
+  自动挑它会让"新建本地 Shell"开出 PowerShell 而不是用户自己的 zsh（CI 上因此红过一条自检）。
+  pwsh / fish 之类想用就在「设置 → 本地 Shell」里显式填路径。
 - **健康判据**：`GET http://host:port/`。dsh 对无令牌请求返回 `401 dsh web authentication required`，这本身就是"服务活着"的强特征；带 `__DSH_BOOT__` 的 200 同样判定为 dsh。
 - **令牌地址**：从终端输出里匹配 `dsh web: http://...?token=...`，日志中令牌以 `***` 掩码显示，实际 URL 只留给内嵌 webview 和"在浏览器打开"。
   没有令牌时**不会**退化成裸地址去载入（那样只会拿到 401 并抛 `ERR_ABORTED`），而是显示可操作的说明。

@@ -156,10 +156,18 @@ async function main() {
   const shell = processUtils.resolveShell(settings.all())
   check('本地 Shell 解析：文件存在', fs.existsSync(shell.file), shell.file)
   if (!IS_WINDOWS) {
+    // 契约：POSIX 上必须是**用户自己的 sh 系登录 shell**（$SHELL 优先，否则 zsh → bash → sh），
+    // 而且**不能**是 pwsh —— 装了 PowerShell 的 mac 不少（GitHub 的 macOS runner 就自带），
+    // 自动挑它会让"新建本地 Shell"开出 PowerShell 而不是用户的 zsh（CI 上因此红过一条）。
+    // 顺带记一个坑：老的断言写的是 /(zsh|bash|sh)$/，而 "pwsh" 也以 sh 结尾，它其实放过了 pwsh，
+    // 真正拦下来的是 args 里没有 -l —— 所以这里既查文件也查 -l，别只查其中一个。
+    const envShell = String(process.env.SHELL || '').trim()
+    const expected = envShell && fs.existsSync(envShell) ? envShell : /(zsh|bash)$|\/sh$/
+    const sameAsUserShell = typeof expected === 'string' ? shell.file === expected : expected.test(shell.file)
     check(
-      '本地 Shell 解析：POSIX 用登录 shell（zsh/bash，带 -l）',
-      shell.args.includes('-l') && /(zsh|bash|sh)$/.test(shell.file),
-      `${shell.file} ${shell.args.join(' ')}`
+      '本地 Shell 解析：POSIX 用用户自己的登录 shell（$SHELL 优先，不会是 pwsh）',
+      sameAsUserShell && shell.args.includes('-l'),
+      `${shell.file} ${shell.args.join(' ')}（$SHELL=${envShell || '未设置'}）`
     )
   }
 
