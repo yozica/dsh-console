@@ -14,6 +14,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { isAppModifier, isMac } from './platform.js'
 
 /** 终端配色，与 styles.css 的两套主题对应 */
 export const TERM_THEMES = {
@@ -47,9 +48,20 @@ export const TERM_THEMES = {
   }
 }
 
+/**
+ * 等宽字体栈按平台给：终端里的字符宽度是 xterm 量出来的，
+ * 用系统自带等宽字体最稳（避免随包分发的 webfont 迟到导致列宽算错），
+ * 中日韩文字另外挂一个系统的中文兜底，否则 dsh 的中文输出会退化成方框。
+ */
+function monoStack() {
+  return isMac.value
+    ? 'Menlo, Monaco, "SF Mono", "PingFang SC", "IBM Plex Mono", monospace'
+    : 'Consolas, "Cascadia Mono", "Microsoft YaHei", "IBM Plex Mono", monospace'
+}
+
 export function terminalOptions(resolved) {
   return {
-    fontFamily: 'Consolas, "Cascadia Mono", "Microsoft YaHei", monospace',
+    fontFamily: monoStack(),
     fontSize: 13,
     lineHeight: 1.2,
     cursorBlink: true,
@@ -87,18 +99,19 @@ export function attachTerminal(host, resolved) {
 /**
  * 让应用级快捷键穿过终端。
  *
- * 不这么做的话，xterm 会把 Ctrl+2~6 当成控制字符吃掉（^@、^[、^\、^]、^^）、
+ * 不这么做的话，xterm 会把 Ctrl+2~6 / ⌘2~6 当成控制字符吃掉（^@、^[、^\、^]、^^）、
  * 并停止冒泡，window 上那个切换页面的处理器就永远收不到 ——
  * 症状是"在终端里只有 Ctrl+1 能切页，2~6 全都没反应"（Ctrl+1 恰好不在它的表里）。
  *
  * 用 xterm 的正式接口：处理函数返回 false = 终端不处理，事件继续冒泡给应用。
- * `includeReload` 用来决定 Ctrl+R 归谁：dsh 终端里输入本来就没用，交给应用重载；
+ * 修饰键按平台取（macOS 认 Cmd，其它平台认 Ctrl），与 app.js 的处理器保持一致。
+ * `includeReload` 用来决定 Ctrl+R / ⌘R 归谁：dsh 终端里输入本来就没用，交给应用重载；
  * 本地 Shell 里 Ctrl+R 是它自己的反向历史搜索，得留给 shell。
  */
 export function passAppShortcutsThrough(term, { includeReload = false } = {}) {
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true
-    if (!event.ctrlKey || event.shiftKey || event.altKey) return true
+    if (!isAppModifier(event) || event.shiftKey || event.altKey) return true
     if (/^[1-6]$/.test(event.key)) return false
     if (includeReload && String(event.key).toLowerCase() === 'r') return false
     return true

@@ -6,16 +6,17 @@
 #
 # 然后在仓库的 Releases 页面会看到一个 **草稿**（electron-builder 默认发草稿，
 # 留给人过一眼再点发布）。产物包含：
-#   DSH Console Setup x.y.z.exe     NSIS 安装包（给别人覆盖升级用这个）
-#   DSH Console x.y.z.exe           便携版
-#   latest.yml + *.blockmap         更新元数据（差分下载用；现在没接自动更新，先留着）
+#   Windows：DSH Console Setup x.y.z.exe（NSIS 安装包）、DSH Console x.y.z.exe（便携版）
+#   macOS：  DSH Console-x.y.z-arm64.dmg / -x64.dmg（安装镜像）+ 同名 .zip（免安装）
+#   latest.yml / latest-mac.yml + *.blockmap   更新元数据（差分下载用；现在没接自动更新，先留着）
 #
 # 在 Actions 页面手动触发时**只构建不发 Release**（用来验证流水线），
 # 产物可以从这次运行的 Artifacts 里下载。
 #
-# 说明：Windows 目标必须在 Windows 上打包（node-pty 是原生模块），所以 runner 是
-# windows-latest；原生模块由 electron-builder 自动对着打包用的 Electron 版本重编，
-# 所以这里**不要**加 --config.npmRebuild=false（runner 上有 C++ 工具链）。
+# 说明：两个平台各在自己的 runner 上打包（node-pty 是原生模块，必须对目标平台构建）。
+# 原生模块由 electron-builder 自动对着打包用的 Electron 版本重编，所以这里**不要**加
+# --config.npmRebuild=false（runner 上有 C++ 工具链；node-pty 是 N-API，跨 Electron
+# 大版本也不需要改代码）。
 
 name: release
 
@@ -29,7 +30,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +54,7 @@ jobs:
           # 写成 if 语句而不是 `$x = if (...)`：后者是 PowerShell 7 的写法
           $publish = 'never'
           if ($env:GITHUB_REF -like 'refs/tags/*') { $publish = 'always' }
-          Write-Host "electron-builder --publish $publish"
+          Write-Host "electron-builder --win --publish $publish"
           npx electron-builder --win --publish $publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,4 +76,48 @@ jobs:
             release/*.exe
             release/*.blockmap
             release/latest.yml
+          retention-days: 7
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 自检
+        run: npm test
+
+      # 未签名的构建：本地/CI 出来的 .app 首次打开需要右键「打开」绕过 Gatekeeper。
+      # 要正式分发就得配 CSC_LINK / CSC_KEY_PASSWORD（开发者证书）并做公证。
+      - name: 打包（macOS，arm64 + x64）
+        run: |
+          npm run build
+          PUBLISH='never'
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then PUBLISH='always'; fi
+          echo "electron-builder --mac --publish $PUBLISH"
+          npx electron-builder --mac --publish "$PUBLISH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: 列出产物
+        run: ls -lh release
+
+      - name: 上传产物（仅手动触发）
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-console-macos
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
           retention-days: 7

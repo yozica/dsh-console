@@ -1,12 +1,14 @@
 'use strict'
 
 /**
- * PTY 会话注册表：用 node-pty 打开真正的伪终端（Windows 上走 ConPTY）。
- * 一个会话 = 一个终端标签页（dsh 进程本身，或用户临时开的本地 Shell）。
+ * PTY 会话注册表：用 node-pty 打开真正的伪终端（Windows 上走 ConPTY，
+ * macOS/Linux 走 forkpty）。一个会话 = 一个终端标签页（dsh 进程本身，或用户临时开的本地 Shell）。
  */
 
 const { EventEmitter } = require('node:events')
+const os = require('node:os')
 const pty = require('node-pty')
+const processUtils = require('./process-utils')
 
 /** node-pty 要求正数尺寸，窗口最小化时可能传 0 */
 function safeSize(value, fallback) {
@@ -33,9 +35,10 @@ class PtySessions extends EventEmitter {
       name: 'xterm-256color',
       cols: safeSize(cols, 120),
       rows: safeSize(rows, 30),
-      cwd: cwd && cwd.length > 0 ? cwd : process.env.USERPROFILE || process.cwd(),
+      cwd: cwd && cwd.length > 0 ? cwd : os.homedir(),
       env: env || process.env,
-      useConpty: true
+      // ConPTY 是 Windows 专属选项；macOS/Linux 上 node-pty 走 forkpty，不需要它
+      useConpty: process.platform === 'win32'
     })
 
     const session = {
@@ -119,7 +122,13 @@ class PtySessions extends EventEmitter {
     if (!session) return false
     this.sessions.delete(id)
     try {
-      session.proc.kill(force ? undefined : 'SIGTERM')
+      // Windows：node-pty 的 kill() 忽略信号并结束整个 ConPTY（连同子进程树）。
+      // macOS/Linux：node-pty 只把信号发给 shell 本身，所以强杀时先用进程组/后代清一遍，
+      // 免得 shell 里跑着的子进程变成孤儿；非强杀仍走 SIGTERM 让 shell 自己收尾。
+      if (force && process.platform !== 'win32') {
+        processUtils.killTreeSync(session.proc.pid)
+      }
+      session.proc.kill(force ? 'SIGKILL' : 'SIGTERM')
       return true
     } catch {
       return false

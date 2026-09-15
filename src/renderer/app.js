@@ -8,7 +8,7 @@
  *   1. 启动守卫（preload / xterm 没就绪时给一句能看懂的报错，而不是白屏）
  *   2. 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住界面，就绪后解锁
  *   3. 自动打开：dsh 就绪后按设置切到 Harness 页并进全屏
- *   4. 键盘快捷键：Ctrl+R 重载、Ctrl+1~6 切页、Esc 退出全屏/跳过启动锁
+ *   4. 键盘快捷键：Ctrl+R / ⌘R 重载、Ctrl+1~6 / ⌘1~6 切页、Esc 退出全屏/跳过启动锁
  *
  * 它们都在"状态之上"而不是"界面之上"，所以不需要组件外壳；等启动锁也做成组件后，
  * 这里会只剩守卫与快捷键。
@@ -16,6 +16,7 @@
 
 import { watch } from 'vue'
 import { phaseText } from './lib/phase-text.js'
+import { isAppModifier } from './lib/platform.js'
 import {
   currentTab,
   dsh,
@@ -231,13 +232,13 @@ function wireShortcuts() {
       event.preventDefault()
       return
     }
-    // 默认菜单被移除了，Ctrl+R 的默认重载也随之消失；这里补回来
-    if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'r') {
+    // 默认菜单被移除了，Ctrl+R / ⌘R 的默认重载也随之消失；这里补回来
+    if (isAppModifier(event) && !event.shiftKey && event.key.toLowerCase() === 'r') {
       location.reload()
       event.preventDefault()
       return
     }
-    if (event.ctrlKey && !event.shiftKey && /^[1-6]$/.test(event.key)) {
+    if (isAppModifier(event) && !event.shiftKey && /^[1-6]$/.test(event.key)) {
       const order = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'settings']
       currentTab.value = order[Number(event.key) - 1]
       event.preventDefault()

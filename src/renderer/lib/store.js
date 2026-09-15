@@ -11,6 +11,7 @@
 
 import { computed, ref } from 'vue'
 import { phaseText } from './phase-text.js'
+import { applyPlatformAttribute, setPlatform } from './platform.js'
 
 const api = window.dshConsole
 
@@ -42,6 +43,18 @@ function syncDocumentTheme() {
 }
 
 /**
+ * 系统窗口全屏状态落地到 <body data-native-fullscreen>。
+ *
+ * 跟"应用内全屏"（immersive）是两件事：那个只是藏掉左栏与状态栏，不动系统窗口状态。
+ * 这里指的是 macOS 绿灯 / Windows F11 那种**系统级**全屏。
+ * CSS 靠它决定要不要给红绿灯留位置 —— macOS 全屏时红绿灯平时是隐藏的（鼠标移到
+ * 屏幕顶端才出现），继续留白就是一块说不清用途的空白。
+ */
+function syncDocumentFullscreen(on) {
+  document.body.dataset.nativeFullscreen = on ? 'true' : 'false'
+}
+
+/**
  * 建立唯一的订阅。幂等，而且**第二次调用会等第一次完成** ——
  * 这里必须缓存 Promise，不能只用一个 boolean：
  * main.js 是 `void startStore()` 先发起，组件挂载后再 `await startStore()`，
@@ -51,7 +64,11 @@ export function startStore() {
   if (!pending) {
     pending = (async () => {
       snapshot.value = await api.getSnapshot()
+      // 主进程的 platform 是权威值：拿它校准 UA 推断的结果，再落到 <html data-platform>
+      setPlatform(snapshot.value?.env?.platform)
+      applyPlatformAttribute()
       syncDocumentTheme()
+      syncDocumentFullscreen(Boolean(snapshot.value?.env?.nativeFullscreen))
       api.onState((next) => {
         snapshot.value = { ...(snapshot.value || {}), dsh: next }
       })
@@ -59,6 +76,7 @@ export function startStore() {
         if (snapshot.value) snapshot.value.theme = info
         syncDocumentTheme()
       })
+      if (api.onFullscreen) api.onFullscreen((on) => syncDocumentFullscreen(Boolean(on)))
     })()
   }
   return pending

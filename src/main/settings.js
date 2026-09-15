@@ -24,7 +24,7 @@ const DEFAULTS = {
   cwd: '',
   /** 传给 dsh 的附加参数（空格分隔，支持引号） */
   extraArgs: '',
-  /** 本地面板里"新建本地 Shell"使用的 shell；留空自动选择 pwsh > powershell > cmd */
+  /** 本地面板里"新建本地 Shell"使用的 shell；留空自动选择：Windows 是 pwsh > powershell > cmd，macOS/Linux 是 $SHELL > zsh > bash > sh */
   shell: '',
   /** 界面主题：system（跟随系统）/ light / dark */
   themeMode: 'system',

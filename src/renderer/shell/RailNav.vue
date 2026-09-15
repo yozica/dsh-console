@@ -75,7 +75,7 @@ const serviceMeta = computed(() => {
         <button
           type="button"
           data-theme-mode="system"
-          title="跟随 Windows 的深色模式"
+          title="跟随系统的深色模式"
           :class="{ active: themeMode === 'system' }"
           @click="setThemeMode('system')"
         >

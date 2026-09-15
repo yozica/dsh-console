@@ -15,6 +15,7 @@ const { installFileLogging } = require('./logger')
 const processUtils = require('./process-utils')
 
 const isDev = process.argv.includes('--dev')
+const isMac = process.platform === 'darwin'
 
 // 允许把配置/缓存目录挪到别处（便携部署，或本机验证时不污染 %APPDATA%）
 const userDataOverride = process.env.DSH_CONSOLE_USER_DATA
@@ -86,9 +87,11 @@ function applyThemeSource(mode) {
 
 /**
  * 系统控件浮层的配色（最小化/最大化/关闭由 Windows 画在右上角，颜色得由我们给）。
- * 窗口不是用 titleBarOverlay 建的、或平台不支持时，这里会抛异常，直接吞掉即可。
+ * 窗口不是用 titleBarOverlay 建的、或平台不支持时（macOS 用红绿灯，没有浮层），
+ * 这里会抛异常，直接吞掉即可。
  */
 function applyTitleBarOverlay(resolved) {
+  if (isMac) return // macOS 的红绿灯由系统绘制在左上角，没有 titleBarOverlay
   if (!mainWindow || mainWindow.isDestroyed()) return
   const colors = TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark
   try {
@@ -234,22 +237,32 @@ function watchRendererForDevReload() {
 }
 
 function createWindow() {
+  const resolved = themeInfo().resolved
+  // 标题栏策略按平台走：
+  //  - Windows/Linux：hidden + titleBarOverlay，最小化/最大化/关闭由系统画在右上角浮层
+  //  - macOS：hiddenInset + 红绿灯（trafficLightPosition 把红绿灯对准 36px 顶栏的中心）
+  const titleBarOptions = isMac
+    ? {
+        titleBarStyle: 'hiddenInset',
+        trafficLightPosition: { x: 14, y: Math.round((TITLEBAR_HEIGHT - 14) / 2) }
+      }
+    : {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          ...(TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark),
+          height: TITLEBAR_HEIGHT
+        }
+      }
   mainWindow = new BrowserWindow({
     width: 1220,
     height: 820,
     minWidth: 900,
     minHeight: 600,
     show: false,
-    backgroundColor: WINDOW_BG[themeInfo().resolved],
+    backgroundColor: WINDOW_BG[resolved],
     title: 'DSH Console',
     icon: makeIcon(),
-    // 原生标题栏换成系统控件浮层：右上角的最小化/最大化/关闭仍由 Windows 画，
-    // 但整条标题栏区域归我们的 HTML —— 这样才能把按钮放进去（就在系统控件左边）。
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      ...(TITLEBAR_COLORS[themeInfo().resolved] || TITLEBAR_COLORS.dark),
-      height: TITLEBAR_HEIGHT
-    },
+    ...titleBarOptions,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -288,6 +301,19 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // 系统全屏（macOS 绿灯 / ⌃⌘F，Windows 上是 F11 或 setFullScreen）：状态要告诉渲染层。
+  // 为什么渲染层需要知道：macOS 全屏时红绿灯**平时是隐藏的**，只有鼠标移到屏幕顶端才出现，
+  // 所以那时不该再为它留位置（留了就是一块说不清用途的空白，用户抓图指出过）。
+  // 注意与「应用内全屏」区分：那个只是藏掉左栏与状态栏，不动系统窗口状态。
+  mainWindow.on('enter-full-screen', () => {
+    dshManager.log('info', '窗口进入系统全屏')
+    sendToRenderer('app:fullscreen', true)
+  })
+  mainWindow.on('leave-full-screen', () => {
+    dshManager.log('info', '窗口退出系统全屏')
+    sendToRenderer('app:fullscreen', false)
+  })
+
   // 内嵌页（DSH 界面 / DeepSeek 用量）：禁止它们自己弹原生窗口，弹窗一律交给系统浏览器
   mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
@@ -317,7 +343,7 @@ function createWindow() {
 }
 
 /**
- * 开发期（非打包）用 F12 / Ctrl+Shift+I 打开开发者工具。
+ * 开发期（非打包）用 F12 / Ctrl+Shift+I（macOS 上 Cmd+Alt+I）打开开发者工具。
  * 现在默认菜单被移除了，没有这条通路就只能靠猜样式为什么不对 ——
  * 有了它，可以直接看真实元素结构（探针也能少写几次）。
  *
@@ -327,8 +353,11 @@ function wireDevTools(contents) {
   if (app.isPackaged) return
   contents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
+    const key = String(input.key || '').toLowerCase()
     const isF12 = input.key === 'F12'
-    const isInspect = input.control && input.shift && String(input.key).toLowerCase() === 'i'
+    // Windows/Linux 是 Ctrl+Shift+I，macOS 习惯是 Cmd+Alt+I
+    const isInspect =
+      (input.control && input.shift && key === 'i') || (isMac && input.meta && input.alt && key === 'i')
     if (!isF12 && !isInspect) return
     event.preventDefault()
     if (contents.isDevToolsOpened()) contents.closeDevTools()
@@ -341,7 +370,8 @@ function wireDevTools(contents) {
  *
  * 为什么需要：键盘焦点在 <webview> 里时，键盘事件只到 guest，渲染层那个
  * window 级 keydown 处理器收不到 —— 于是人在 Harness 页里时，
- * Ctrl+1~6 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构全部失灵。
+ * Ctrl+1~6 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构全部失灵
+ * （macOS 上对应 Cmd+1~6 / Cmd+R / Cmd+Shift+D）。
  *
  * 做法是把同一个按键事件重新注入宿主 webContents，让渲染层原有的处理器照常处理
  * （不在这里复制一份快捷键逻辑，免得两处慢慢走样）。
@@ -352,14 +382,19 @@ function wireGuestShortcuts(guest) {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return
     const key = String(input.key || '')
     const lower = key.toLowerCase()
-    const plain = (input.control && !input.shift && !input.alt) || false
-    const isAppKey = (plain && /^[1-6]$/.test(key)) || (plain && lower === 'r') ||
-      (input.control && input.shift && !input.alt && lower === 'd')
+    // 应用快捷键的修饰键按平台取：macOS 认 Cmd，其它平台认 Ctrl（与渲染层一致）
+    const primary = isMac ? Boolean(input.meta) : Boolean(input.control)
+    const plain = primary && !input.shift && !input.alt
+    const isAppKey =
+      (plain && /^[1-6]$/.test(key)) ||
+      (plain && lower === 'r') ||
+      (primary && input.shift && !input.alt && lower === 'd')
     const isEscape = key === 'Escape'
     if (!isAppKey && !isEscape) return
 
     const modifiers = []
     if (input.control) modifiers.push('control')
+    if (input.meta) modifiers.push('meta')
     if (input.shift) modifiers.push('shift')
     if (input.alt) modifiers.push('alt')
     mainWindow.webContents.sendInputEvent({
@@ -376,8 +411,8 @@ function wireGuestShortcuts(guest) {
 /**
  * 窗口图标。
  *
- * 打包后不用管：electron-builder 会把 `build/icon.png` 转成多尺寸 .ico 并嵌进 exe，
- * Windows 的窗口/任务栏图标直接取自 exe（所以 `build/` 不需要打进 asar）。
+ * 打包后不用管：electron-builder 会把 `build/icon.png` 转成多尺寸 .ico / .icns
+ * 并嵌进 exe / app bundle，系统直接取自可执行文件（所以 `build/` 不需要打进 asar）。
  * 这里只是为了**开发时**也有正确的图标 —— 从仓库里那张源图读。
  */
 function makeIcon() {
@@ -391,6 +426,43 @@ function makeIcon() {
     // 读不到就用系统默认图标，不影响运行
   }
   return undefined
+}
+
+/** macOS 开发态：Dock 图标取自同一张源图（打包后由 .icns 提供，不必覆盖） */
+function applyDockIcon() {
+  if (!isMac || app.isPackaged || !app.dock) return
+  const icon = makeIcon()
+  if (icon) {
+    try {
+      app.dock.setIcon(icon)
+    } catch {
+      /* 设置失败不影响运行 */
+    }
+  }
+}
+
+/**
+ * 应用菜单。
+ *
+ * Windows/Linux 上刻意留空（原来的行为）：界面自带全部操作入口，系统菜单栏只是干扰。
+ *
+ * macOS 不能留空 —— 系统级快捷键（Cmd+Q 退出、Cmd+W 关窗、Cmd+C/V 复制粘贴、
+ * Cmd+M 最小化）都由菜单提供，菜单为空时这些键在文本框里都会失灵。
+ * 所以给一个最小原生菜单：应用 / 编辑 / 显示 / 窗口。
+ */
+function installApplicationMenu() {
+  if (!isMac) {
+    Menu.setApplicationMenu(null)
+    return
+  }
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      { role: 'windowMenu' }
+    ])
+  )
 }
 
 function registerIpc() {
@@ -416,6 +488,11 @@ function registerIpc() {
          * 渲染层据此在状态栏说一句"已更新到 x.y.z"。
          */
         updated: process.argv.includes('--updated'),
+        /**
+         * 系统窗口是否处于全屏（macOS 绿灯 / Windows F11）。
+         * 渲染层据此决定要不要给红绿灯留位置 —— 全屏时它会自动隐藏。
+         */
+        nativeFullscreen: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()),
         versions: { electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome }
       },
       userData: app.getPath('userData'),
@@ -652,10 +729,11 @@ if (!gotLock) {
     }
   })
 
-  Menu.setApplicationMenu(null)
+  installApplicationMenu()
 
   app.whenReady().then(() => {
     console.log(`[main] 日志文件: ${fileLog.file}`)
+    applyDockIcon()
     void bootstrap()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -663,7 +741,9 @@ if (!gotLock) {
   })
 
   app.on('window-all-closed', () => {
-    app.quit()
+    // macOS 惯例：关掉窗口后应用留在 Dock 里，点图标由 activate 重建窗口；
+    // 其它平台保持"窗口全关即退出"。
+    if (!isMac) app.quit()
   })
 
   // 退出前收尾：按设置决定是否连带停掉 dsh
@@ -673,7 +753,7 @@ if (!gotLock) {
     if (killOnExit && dshManager.ownProcess) {
       const pid = dshManager.ownedPid
       dshManager.log('info', `应用退出：停止本应用启动的 dsh${pid ? ` (PID ${pid})` : ''}`)
-      // PID 可能还没就绪（ConPTY 异步）：那时至少把 pty 子进程杀掉
+      // PID 可能还没就绪（PTY 异步）：那时至少把 pty 子进程杀掉
       if (pid) processUtils.killTreeSync(pid)
       else if (ptySessions) ptySessions.kill(dshManager.sessionId, true)
     }

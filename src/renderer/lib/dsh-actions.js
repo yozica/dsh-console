@@ -6,13 +6,13 @@
  * 依赖通过参数传入，模块本身不持有状态。
  */
 
-/** 结束外部实例前先问一次：它会 taskkill 整棵进程树 */
+/** 结束外部实例前先问一次：它会强制结束整棵进程树 */
 async function confirmKillExternal(api, dsh) {
   return api.confirm({
     type: 'warning',
     title: '结束外部 dsh 实例',
     message: `PID ${dsh.externalPid} 不是本应用启动的，确定要结束它吗？`,
-    detail: '结束外部实例会直接 taskkill 该进程树，未保存的会话可能丢失。'
+    detail: '结束外部实例会强制结束该进程树，未保存的会话可能丢失。'
   })
 }
 
@@ -32,7 +32,7 @@ export async function forceStopFlow(api) {
   const ok = await api.confirm({
     type: 'warning',
     title: '强制结束',
-    message: '直接 taskkill /T /F 结束进程树？',
+    message: '直接强制结束整棵进程树？',
     detail: '这会跳过 Ctrl+C 优雅退出，dsh 没有机会清理子进程或落盘。'
   })
   if (!ok) return

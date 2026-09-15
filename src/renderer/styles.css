@@ -396,8 +396,10 @@ select {
   min-height: 0;
 }
 
-/* 顶栏同时是窗口的标题栏（titleBarStyle: 'hidden' + 系统控件浮层）：
-   整条可拖动，右侧留出系统按钮的位置，退出全屏按钮就落在系统按钮左边。 */
+/* 顶栏同时是窗口的标题栏：
+   Windows/Linux 是 titleBarStyle: 'hidden' + 右上角系统控件浮层，
+   macOS 是 hiddenInset + 左上角红绿灯（见下面的 data-platform 覆盖）。
+   整条可拖动，系统控件的位置由内边距让出来，「退出全屏」按钮落在另一侧。 */
 .topbar {
   display: flex;
   align-items: center;
@@ -419,6 +421,53 @@ select {
 .topbar input,
 .topbar select {
   -webkit-app-region: no-drag;
+}
+
+/* ---------------------------------------------------------------- macOS 标题栏
+   红绿灯由 hiddenInset 画在**窗口**左上角（见主进程的 trafficLightPosition）。
+   关键认识：贴着窗口左边的那一列是**左栏（.rail）**，不是顶栏 —— 顶栏在左栏右侧
+   （x=188），红绿灯根本够不到它。所以留白要给左栏；曾经误给顶栏加 84px 左内边距，
+   结果是页面标题被冤枉地缩进了 84px（用户抓图指出过）。
+
+   左栏的做法：顶部让出一条与标题栏等高（+12px 气口）的区域给红绿灯，
+   并把左栏整列设为可拖动区（按钮除外）—— 这样红绿灯旁边那条空白也能拖窗口，
+   与 macOS 原生侧边栏一致。 */
+html[data-platform='darwin'] .rail {
+  padding-top: calc(var(--bar-h) + 12px);
+  -webkit-app-region: drag;
+}
+
+html[data-platform='darwin'] .rail button,
+html[data-platform='darwin'] .rail input,
+html[data-platform='darwin'] .rail select {
+  -webkit-app-region: no-drag;
+}
+
+/* 顶栏右侧：env(titlebar-area-*) 在 macOS 上不生效，那条 calc 会退回 150px 的兜底值，
+   不覆盖的话右侧会被白挤掉一大块。（左侧不用管 —— 红绿灯在左栏那边。） */
+html[data-platform='darwin'] .topbar {
+  padding-right: 12px;
+}
+
+/* 例外：应用内全屏时左栏被藏掉，顶栏就成了最左边的一列 —— 这时才需要给红绿灯留白。
+   数值 = trafficLightPosition 的 x:14 + 三个按钮宽度（约 52px）+ 12px 气口。 */
+html[data-platform='darwin'] body[data-immersive='true'] .topbar {
+  padding-left: 84px;
+}
+
+/* 系统全屏（macOS 绿灯 / ⌃⌘F，Windows F11）时全部撤回：
+   全屏下红绿灯平时是隐藏的，只有鼠标移到屏幕顶端才出现 —— 继续留白就是一块
+   说不清用途的空白（用户抓图指出过两处：左栏顶部一条空带、顶栏标题被白缩进）。
+   注意这两条必须排在前面几条**之后**（同权重靠顺序生效），并且把
+   data-immersive 的组合也写全，免得"系统全屏 + 应用内全屏"时被上面那条盖回去。
+   这个状态由主进程的 window.isFullScreen() → env.nativeFullscreen / app:fullscreen 事件给出。 */
+html[data-platform='darwin'] body[data-native-fullscreen='true'] .rail {
+  padding-top: 16px;
+}
+
+html[data-platform='darwin'] body[data-native-fullscreen='true'] .topbar,
+html[data-platform='darwin'] body[data-native-fullscreen='true'][data-immersive='true'] .topbar {
+  padding-left: 20px;
 }
 
 .page-title {

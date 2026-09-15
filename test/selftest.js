@@ -5,11 +5,12 @@
  * 运行：npm test
  *
  * 覆盖：
- *   1. dsh 启动命令解析（node + bin.js / shim / npx 三级回退）
+ *   1. dsh 启动命令解析（node + bin.js / shim / npx 三级回退，按平台判定）
  *   2. ANSI 清理 + 从 dsh 横幅里提取带令牌的 URL
  *   3. HTTP 健康探测的 dsh 判据（真实探测本机端口 + 纯函数夹具）
- *   4. netstat 端口占用解析（夹具单测 + 可选的真实查询）
+ *   4. 端口占用解析（Windows 的 netstat / macOS·Linux 的 lsof 夹具 + 可选的真实查询）
  *   5. DshManager 状态机（外部实例接管判定）
+ *   6. 渲染层静态检查（含 macOS 的平台适配契约）
  */
 
 const path = require('node:path')
@@ -21,6 +22,9 @@ const { Settings, DEFAULTS } = require('../src/main/settings')
 const { PtySessions } = require('../src/main/pty-sessions')
 const { DshManager } = require('../src/main/dsh-manager')
 
+const IS_WINDOWS = process.platform === 'win32'
+const IS_MAC = process.platform === 'darwin'
+
 const results = []
 function check(name, ok, extra) {
   results.push({ name, ok })
@@ -30,12 +34,30 @@ function skip(name, why) {
   console.log(`SKIP  ${name}  — ${why}`)
 }
 
-/** 当前环境能否启动外部命令（受限沙箱里 netstat/tasklist 会 EPERM） */
+/** 当前环境能否启动外部命令（受限沙箱里 netstat/lsof/ps 会被拒） */
 function canSpawnBinaries() {
   return new Promise((resolve) => {
+    const command = IS_WINDOWS ? 'netstat' : 'lsof'
+    const args = IS_WINDOWS ? ['-ano', '-p', 'tcp'] : ['-nP', '-iTCP:1', '-sTCP:LISTEN']
     try {
-      execFile('netstat', ['-ano', '-p', 'tcp'], { windowsHide: true, timeout: 8000 }, (error, stdout) => {
-        resolve(!error && Boolean(stdout))
+      execFile(command, args, { windowsHide: true, timeout: 8000 }, (error) => {
+        // 命令不存在/被拒才算不可用；"没匹配到监听"（lsof 退出码 1）也是跑起来了
+        resolve(!error || !['ENOENT', 'EPERM', 'EACCES'].includes(String(error.code)))
+      })
+    } catch {
+      resolve(false)
+    }
+  })
+}
+
+/** 进程名查询单独探测：macOS 上 lsof 可能可用而 ps 被沙箱禁掉 */
+function canQueryProcessName() {
+  return new Promise((resolve) => {
+    const command = IS_WINDOWS ? 'tasklist' : 'ps'
+    const args = IS_WINDOWS ? ['/FI', 'PID eq 1', '/FO', 'CSV', '/NH'] : ['-o', 'comm=', '-p', '1']
+    try {
+      execFile(command, args, { windowsHide: true, timeout: 8000 }, (error) => {
+        resolve(!error || !['ENOENT', 'EPERM', 'EACCES'].includes(String(error.code)))
       })
     } catch {
       resolve(false)
@@ -58,11 +80,88 @@ async function main() {
   )
   check('命令解析：带上了 --no-open 与 --port', launch.args.includes('--no-open') && launch.args.includes('--port'))
 
-  const shimLaunch = processUtils.resolveDshInvocation({ ...settings.all(), dshCommand: 'C:\\fake\\dsh.cmd' })
-  check('命令解析：自定义命令走 cmd.exe', shimLaunch.file.toLowerCase().includes('cmd') && shimLaunch.kind === 'custom-shim')
+  if (IS_WINDOWS) {
+    const shimLaunch = processUtils.resolveDshInvocation({ ...settings.all(), dshCommand: 'C:\\fake\\dsh.cmd' })
+    check('命令解析：自定义 .cmd 走 cmd.exe', shimLaunch.file.toLowerCase().includes('cmd') && shimLaunch.kind === 'custom-shim')
+  } else {
+    // macOS/Linux 上 .cmd 是 Windows 批处理：必须明确报错，而不是假装能跑
+    let rejected = false
+    try {
+      processUtils.resolveDshInvocation({ ...settings.all(), dshCommand: 'C:\\fake\\dsh.cmd' })
+    } catch (error) {
+      rejected = /批处理/.test(error.message)
+    }
+    check('命令解析：POSIX 下 .cmd 明确报错而不是假装能跑', rejected)
+  }
+
+  const directLaunch = processUtils.resolveDshInvocation({ ...settings.all(), dshCommand: '/usr/local/bin/dsh' })
+  check(
+    '命令解析：自定义命令直接执行（不带 shim）',
+    directLaunch.kind === 'custom' && directLaunch.file === '/usr/local/bin/dsh',
+    directLaunch.display
+  )
+
+  // 回归：macOS 上从 Finder/Dock 启动的 GUI 应用 PATH 很窄（不含 nvm/homebrew 的 bin），
+  // 那时既找不到 dsh shim 也找不到 node，于是退到 npx —— 而 npx 要联网解析/安装包，
+  // 一旦 npm 缓存或网络有问题，dsh 会瞬间以退出码 1 结束，界面只看到"启动不了"。
+  // 所以解析必须能直接从全局安装目录找到 bin.js，不依赖 PATH。
+  const savedPath = process.env.PATH
+  try {
+    process.env.PATH = IS_WINDOWS ? 'C:\\Windows\\System32' : '/usr/bin:/bin'
+    const narrow = processUtils.resolveDshInvocation(settings.all())
+    if (narrow.kind === 'node-bin') {
+      check('命令解析：PATH 里没有 dsh 也能从全局安装目录找到 bin.js', true, narrow.display)
+    } else {
+      skip(
+        '命令解析：PATH 里没有 dsh 也能从全局安装目录找到 bin.js',
+        `本机未发现全局安装的 @deepseek-ai/dsh（解析为 ${narrow.kind}）`
+      )
+    }
+  } catch (error) {
+    skip('命令解析：PATH 里没有 dsh 也能从全局安装目录找到 bin.js', `本机没有可用的 node/dsh：${error.message}`)
+  } finally {
+    process.env.PATH = savedPath
+  }
+
+  // 自定义命令可以写整条命令行：第一个 token 是可执行文件，后面的作为前置参数。
+  // 这是"换一个能跑 dsh 的 Node"的唯一出口（PATH 里的 node 未必是能跑它的那个）。
+  const prefixed = processUtils.resolveDshInvocation({
+    ...settings.all(),
+    dshCommand: '/opt/x/bin/node /opt/x/lib/node_modules/@deepseek-ai/dsh/lib/bin.js'
+  })
+  check(
+    '命令解析：自定义命令带前置参数（node + 入口脚本）',
+    prefixed.kind === 'custom' &&
+      prefixed.file === '/opt/x/bin/node' &&
+      prefixed.args[0].endsWith('lib/bin.js') &&
+      prefixed.args.includes('--port'),
+    prefixed.display
+  )
+
+  // 关键回归：解析出来的解释器必须**真的能跑 dsh**。
+  // dsh 的 CLI 在不兼容的 Node 上不会报错，只安静退出（退出码 0、零输出）——
+  // 光看退出码永远发现不了，所以选解释器时要实测一次（`<node> <bin.js> --version`）。
+  const candidates = processUtils.dshInterpreterCandidates()
+  const working = candidates.filter((c) => processUtils.canRunDsh(c.node, c.binJs))
+  if (working.length === 0) {
+    skip('命令解析：解析出的解释器实测能跑 dsh', '本机没有任何能跑 dsh 的 node（或不允许起子进程）')
+  } else {
+    check(
+      '命令解析：解析出的解释器实测能跑 dsh',
+      processUtils.canRunDsh(launch.file, launch.args[0]),
+      `${launch.file} ← 候选里可用的有 ${working.length} 个`
+    )
+  }
 
   const shell = processUtils.resolveShell(settings.all())
   check('本地 Shell 解析：文件存在', fs.existsSync(shell.file), shell.file)
+  if (!IS_WINDOWS) {
+    check(
+      '本地 Shell 解析：POSIX 用登录 shell（zsh/bash，带 -l）',
+      shell.args.includes('-l') && /(zsh|bash|sh)$/.test(shell.file),
+      `${shell.file} ${shell.args.join(' ')}`
+    )
+  }
 
   // ---------------------------------------------------------- 2. ANSI + 横幅
   const banner =
@@ -90,6 +189,8 @@ async function main() {
   check('健康探测：无服务时判定不可达', deadProbe.reachable === false && deadProbe.isDsh === false)
 
   // ---------------------------------------------------------- 4. 端口占用解析
+  //    两个解析器都是纯函数，所以**在哪个平台都跑两套夹具** ——
+  //    这样在 mac 上开发也不会把 Windows 的 netstat 解析改坏（反之亦然）。
   const netstatFixture = [
     '',
     '活动连接',
@@ -106,17 +207,33 @@ async function main() {
   check('netstat 解析：不会误取其它端口', processUtils.parseNetstatForPort(netstatFixture, 4242) === null)
   check('netstat 解析：ESTABLISHED 行不会被当成监听', processUtils.parseNetstatForPort(netstatFixture, 54321) === null)
 
+  const lsofFixture = [
+    'COMMAND   PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME',
+    'node    42112 licheng   20u  IPv4 0x8a1b2c3d4e5f      0t0  TCP 127.0.0.1:3080 (LISTEN)',
+    'node    42113 licheng   21u  IPv6 0x8a1b2c3d4e60      0t0  TCP *:3081 (LISTEN)',
+    'node    42112 licheng   22u  IPv4 0x8a1b2c3d4e61      0t0  TCP 127.0.0.1:54321->127.0.0.1:3080 (ESTABLISHED)',
+    ''
+  ].join('\n')
+  const lsofParsed = processUtils.parseLsofForPort(lsofFixture, 3080)
+  check('lsof 解析：挑出 LISTEN 行的 PID', lsofParsed && lsofParsed.pid === 42112, JSON.stringify(lsofParsed))
+  check('lsof 解析：通配监听 *:3081 也能命中', processUtils.parseLsofForPort(lsofFixture, 3081)?.pid === 42113)
+  check('lsof 解析：不会误取其它端口', processUtils.parseLsofForPort(lsofFixture, 4242) === null)
+  check('lsof 解析：ESTABLISHED 行不会被当成监听', processUtils.parseLsofForPort(lsofFixture, 54321) === null)
+
   const spawnOk = await canSpawnBinaries()
+  const nameQueryOk = await canQueryProcessName()
   if (!spawnOk) {
-    skip('端口占用查询（真实 netstat）', '当前环境不允许启动外部命令（受限沙箱）')
+    skip('端口占用查询（真实系统命令）', '当前环境不允许启动外部命令（受限沙箱）')
   } else if (!probe.reachable) {
-    skip('端口占用查询（真实 netstat）', '3080 无监听')
+    skip('端口占用查询（真实系统命令）', '3080 无监听')
   } else {
     const owner = await processUtils.portOwnerSync(3080)
     check('端口占用查询：拿到 PID', Boolean(owner && Number.isInteger(owner.pid)), owner ? `PID ${owner.pid}` : 'null')
-    if (owner) {
+    if (owner && nameQueryOk) {
       const name = await processUtils.processNameSync(owner.pid)
       check('端口占用查询：拿到进程名', name.length > 0, name)
+    } else if (owner) {
+      skip('端口占用查询：拿到进程名', '当前环境不允许启动 ps / tasklist')
     }
   }
 
@@ -131,7 +248,7 @@ async function main() {
     if (spawnOk) {
       check('状态机：记录了外部 PID', Boolean(snapshot.externalPid), `PID ${snapshot.externalPid}`)
     } else {
-      skip('状态机：外部 PID', '当前环境不允许启动 netstat')
+      skip('状态机：外部 PID', '当前环境不允许启动端口查询命令')
     }
   } else {
     check('状态机：无服务时判定为已停止', snapshot.phase === 'stopped', `phase=${snapshot.phase}`)
@@ -141,10 +258,14 @@ async function main() {
     ['phase', 'origin', 'probe', 'launch', 'logs', 'latencyHistory'].every((key) => key in snapshot)
   )
   check('进程存活判定：不存在的 PID 视为已死', processUtils.isAlive(999999) === false)
-  check('node-pty 可加载（ConPTY 支持）', typeof ptySessions.create === 'function')
+  check(
+    `node-pty 可加载（${IS_WINDOWS ? 'ConPTY' : 'forkpty'} 支持）`,
+    typeof ptySessions.create === 'function'
+  )
 
   // 回归：node-pty 在 Windows/ConPTY 下构造时 pid=0，要等 ready_datapipe 才原地更新。
   // 曾经用 Boolean(pid) 判断归属，导致 pid=0 时"启动"可点、"停止"被禁用。
+  // macOS 上 PID 是同步就绪的，但"就绪前按会话归属、不按 PID"这条判据仍然要成立。
   let fakePid = 0
   const stubPty = {
     on() {},
@@ -164,7 +285,7 @@ async function main() {
     `owned=${early.owned} pid=${early.pid}`
   )
   fakePid = 42148
-  check('状态机：ConPTY 就绪后能读到真实 PID', stubManager.ownedPid === 42148, `pid=${stubManager.ownedPid}`)
+  check('状态机：PTY 就绪后能读到真实 PID', stubManager.ownedPid === 42148, `pid=${stubManager.ownedPid}`)
   fakePid = 0
   stubManager.portPid = 999
   check('状态机：PID 未知时用端口占用者兜底', stubManager.ownedPid === 999, `pid=${stubManager.ownedPid}`)
@@ -173,6 +294,20 @@ async function main() {
   stubPty.has = () => false
   stubManager.portPid = null
   check('状态机：会话结束后不再认定为本应用启动', stubManager.ownProcess === false)
+
+  // 启动失败时要把 dsh 自己说的原因带进事件日志。
+  // 之前只记「退出码 1」，真正的原因（端口被占 / npx 报错）躺在终端页里没人发现 ——
+  // 用户看到的就只是"启动不了"。
+  stubManager.buffer = [
+    '\u001b[32mdsh\u001b[0m 正在启动…\r\n',
+    '\u001b[31mnpm error code EPERM\u001b[0m\r\n',
+    'npm error syscall open\r\n',
+    'npm error Log files were not written due to an error writing to the directory\r\n'
+  ]
+  const reason = stubManager.lastOutputLine()
+  check('启动失败：能从终端缓冲里摘出像报错的那一行', /EPERM/.test(reason), reason)
+  stubManager.buffer = []
+  check('启动失败：没有输出时返回空串（不会伪造原因）', stubManager.lastOutputLine() === '')
 
   // ---------------------------------------------------------- 6. 渲染层静态检查
   //    渲染层没有类型检查，这里挡掉最容易犯的错：元素 id / class / API 名拼错。
@@ -323,6 +458,39 @@ async function main() {
     '渲染层：CSS 用到的 body[data-*] 开关都有人设置',
     bodyFlags.length > 0 && unwiredFlags.length === 0,
     unwiredFlags.length ? `没人设置 ${unwiredFlags.join(', ')}` : bodyFlags.join(', ')
+  )
+
+  // macOS 适配的契约一：红绿灯画在**窗口**左上角，而贴窗口左边的是左栏（.rail）——
+  // 顶栏在左栏右侧，够不到红绿灯。踩过两次，所以四条都用检查钉住：
+  //   1. 左栏顶部让出一条与标题栏等高的区域（padding-top）
+  //   2. 顶栏只在「应用内全屏（左栏被藏掉、顶栏变成最左列）」时才让白
+  //   3. 顶栏在非全屏时**不能**有左内边距（否则页面标题被冤枉缩进 84px）
+  //   4. 系统全屏（红绿灯自动隐藏）时把 1、2 都撤回
+  const platformJs = fs.readFileSync(path.join(rendererDir, 'lib', 'platform.js'), 'utf8')
+  check(
+    '渲染层：macOS 红绿灯留白给左栏（应用内全屏让白、系统全屏撤回、非全屏顶栏不缩进）',
+    /html\[data-platform='darwin'\]\s*\.rail\s*\{[^}]*padding-top/.test(cssText) &&
+      /html\[data-platform='darwin'\]\s*body\[data-immersive='true'\]\s*\.topbar\s*\{[^}]*padding-left/.test(cssText) &&
+      !/html\[data-platform='darwin'\]\s*\.topbar\s*\{[^}]*padding-left/.test(cssText) &&
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.rail\s*\{[^}]*padding-top/.test(cssText) &&
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.topbar[^{]*\{[^}]*padding-left/.test(cssText) &&
+      /api\.onFullscreen\(/.test(rendererCode) &&
+      /onFullscreen:/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8')) &&
+      /documentElement\.dataset\.platform\s*=/.test(platformJs) &&
+      /setPlatform\(snapshot\.value\?\.env\?\.platform\)/.test(rendererCode),
+    '左栏让位 + 应用内全屏顶栏让位 + 系统全屏撤回 + 非全屏不缩进 + platform/全屏状态都有来源'
+  )
+
+  // macOS 适配的契约二：三处快捷键处理器都必须走平台修饰键
+  // （mac 认 Cmd、其它平台认 Ctrl），不能各自写死 ctrlKey —— 写死的话 mac 上全部失灵。
+  const shortcutFiles = ['app.js', 'dev-diagnostics.js', path.join('lib', 'xterm.js')]
+  const notPlatformAware = shortcutFiles.filter(
+    (rel) => !fs.readFileSync(path.join(rendererDir, rel), 'utf8').includes('isAppModifier(')
+  )
+  check(
+    '渲染层：三处快捷键处理器都按平台取修饰键',
+    notPlatformAware.length === 0,
+    notPlatformAware.length ? `未适配：${notPlatformAware.join(', ')}` : `${shortcutFiles.length} 处都走 isAppModifier`
   )
 
   // 依赖从"index.html 里的 script 标签"改成了模块导入（Vite 构建），

@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld('dshConsole', {
   setTheme: (mode) => ipcRenderer.invoke('theme:set', mode),
   onTheme: (handler) => subscribe('theme:changed', handler),
 
+  // 系统窗口全屏状态（macOS 绿灯 / Windows F11）：全屏时红绿灯会自动隐藏，
+  // 渲染层据此取消为它预留的空白
+  onFullscreen: (handler) => subscribe('app:fullscreen', handler),
+
   // dsh 进程控制
   start: () => ipcRenderer.invoke('dsh:start'),
   stop: (options) => ipcRenderer.invoke('dsh:stop', options || {}),

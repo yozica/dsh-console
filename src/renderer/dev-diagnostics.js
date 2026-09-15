@@ -1,16 +1,18 @@
 /**
- * 开发期诊断：Ctrl+Shift+D 把当前界面的元素结构导出到日志文件。
+ * 开发期诊断：Ctrl+Shift+D（macOS 上 ⌘⇧D）把当前界面的元素结构导出到日志文件。
  *
  * 为什么需要它：界面出问题时（某块是黑的、某块不撑满、被谁挡住），
  * 只看截图容易靠猜 —— 而"每个元素的尺寸/位置/背景/display"是确定的。
  * 这条快捷键把整棵树打进 console，而渲染层的 console 会转发到主进程日志文件，
  * 于是**排查的一方（人或 agent）可以直接读那个文件**，不必反复要截图。
  *
- * 另外 F12 / Ctrl+Shift+I 由主进程处理（见 main.js 的 wireDevTools），
+ * 另外 F12 / Ctrl+Shift+I（macOS 上 ⌘⌥I）由主进程处理（见 main.js 的 wireDevTools），
  * 那是真正的开发者工具；这里只是"一键导出结构"的轻量版。
  *
  * 只在开发态安装：打包后 main.js 不会调 installDevDiagnostics()。
  */
+
+import { isAppModifier, shortcutLabel } from './lib/platform.js'
 
 const MAX_DEPTH = 12
 const MAX_LINES = 600
@@ -74,7 +76,7 @@ function dumpState() {
 
 export function installDevDiagnostics() {
   window.addEventListener('keydown', (event) => {
-    if (!event.ctrlKey || !event.shiftKey) return
+    if (!isAppModifier(event) || !event.shiftKey) return
     const key = String(event.key).toLowerCase()
     if (key === 'd') {
       event.preventDefault()
@@ -82,5 +84,7 @@ export function installDevDiagnostics() {
       dumpDom()
     }
   })
-  console.log('[dev] 诊断快捷键已就绪：F12 开发者工具，Ctrl+Shift+D 导出界面结构到日志')
+  console.log(
+    `[dev] 诊断快捷键已就绪：F12 开发者工具，${shortcutLabel('Shift+D')} 导出界面结构到日志`
+  )
 }

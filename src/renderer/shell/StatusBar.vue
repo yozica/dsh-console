@@ -9,6 +9,7 @@
  */
 import { computed, onUnmounted, ref } from 'vue'
 import { dsh, phaseInfo, snapshot } from '../lib/store.js'
+import { shortcutLabel } from '../lib/platform.js'
 
 const MESSAGE_MS = 6000
 
@@ -40,13 +41,16 @@ const env = computed(() => {
   const kind = dsh.value?.launch?.kind || '—'
   return `Electron ${versions.electron}，Node ${versions.node}，命令解析方式 ${kind}`
 })
+
+/** 快捷键提示按平台写：macOS 是 ⌘1~6，其它平台是 Ctrl+1~6 */
+const tabHint = computed(() => `${shortcutLabel('1~6')} 切换页面`)
 </script>
 
 <template>
   <footer class="statusbar">
     <span id="footer-state">{{ message || state }}</span>
     <div class="spacer"></div>
-    <span class="kbd-hint">Ctrl+1~6 切换页面</span>
+    <span class="kbd-hint">{{ tabHint }}</span>
     <span id="footer-env">{{ env }}</span>
   </footer>
 </template>

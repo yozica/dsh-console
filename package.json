@@ -3,7 +3,7 @@
   "productName": "DSH Console",
   "version": "0.1.0",
   "private": true,
-  "description": "Windows desktop console for DeepSeek Harness: start/stop dsh, monitor its service health, and watch it in a real terminal.",
+  "description": "Desktop console for DeepSeek Harness (Windows / macOS): start/stop dsh, monitor its service health, and watch it in a real terminal.",
   "main": "src/main/main.js",
   "license": "MIT",
   "author": {
@@ -24,8 +24,12 @@
     "start": "npm run build && electron .",
     "watch": "vite build --watch",
     "test": "node test/selftest.js",
-    "pack": "npm run build && electron-builder --win --dir",
-    "dist": "npm run build && electron-builder --win"
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "pack:win": "npm run build && electron-builder --win --dir",
+    "dist:win": "npm run build && electron-builder --win",
+    "pack:mac": "npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",
@@ -97,6 +101,30 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "darkModeSupport": true,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "DSH Console ${version}"
     }
   }
 }

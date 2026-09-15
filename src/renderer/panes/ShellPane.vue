@@ -1,6 +1,7 @@
 <script setup>
 /**
- * 本地 Shell 页：另开 pwsh/powershell/cmd 会话用来手工排查，和 dsh 进程互不干扰。
+ * 本地 Shell 页：另开 pwsh/powershell/cmd（macOS 上是 zsh/bash）会话用来手工排查，
+ * 和 dsh 进程互不干扰。
  *
  * 迁移前的会话管理是纯命令式的：创建时 `document.createElement` 造面板与标签、
  * 自己 classList.toggle 切 active、删除时 `.remove()`。现在标签（chips）与终端面板
@@ -16,6 +17,7 @@ import {
   TERM_THEMES
 } from '../lib/xterm.js'
 import { currentTab, snapshot, startStore } from '../lib/store.js'
+import { isMac } from '../lib/platform.js'
 
 const api = window.dshConsole
 
@@ -35,6 +37,12 @@ let offExit = null
 
 const activeSession = computed(() => sessions.value.find((item) => item.id === activeId.value) || null)
 const emptyVisible = computed(() => sessions.value.length === 0)
+/** 空状态里给的人话要跟平台一致：macOS 上默认 shell 是 zsh，没有 cmd */
+const emptyHint = computed(() =>
+  isMac.value
+    ? '开一个 zsh / bash 会话用来手工排查，它和 dsh 进程互不干扰。'
+    : '开一个 pwsh 或 cmd 会话用来手工排查，它和 dsh 进程互不干扰。'
+)
 
 function resolvedTheme() {
   return snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark'
@@ -94,7 +102,7 @@ async function attachSession(session) {
   const entry = attachTerminal(el, resolvedTheme())
   // 按存下的行列建终端：尺寸一致时第一次 fit 就是空操作，不会白白触发一次 PTY resize
   if (session.cols > 0 && session.rows > 0) entry.term.resize(session.cols, session.rows)
-  // Ctrl+1~6 交给应用；Ctrl+R 留给 shell —— 那是它的反向历史搜索
+  // Ctrl+1~6 / ⌘1~6 交给应用；Ctrl+R 留给 shell —— 那是它的反向历史搜索
   passAppShortcutsThrough(entry.term)
   entry.term.onData((data) => api.sessionInput(session.id, data))
   entry.term.onResize(({ cols, rows }) => api.sessionResize(session.id, cols, rows))
@@ -322,7 +330,7 @@ onUnmounted(() => {
     <div id="shell-empty" class="empty" :class="{ hidden: !emptyVisible }">
       <svg class="i empty-i"><use href="#i-shell" /></svg>
       <h2>还没有本地 Shell</h2>
-      <p>开一个 pwsh 或 cmd 会话用来手工排查，它和 dsh 进程互不干扰。</p>
+      <p>{{ emptyHint }}</p>
     </div>
   </div>
 </template>

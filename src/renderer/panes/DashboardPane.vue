@@ -32,7 +32,7 @@ let timer = null
 
 const phase = computed(() => dsh.value?.phase || 'stopped')
 const info = computed(() => phaseText(phase.value))
-/** 归属判断只看 dsh.owned；PID 可能是 null（ConPTY 刚拉起、还没就绪） */
+/** 归属判断只看 dsh.owned；PID 可能是 null（PTY 刚拉起、还没就绪） */
 const own = computed(() => Boolean(dsh.value?.owned))
 const switching = computed(() => phase.value === 'starting' || phase.value === 'stopping')
 
