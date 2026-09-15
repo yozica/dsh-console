@@ -48,6 +48,12 @@ contextBridge.exposeInMainWorld('dshConsole', {
   revealUserData: () => ipcRenderer.invoke('app:revealUserData'),
   confirm: (payload) => ipcRenderer.invoke('app:confirm', payload),
 
+  // 归档会话管理
+  archiveList: () => ipcRenderer.invoke('archive:list'),
+  archiveRead: (id) => ipcRenderer.invoke('archive:read', id),
+  archiveUnarchive: (id) => ipcRenderer.invoke('archive:unarchive', id),
+  archiveRemove: (id) => ipcRenderer.invoke('archive:remove', id),
+
   // 事件
   onState: (handler) => subscribe('dsh:state', handler),
   onOutput: (handler) => subscribe('dsh:output', handler),

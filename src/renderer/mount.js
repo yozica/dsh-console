@@ -11,6 +11,7 @@
  */
 
 import { createApp } from 'vue'
+import ArchivePane from './panes/ArchivePane.vue'
 import DashboardPane from './panes/DashboardPane.vue'
 import SettingsPane from './panes/SettingsPane.vue'
 import ShellPane from './panes/ShellPane.vue'
@@ -30,6 +31,7 @@ const MOUNTS = [
   ['shell-root', ShellPane],
   ['ui-root', UiPane],
   ['usage-root', UsagePane],
+  ['archive-root', ArchivePane],
   ['settings-root', SettingsPane]
 ]
 

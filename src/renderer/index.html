@@ -31,6 +31,8 @@
       <symbol id="i-usage" viewBox="0 0 24 24"><path d="M4 20h16" /><rect x="6" y="10" width="3.2" height="6" rx="1.2" /><rect x="11" y="5.5" width="3.2" height="10.5" rx="1.2" /><rect x="16" y="13" width="3.2" height="3" rx="1.2" /></symbol>
       <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9.5V4h5.5" /><path d="M20 14.5V20h-5.5" /><path d="M14.5 4H20v5.5" /><path d="M9.5 20H4v-5.5" /></symbol>
       <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M9.5 4v5.5H4" /><path d="M14.5 20v-5.5H20" /><path d="M20 9.5h-5.5V4" /><path d="M4 14.5h5.5V20" /></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5L20 20" /></symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="4.5" rx="1.2" /><path d="M5 8.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V8.5" /><path d="M10 12h4" /></symbol>
     </svg>
 
     <div class="app">
@@ -70,6 +72,12 @@
           <!-- 这一页已迁到 Vue（src/renderer/panes/），这里只留挂载点 -->
           <section class="pane" id="pane-usage">
             <div id="usage-root"></div>
+          </section>
+
+          <!-- ============================ 归档会话 ============================ -->
+          <!-- 这一页已迁到 Vue（src/renderer/panes/ArchivePane.vue），这里只留挂载点 -->
+          <section class="pane" id="pane-archive">
+            <div id="archive-root"></div>
           </section>
 
           <!-- ============================ 设置 ============================ -->

@@ -11,6 +11,7 @@ const { app, BrowserWindow, Menu, ipcMain, shell, dialog, nativeImage, nativeThe
 const { Settings } = require('./settings')
 const { PtySessions } = require('./pty-sessions')
 const { DshManager } = require('./dsh-manager')
+const { SessionArchiveManager } = require('./session-archive')
 const { installFileLogging } = require('./logger')
 const processUtils = require('./process-utils')
 
@@ -38,6 +39,8 @@ let settings
 let ptySessions
 /** @type {DshManager} */
 let dshManager
+/** @type {SessionArchiveManager} */
+let archiveManager
 
 let shellCounter = 0
 /** 应用自己开的终端会话 id（除 dsh 之外） */
@@ -370,8 +373,8 @@ function wireDevTools(contents) {
  *
  * 为什么需要：键盘焦点在 <webview> 里时，键盘事件只到 guest，渲染层那个
  * window 级 keydown 处理器收不到 —— 于是人在 Harness 页里时，
- * Ctrl+1~6 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构全部失灵
- * （macOS 上对应 Cmd+1~6 / Cmd+R / Cmd+Shift+D）。
+ * Ctrl+1~7 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构全部失灵
+ * （macOS 上对应 Cmd+1~7 / Cmd+R / Cmd+Shift+D）。
  *
  * 做法是把同一个按键事件重新注入宿主 webContents，让渲染层原有的处理器照常处理
  * （不在这里复制一份快捷键逻辑，免得两处慢慢走样）。
@@ -386,7 +389,7 @@ function wireGuestShortcuts(guest) {
     const primary = isMac ? Boolean(input.meta) : Boolean(input.control)
     const plain = primary && !input.shift && !input.alt
     const isAppKey =
-      (plain && /^[1-6]$/.test(key)) ||
+      (plain && /^[1-7]$/.test(key)) ||
       (plain && lower === 'r') ||
       (primary && input.shift && !input.alt && lower === 'd')
     const isEscape = key === 'Escape'
@@ -626,6 +629,47 @@ function registerIpc() {
     })
     return result.response === 1
   })
+
+  // ---------------------------------------------------------------- 归档会话
+  // 这些操作直接读写 DSH 磁盘数据；正在运行的 dsh 会把 workspace.json 读进内存，
+  // 所以改动要等 dsh 重启后才同步到界面里 —— 返回里的 dshRunning 让渲染层据此提示。
+
+  ipcMain.handle('archive:list', () => {
+    try {
+      return {
+        ok: true,
+        ...archiveManager.homeInfo(),
+        dshRunning: dshManager.sessionAlive,
+        sessions: archiveManager.list()
+      }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('archive:read', (_event, id) => {
+    try {
+      return { ok: true, session: archiveManager.read(String(id)) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('archive:unarchive', (_event, id) => {
+    try {
+      return { ok: true, dshRunning: dshManager.sessionAlive, ...archiveManager.unarchive(String(id)) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('archive:remove', (_event, id) => {
+    try {
+      return { ok: true, dshRunning: dshManager.sessionAlive, ...archiveManager.remove(String(id)) }
+    } catch (error) {
+      return { ok: false, error: error.message }
+    }
+  })
 }
 
 function wireManagerEvents() {
@@ -681,6 +725,7 @@ async function bootstrap() {
 
   ptySessions = new PtySessions()
   dshManager = new DshManager({ settings, ptySessions })
+  archiveManager = new SessionArchiveManager()
   wireManagerEvents()
   dropLegacySessionFile()
 

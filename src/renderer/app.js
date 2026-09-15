@@ -238,8 +238,8 @@ function wireShortcuts() {
       event.preventDefault()
       return
     }
-    if (isAppModifier(event) && !event.shiftKey && /^[1-6]$/.test(event.key)) {
-      const order = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'settings']
+    if (isAppModifier(event) && !event.shiftKey && /^[1-7]$/.test(event.key)) {
+      const order = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'archive', 'settings']
       currentTab.value = order[Number(event.key) - 1]
       event.preventDefault()
     }
