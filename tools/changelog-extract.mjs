@@ -30,7 +30,9 @@ function escapeRe(text) {
  * @returns {string|null}   条目正文；没有这一版时返回 null
  */
 export function extractChangelog(markdown, version) {
-  const wanted = String(version || '').trim().replace(/^v/i, '')
+  const wanted = String(version || '')
+    .trim()
+    .replace(/^v/i, '')
   if (!wanted) return null
 
   const lines = String(markdown || '').split(/\r?\n/)

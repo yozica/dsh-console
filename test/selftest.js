@@ -629,10 +629,14 @@ async function main() {
   // CI 里的 CSC_IDENTITY_AUTO_DISCOVERY=false 会让 app-builder-lib 的 isSignAllowed()
   // 提前返回 false，连 ad-hoc 签名都跳过 —— 所以这两处一起检查。
   const pkgJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'))
-  const releaseWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8')
+  const releaseWorkflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'release.yml'),
+    'utf8'
+  )
   check(
     '构建：macOS 走 ad-hoc 签名，且 CI 没有把签名整个关掉',
-    pkgJson.build?.mac?.identity === '-' && !/CSC_IDENTITY_AUTO_DISCOVERY\s*:\s*['"]?false/.test(releaseWorkflow),
+    pkgJson.build?.mac?.identity === '-' &&
+      !/CSC_IDENTITY_AUTO_DISCOVERY\s*:\s*['"]?false/.test(releaseWorkflow),
     `mac.identity=${JSON.stringify(pkgJson.build?.mac?.identity)}`
   )
   // xterm 与 addon 必须直接用导入的类，不能绕 window 全局：
@@ -836,12 +840,9 @@ async function main() {
   //    两个 build job 都会先失败，不会出现"包打好了才发现没说明"。
   const repoRoot = path.join(__dirname, '..')
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
-  let changelogText = ''
-  try {
-    changelogText = fs.readFileSync(path.join(repoRoot, 'CHANGELOG.md'), 'utf8')
-  } catch {
-    changelogText = ''
-  }
+  // 读不到就给空串：下面的断言会以"缺条目"的形式失败，比在这里抛异常更好读
+  const changelogPath = path.join(repoRoot, 'CHANGELOG.md')
+  const changelogText = fs.existsSync(changelogPath) ? fs.readFileSync(changelogPath, 'utf8') : ''
   // 动态 import：提取逻辑只此一份，不在自检里再抄一遍正则
   const { extractChangelog } = await import('../tools/changelog-extract.mjs')
   const section = extractChangelog(changelogText, pkg.version)
