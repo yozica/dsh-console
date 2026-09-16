@@ -43,8 +43,8 @@ const env = computed(() => {
   return `Electron ${versions.electron}，Node ${versions.node}，命令解析方式 ${kind}`
 })
 
-/** 快捷键提示按平台写：macOS 是 ⌘1~6，其它平台是 Ctrl+1~6 */
-const tabHint = computed(() => `${shortcutLabel('1~6')} 切换页面`)
+/** 快捷键提示按平台写：macOS 是 ⌘1~7，其它平台是 Ctrl+1~7（页面数见 app.ts 的 TAB_ORDER） */
+const tabHint = computed(() => `${shortcutLabel('1~7')} 切换页面`)
 </script>
 
 <template>

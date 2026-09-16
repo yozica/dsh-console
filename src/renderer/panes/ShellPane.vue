@@ -116,7 +116,7 @@ async function attachSession(session: ShellSession): Promise<void> {
   // 按存下的行列建终端：尺寸一致时第一次 fit 就是空操作，不会白白触发一次 PTY resize
   const { cols, rows } = session
   if (cols && cols > 0 && rows && rows > 0) entry.term.resize(cols, rows)
-  // Ctrl+1~6 / ⌘1~6 交给应用；Ctrl+R 留给 shell —— 那是它的反向历史搜索
+  // Ctrl+1~7 / ⌘1~7 交给应用；Ctrl+R 留给 shell —— 那是它的反向历史搜索
   passAppShortcutsThrough(entry.term)
   entry.term.onData((data) => api.sessionInput(session.id, data))
   entry.term.onResize(({ cols, rows }) => api.sessionResize(session.id, cols, rows))

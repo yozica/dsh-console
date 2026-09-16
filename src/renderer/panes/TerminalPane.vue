@@ -97,7 +97,7 @@ async function startDsh() {
 function ensureTerminal() {
   if (entry || !host.value) return entry
   entry = attachTerminal(host.value, resolvedTheme())
-  // 让 Ctrl+1~6 与 Ctrl+R 穿过终端交给应用（dsh 终端本来就不读键盘输入）
+  // 让 Ctrl+1~7 与 Ctrl+R 穿过终端交给应用（dsh 终端本来就不读键盘输入）
   passAppShortcutsThrough(entry.term, { includeReload: true })
   entry.term.onData((data) => api.dshInput(data))
   entry.term.onResize(({ cols, rows }) => api.dshResize(cols, rows))
