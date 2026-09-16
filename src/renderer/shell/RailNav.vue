@@ -7,7 +7,7 @@
  * computed 与模板绑定，跟着共享 store 走。
  *
  * 切页只改 store 里的 currentTab；真正的副作用（终端 fit、内嵌页载入等）
- * 由 app.js 监听 currentTab 自己处理 —— 那几页还没迁移。
+ * 由 app.ts 与各页自己的 watch 处理。
  */
 import { computed } from 'vue';
 import {
@@ -44,7 +44,7 @@ const themeMode = computed(
 
 const owned = computed(() => Boolean(dsh.value?.owned));
 
-/** 切页：只改共享状态，"那几页自己的副作用"由各页与 app.js 的 watch 处理 */
+/** 切页：只改共享状态，"各页自己的副作用"由 app.ts 与各页的 watch 处理 */
 function selectTab(id: TabId): void {
   currentTab.value = id;
 }

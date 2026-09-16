@@ -3,7 +3,7 @@
  * 顶栏（同时是窗口标题栏，见 README「关于应用内全屏与标题栏」）。
  *
  * 三个显示值都来自共享 store；「退出全屏」按钮只改 store 里的 immersive，
- * 真正的 body 属性与内嵌页视口重算由 app.js 监听后处理（那部分还没迁移）。
+ * 真正的 body 属性与内嵌页视口重算由 app.ts 监听后处理。
  */
 import { computed } from 'vue';
 import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../lib/store.js';
@@ -20,7 +20,7 @@ const PAGE_TITLES = {
 
 const title = computed(() => PAGE_TITLES[currentTab.value] || currentTab.value);
 
-/** 退出全屏：只改共享状态，body 属性与内嵌页视口由 app.js / UiPane 各自 watch */
+/** 退出全屏：只改共享状态，body 属性与内嵌页视口由 app.ts / UiPane 各自 watch */
 function exitImmersive() {
   immersive.value = false;
 }

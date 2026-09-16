@@ -1,8 +1,11 @@
 # 发布新版本：打一个 v* 标签，CI 打包两个平台并创建一个 Release **草稿**。
 #
-# 日常用法（本地跑这两条，剩下交给 CI）：
-#   npm version patch          # 改版本号 + 提交 + 打 v0.1.1 标签
-#   git push --follow-tags     # 把提交和标签一起推上去
+# 日常用法（本地跑，剩下交给 CI）：
+#   npm run release:prepare    # 汇总 .changeset/ 里的片段：算版本号、写 CHANGELOG、改 package.json
+#   git add -A && git commit -m "chore: 发布 0.2.3"
+#   git tag v0.2.3 && git push origin main --tags
+#
+# 注意别用 `npm version patch`：那会**再** bump 一次版本号，与 release:prepare 的结果打架。
 #
 # 产物包含：
 #   Windows：DSH Console Setup x.y.z.exe（NSIS 安装包）、DSH Console x.y.z.exe（便携版）

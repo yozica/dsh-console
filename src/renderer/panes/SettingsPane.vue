@@ -7,7 +7,7 @@
  * 现在字段名直接写在模板的 v-model 上，"界面长什么样"和"读写了哪个设置项"
  * 在同一处，改一个字段只需要动这一个文件。
  *
- * 与还没迁移的 app.js 之间只通过一个 CustomEvent 通信（保存/重载后通知它刷新快照），
+ * 与外壳（app.ts）之间只通过一个 CustomEvent 通信（保存/重载后通知它刷新快照），
  * 不共享可变全局。
  */
 import { onMounted, onUnmounted, reactive, ref, watch } from 'vue';
@@ -70,7 +70,7 @@ function flash(message: string): void {
   statusTimer = setTimeout(() => (status.value = ''), 4000);
 }
 
-/** 告诉还没迁移的 app.js：设置变了，请刷新快照并重绘 */
+/** 告诉外壳（app.ts）：设置变了，请刷新快照并重绘 */
 function announce(next: SettingsValues): void {
   window.dispatchEvent(new CustomEvent('dsh:settings-changed', { detail: next }));
 }
