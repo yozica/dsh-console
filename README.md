@@ -109,6 +109,10 @@ npm start
 > 临时要跳过钩子：`git commit --no-verify`。偶尔用可以，别形成习惯 —— 它跳过的只是"本地这次检查"，
 > CI 那一关照样在。
 
+> 整仓库重新格式化的提交记在 `.git-blame-ignore-revs` 里。本地一次性配一下
+> `git config blame.ignoreRevsFile .git-blame-ignore-revs`，`git blame` 就会跳过它们
+> （GitHub 的 blame 视图会自动读这个文件）；否则每一行都会指向"格式化"那一次改动。
+
 ### 模块求值顺序（踩过一次，白屏）
 
 `src/renderer/main.ts` 里的 import 顺序有语义，别调换：

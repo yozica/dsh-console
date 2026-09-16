@@ -1,0 +1,12 @@
+# 纯格式化的提交：git blame 应当跳过它们，否则每一行都会指向"格式化"那一次改动。
+#
+# 本地需要一次性配置（GitHub 的 blame 视图会自动读这个文件）：
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# 只登记"整仓库重新格式化"这类提交；普通业务改动不要往这里加。
+
+# style: 全量套用 Prettier
+57b0acbfa42c36afc15ad8e0b309f3082c1fb838
+
+# style: 分号与尾随逗号改为必需（semi: true / trailingComma: all）
+7d0d2f4565ebf61676147b410d392f6ea816e1ed
