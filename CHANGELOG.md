@@ -14,6 +14,26 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-16
+
+修掉 macOS 版**装完打不开**的问题：0.2.1 及以前的 mac 包在 Finder 里双击只会说
+**「DSH Console 已损坏，无法打开。你应该将它移到废纸篓。」**
+
+### 修复：macOS 包在 Apple 芯片上无法启动
+
+- **原因**：macOS 的 .app 打包时**没有签名**。Electron 自带的二进制本来是有签名的，但
+  electron-builder 重新打包会改动 bundle 内容，那条签名的封条随之失效 —— 校验时报
+  `code has no resources but signature indicates they must be present`（签名存在但无效）。
+  Apple 芯片上签名无效的 app 会被系统直接拒绝，给出的说法就是"已损坏"，而不是"未验证的开发者"。
+- **改法**：`mac.identity` 设为 `"-"`，也就是 **ad-hoc 签名**（没有开发者证书时唯一可行的签名方式），
+  并去掉 CI 里的 `CSC_IDENTITY_AUTO_DISCOVERY=false` —— 那个变量会让 electron-builder
+  连 ad-hoc 签名都跳过。
+- 现在打包出来的 `.app` 通过 `codesign --verify --deep --strict`（`valid on disk` /
+  `satisfies its Designated Requirement`），装了能正常启动。
+- **首次打开仍会被 Gatekeeper 拦一下**（ad-hoc 签名不被信任，这是没有开发者证书时的正常表现）：
+  **右键 →「打开」**，或到「系统设置 → 隐私与安全性」点「仍要打开」，也可以执行
+  `xattr -dr com.apple.quarantine "/Applications/DSH Console.app"` 去掉下载隔离标记。
+
 ## [0.2.1] - 2026-09-15
 
 补上 DSH 官方缺的一块：**翻看、恢复、删除归档过的会话**。

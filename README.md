@@ -105,9 +105,36 @@ npm run dist:mac   # 产出 dmg + zip（arm64 与 x64 各一份）到 release/
 | `release/DSH Console-0.1.0-arm64-mac.zip` | 免安装压缩包，解压即用 |
 | `release/mac-arm64/DSH Console.app` | 未打包的目录版，双击可跑 |
 
-未签名的 `.app` 首次打开会被 Gatekeeper 拦下（"无法验证开发者"）：**右键 → 打开**，或在
-「系统设置 → 隐私与安全性」里点「仍要打开」。要正式分发就配 `CSC_LINK` / `CSC_KEY_PASSWORD`
-（开发者证书）并做公证，与代码无关。
+### macOS 的签名：没证书也必须 ad-hoc 签
+
+`package.json` 里 `mac.identity` 写的是 `"-"`，也就是 **ad-hoc 签名**。这不是可选项，是必须项：
+
+- **不签名的 .app 在 Apple 芯片上根本起不来**。Electron 自带的二进制本来是有签名的，但
+  electron-builder 重新打包会改动 bundle 内容，那条签名的封条就**失效了** —— 校验时报
+  `code has no resources but signature indicates they must be present`（签名"存在但无效"），
+  系统对这种情况的说法是**「已损坏，无法打开。你应该将它移到废纸篓」**，而不是"未验证的开发者"。
+  0.2.1 就是这样：用户在 Finder 里双击只会看到"已损坏"。
+- 也别设 `CSC_IDENTITY_AUTO_DISCOVERY=false`：那会让 app-builder-lib 的 `isSignAllowed()`
+  在更早处返回 false，**连 ad-hoc 签名都一起跳过**，回到上面那个坏状态。
+- ad-hoc + 默认的 `hardenedRuntime` 需要 `com.apple.security.cs.disable-library-validation`
+  entitlement —— electron-builder 的默认 entitlements 模板里已经有了，不用自己写。
+
+装完之后的表现与说法：
+
+| 情况 | 用户看到 | 怎么办 |
+| --- | --- | --- |
+| ad-hoc 签名（现在） | "无法验证开发者"（Gatekeeper 不信任 ad-hoc 签名，`spctl` 会 rejected，属预期） | **右键 →「打开」**，或「系统设置 → 隐私与安全性 → 仍要打开」，或 `xattr -dr com.apple.quarantine "/Applications/DSH Console.app"` |
+| 完全不签名（≤0.2.1） | **「已损坏，无法打开」** | 没有"打开"按钮可用；只能用上面的 `xattr` 命令 |
+| 开发者证书 + 公证 | 无提示，直接打开 | 配 `CSC_LINK` / `CSC_KEY_PASSWORD` + 公证（需要 Apple 开发者账号） |
+
+自检里有一条静态检查盯着这处配置（`mac.identity === "-"` 且 CI 没关签名），但**签名本身是打包期的行为**，
+静态检查看不见，所以改过打包配置后本地要手动验一次：
+
+```bash
+HOME=$PWD/.build-home npx electron-builder --mac --arm64 --dir --config.npmRebuild=false
+codesign -dv --verbose=4 "release/mac-arm64/DSH Console.app"      # 期望 Signature=adhoc, flags=...adhoc,runtime
+codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望 valid on disk / satisfies its Designated Requirement
+```
 
 打包配置在 `package.json` 的 `build` 字段里，其中两条是**必须**的：
 

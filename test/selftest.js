@@ -525,6 +525,20 @@ async function main() {
     '构建：入口不用动态 import（否则产物跨 chunk 必须用模块语法）',
     !/\bawait import\(|\bimport\(/.test(rendererEntry)
   )
+
+  // macOS 打包必须签名（没有开发者证书时用 ad-hoc，即 `mac.identity: "-"`）。
+  // 踩过：0.2.1 的 mac 包装完在 Finder 里双击只报「已损坏，无法打开」——因为打包时
+  // **完全没签名**（Electron 自带二进制的签名被重新打包改坏了，等于"签名存在但无效"），
+  // 而 Apple 芯片上签名无效的 app 会被系统直接拒绝。同一个坑还有第二个入口：
+  // CI 里的 CSC_IDENTITY_AUTO_DISCOVERY=false 会让 app-builder-lib 的 isSignAllowed()
+  // 提前返回 false，连 ad-hoc 签名都跳过 —— 所以这两处一起检查。
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'))
+  const releaseWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8')
+  check(
+    '构建：macOS 走 ad-hoc 签名，且 CI 没有把签名整个关掉',
+    pkgJson.build?.mac?.identity === '-' && !/CSC_IDENTITY_AUTO_DISCOVERY\s*:\s*['"]?false/.test(releaseWorkflow),
+    `mac.identity=${JSON.stringify(pkgJson.build?.mac?.identity)}`
+  )
   // xterm 与 addon 必须直接用导入的类，不能绕 window 全局：
   // UMD 全局是命名空间对象（window.FitAddon.FitAddon 才是类），把 ESM 导入的类
   // 挂上去再读 .FitAddon 就是 undefined —— fit addon 会静默装不上、

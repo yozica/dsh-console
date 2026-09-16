@@ -7,6 +7,8 @@ release/
 .downloads/
 .verify/
 .verify-userdata/
+# 本地验证 mac 打包时给 electron-builder 用的临时 HOME（它会往 ~/Library/Caches 写东西）
+.build-home/
 *.log
 
 # 打包时留下的调试配置（electron-builder 每次生成）

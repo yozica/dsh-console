@@ -106,6 +106,7 @@
       "icon": "build/icon.png",
       "category": "public.app-category.developer-tools",
       "darkModeSupport": true,
+      "identity": "-",
       "target": [
         {
           "target": "dmg",

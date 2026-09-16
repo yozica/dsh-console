@@ -104,14 +104,14 @@ jobs:
       - name: 自检
         run: npm test
 
-      # 未签名的构建：本地/CI 出来的 .app 首次打开需要右键「打开」绕过 Gatekeeper。
-      # 要正式分发就得配 CSC_LINK / CSC_KEY_PASSWORD（开发者证书）并做公证。
+      # ad-hoc 签名（package.json 里 mac.identity = "-"）：没有开发者证书时，**也必须签**。
+      # 不签名的 .app 在 Apple 芯片上根本起不来 —— 系统弹的是「已损坏，无法打开」（0.2.1 就是这样），
+      # 而不是「未验证的开发者」。注意别再设 CSC_IDENTITY_AUTO_DISCOVERY=false：
+      # 那会让 app-builder-lib 的 isSignAllowed() 直接返回 false，连 ad-hoc 签名都跳过。
       - name: 打包（macOS，arm64 + x64）
         run: |
           npm run build
           npx electron-builder --mac --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: 列出产物
         run: ls -lh release
@@ -159,8 +159,9 @@ jobs:
 
           **下载**：Windows 用 `Setup` 安装包（推荐，装新版即原地覆盖，同目录同快捷方式、
           设置与日志保留）或免安装的便携版；macOS 用 `arm64.dmg`（Apple 芯片）或 `.dmg`（Intel）。
-          每个安装包旁边还有对应的 `.zip` 免安装版。macOS 包未签名，首次打开请**右键 →「打开」**，
-          或到「系统设置 → 隐私与安全性」点「仍要打开」。
+          每个安装包旁边还有对应的 `.zip` 免安装版。macOS 包是 **ad-hoc 签名**（没有开发者证书），
+          首次打开会被 Gatekeeper 拦下：**右键 →「打开」**，或到「系统设置 → 隐私与安全性」点「仍要打开」；
+          也可以直接去掉下载隔离属性：`xattr -dr com.apple.quarantine "/Applications/DSH Console.app"`。
           FOOTER
           echo "---- 本次 Release 正文 ----"
           cat notes.md
