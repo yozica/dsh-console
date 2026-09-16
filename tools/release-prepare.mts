@@ -11,7 +11,11 @@
  *   汇总这一步自己做（`.changeset/config.json` 里因此写着 `changelog: false`）。
  *
  * 用法：
- *   npx tsx tools/release-prepare.mts [--dry-run] [--date YYYY-MM-DD]
+ *   npx tsx tools/release-prepare.mts [--dry-run] [--date YYYY-MM-DD] [--topic "一句话主题"]
+ *
+ * `--topic` 会写成标题行的后缀（`## [0.3.0] - 2026-09-17: TypeScript 迁移`），
+ * 它同时是 **Release 标题**的来源（见 tools/release-notes.mts）。不写主题也能发，
+ * 只是 Release 标题退化成 `v0.3.0`。
  *
  * 它按顺序做四件事：算出新版本号 → 写 `CHANGELOG.md` 条目 → 改 `package.json` 的版本 →
  * 删掉已汇总的片段（含 `changeset add --empty` 产生的空片段，它们只是闸门的通行证）。
@@ -108,9 +112,15 @@ export function pickBump(types: BumpType[]): BumpType {
 }
 
 /** 拼出这一个版本的 CHANGELOG 条目（正文原样保留，片段里可以自带 `### 小节`） */
-export function buildEntry(version: string, date: string, fragments: Fragment[]): string {
+export function buildEntry(
+  version: string,
+  date: string,
+  fragments: Fragment[],
+  topic?: string | null,
+): string {
   const bodies = fragments.map((fragment) => fragment.body.trim()).filter(Boolean);
-  return `## [${version}] - ${date}\n\n${bodies.join('\n\n')}`;
+  const heading = `## [${version}] - ${date}${topic ? `: ${topic}` : ''}`;
+  return `${heading}\n\n${bodies.join('\n\n')}`;
 }
 
 /** 插到 `## [Unreleased]` 之后、上一个已发布版本之前（没有 Unreleased 段就插在最前面） */
@@ -192,7 +202,8 @@ async function main(): Promise<void> {
   const bump = pickBump(types);
   const version = incrementVersion(pkg.version, bump);
   const date = argValue(args, '--date') ?? formatDate(new Date());
-  const heading = `## [${version}] - ${date}`;
+  const topic = argValue(args, '--topic');
+  const heading = `## [${version}] - ${date}${topic ? `: ${topic}` : ''}`;
 
   const changelog = fs.readFileSync(changelogPath, 'utf8');
   if (changelog.includes(`## [${version}]`)) {
@@ -201,7 +212,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const entry = buildEntry(version, date, fragments);
+  const entry = buildEntry(version, date, fragments, topic);
   const updated = insertEntry(changelog, entry);
   const consumed = [...fragments.map((fragment) => fragment.file), ...emptyFragments];
 

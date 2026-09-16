@@ -5,12 +5,12 @@
 
 ![界面截图](docs/screenshot.png)
 
-|                       |                                                                                          |
-| --------------------- | ---------------------------------------------------------------------------------------- |
-| **要什么**            | Windows 10/11 或 macOS 11+，加 Node.js（应用通过 PATH 找 `dsh`，见下）                   |
-| **怎么装（Windows）** | 下载 `DSH Console Setup x.y.z.exe` 直接装；也可用免安装的 `DSH Console x.y.z.exe`        |
-| **怎么装（macOS）**   | 下载 `DSH Console-x.y.z-arm64.dmg`（Apple 芯片）或 `-x64.dmg`（Intel），拖进「应用程序」 |
-| **怎么跑**            | 打开即用：应用会自动拉起 dsh、打开内嵌的 DeepSeek Harness 界面并进入应用内全屏           |
+|                       |                                                                                                       |
+| --------------------- | ----------------------------------------------------------------------------------------------------- |
+| **要什么**            | Windows 10/11 或 macOS 11+，加 Node.js（应用通过 PATH 找 `dsh`，见下）                                |
+| **怎么装（Windows）** | 下载 `DSH.Console.Setup.x.y.z.exe` 直接装；也可用免安装的 `DSH.Console.x.y.z.exe`                     |
+| **怎么装（macOS）**   | 下载 `DSH.Console-x.y.z-arm64.dmg`（Apple 芯片）或 `DSH.Console-x.y.z.dmg`（Intel），拖进「应用程序」 |
+| **怎么跑**            | 打开即用：应用会自动拉起 dsh、打开内嵌的 DeepSeek Harness 界面并进入应用内全屏                        |
 
 功能一览：
 
@@ -75,8 +75,10 @@ DSH 的「归档」原本只是把会话隐藏起来、没有任何入口能找�
 
 ### Windows
 
-- `DSH Console Setup x.y.z.exe`：NSIS 安装包，可选安装目录、建桌面快捷方式；
-- `DSH Console x.y.z.exe`：免安装便携版，双击即跑。
+- `DSH.Console.Setup.x.y.z.exe`：NSIS 安装包，可选安装目录、建桌面快捷方式；
+- `DSH.Console.x.y.z.exe`：免安装便携版，双击即跑。
+
+（文件名是 electron-builder 按 `productName` 生成的：空格在文件名里会变成点，所以是 `DSH.Console.…` 而不是 `DSH Console …`。）
 
 **覆盖升级**：拿到新版安装包直接装就是**原地覆盖** —— 不会新开目录、不会多出快捷方式，
 升级时会自动关掉正在运行的旧版本。前提是打包用的 `appId` 与 `productName` 保持一致
@@ -87,8 +89,8 @@ DSH 的「归档」原本只是把会话隐藏起来、没有任何入口能找�
 
 ### macOS
 
-- `DSH Console-x.y.z-arm64.dmg`：Apple 芯片；
-- `DSH Console-x.y.z-x64.dmg`：Intel；
+- `DSH.Console-x.y.z-arm64.dmg`：Apple 芯片；
+- `DSH.Console-x.y.z.dmg`：Intel；
 - 同名的 `.zip` 是免安装压缩包，解压即用。
 
 macOS 包是 **ad-hoc 签名**（没有 Apple 开发者证书），首次打开会被 Gatekeeper 拦下，

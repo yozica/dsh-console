@@ -946,6 +946,76 @@ async function main(): Promise<void> {
     changesetConfig.privatePackages?.version === true,
   );
 
+  // ---------------------------------------------------------- 10. Release 的标题与正文
+  //    publish job 用 tools/release-notes.mts 生成标题与正文：标题 = `v<版本> —— <主题>`（主题
+  //    写在 CHANGELOG 标题行里），正文里的安装表来自**真实产物清单**。这两块最容易在改标题
+  //    格式、改产物名、或换 electron-builder 之后悄悄跑偏 —— 而跑偏的代价是发出去的 Release
+  //    让人下错文件（v0.2.0 就是说明里让下、页面上没有），所以全部钉住。
+  const releaseNotes = await import('../tools/release-notes.mjs');
+  const sampleAssets = [
+    'DSH.Console.Setup.0.3.0.exe',
+    'DSH.Console.0.3.0.exe',
+    'DSH.Console-0.3.0-arm64.dmg',
+    'DSH.Console-0.3.0.dmg',
+    'DSH.Console-0.3.0.zip',
+    'DSH.Console.0.3.0.exe.blockmap',
+    'latest.yml',
+  ];
+
+  check(
+    '发布正文：标题 = `v<版本> —— <主题>`，主题取自 CHANGELOG 标题行',
+    releaseNotes.releaseTitle(
+      '0.3.0',
+      releaseNotes.extractTopic('## [0.3.0] - 2026-09-17: TypeScript 迁移'),
+    ) === 'v0.3.0: TypeScript 迁移',
+  );
+  check(
+    '发布正文：没写主题时标题退化成 v<版本>；早期条目的 `——` 也认',
+    releaseNotes.extractTopic('## [0.3.0] - 2026-09-17') === null &&
+      releaseNotes.releaseTitle('0.3.0', null) === 'v0.3.0' &&
+      releaseNotes.extractTopic('## [0.2.2] - 2026-09-16 —— 归档会话页') === '归档会话页',
+  );
+
+  const classified = releaseNotes.classifyAssets(sampleAssets);
+  check(
+    '发布正文：四类核心产物都认得出来，zip 与更新器元数据分列',
+    classified.missing.length === 0 &&
+      classified.downloads.length === 5 &&
+      classified.metadata.length === 2,
+    classified.downloads.map((item: { label: string }) => item.label).join(' / '),
+  );
+  check(
+    '发布正文：缺 Windows 产物时判为"不该发"（v0.2.0 就是缺了这两个）',
+    releaseNotes.classifyAssets(['DSH.Console-0.3.0-arm64.dmg', 'DSH.Console-0.3.0.dmg']).missing
+      .length === 2,
+  );
+
+  const composed = releaseNotes.composeReleaseNotes({
+    version: '0.3.0',
+    topic: 'TypeScript 迁移',
+    entry: '## [0.3.0] - 2026-09-17: TypeScript 迁移\n\n一条改动',
+    assets: sampleAssets,
+  });
+  check(
+    '发布正文：H1 写版本与主题、不留重复的二级标题行、安装表点名真实文件',
+    composed.startsWith('# DSH Console v0.3.0: TypeScript 迁移') &&
+      !composed.includes('## [0.3.0]') &&
+      composed.includes('`DSH.Console.Setup.0.3.0.exe`') &&
+      composed.includes('## 安装'),
+  );
+  let assetGateThrew = false;
+  try {
+    releaseNotes.composeReleaseNotes({
+      version: '0.3.0',
+      topic: null,
+      entry: '## [0.3.0] - 2026-09-17\n\n一条改动',
+      assets: ['DSH.Console-0.3.0.dmg'],
+    });
+  } catch {
+    assetGateThrew = true;
+  }
+  check('发布正文：产物不全时直接抛错，不会默默发出', assetGateThrew);
+
   // ---------------------------------------------------------- 汇总
   const failed = results.filter((item) => !item.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`);
