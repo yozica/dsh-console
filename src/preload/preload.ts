@@ -1,19 +1,23 @@
-'use strict'
-
 /**
  * contextBridge：把主进程能力暴露给渲染层，渲染层不直接碰 Node。
+ *
+ * 这里刻意标注成 DshConsoleApi（src/shared/ipc.ts）：preload 是那条 IPC 边界的
+ * 唯一出口，形状写在这里就等于把"渲染层能用什么"固化下来 —— 漏写一个方法、
+ * 或者参数顺序对不上，渲染层那边（Step 2 起）就是编译错误而不是运行时才发现。
  */
 
-const { contextBridge, ipcRenderer } = require('electron')
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+
+import type { DshConsoleApi } from '../shared/ipc'
 
 /** 订阅工具：返回取消订阅函数 */
-function subscribe(channel, handler) {
-  const listener = (_event, payload) => handler(payload)
+function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
+  const listener = (_event: IpcRendererEvent, payload: T) => handler(payload)
   ipcRenderer.on(channel, listener)
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
-contextBridge.exposeInMainWorld('dshConsole', {
+const api: DshConsoleApi = {
   // 快照 / 设置
   getSnapshot: () => ipcRenderer.invoke('app:snapshot'),
   patchSettings: (patch) => ipcRenderer.invoke('settings:patch', patch),
@@ -62,4 +66,6 @@ contextBridge.exposeInMainWorld('dshConsole', {
   onUiUrl: (handler) => subscribe('dsh:ui-url', handler),
   onSessionOutput: (handler) => subscribe('session:output', handler),
   onSessionExit: (handler) => subscribe('session:exit', handler)
-})
+}
+
+contextBridge.exposeInMainWorld('dshConsole', api)

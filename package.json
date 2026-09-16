@@ -4,7 +4,7 @@
   "version": "0.2.2",
   "private": true,
   "description": "Desktop console for DeepSeek Harness (Windows / macOS): start/stop dsh, monitor its service health, and watch it in a real terminal.",
-  "main": "src/main/main.js",
+  "main": "dist/main/main.js",
   "license": "MIT",
   "author": {
     "name": "yozica",
@@ -19,7 +19,7 @@
     "url": "https://github.com/yozica/dsh-console/issues"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "npm run build:renderer && npm run build:main",
     "build:main": "tsc -p tsconfig.main.json",
     "build:sandbox": "node scripts/build.mjs",
     "start": "npm run build && electron .",
@@ -36,7 +36,9 @@
     "pack:win": "npm run build && electron-builder --win --dir",
     "dist:win": "npm run build && electron-builder --win",
     "pack:mac": "npm run build && electron-builder --mac --dir",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "build:renderer": "vite build",
+    "watch:main": "tsc -p tsconfig.main.json --watch"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",
@@ -96,7 +98,6 @@
       "**/node_modules/node-pty/**"
     ],
     "files": [
-      "src/**/*",
       "dist/**/*",
       "package.json",
       "node_modules/**/*",

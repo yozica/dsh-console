@@ -433,8 +433,9 @@ async function main() {
       : `${jsIds.length} 个 id（覆盖 ${vueFiles.length} 个 .vue）`
   )
 
+  // preload 已随主进程一起迁到 TS（src/preload/preload.ts），这里读它
   const preloadJs = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'preload', 'preload.js'),
+    path.join(__dirname, '..', 'src', 'preload', 'preload.ts'),
     'utf8'
   )
   const exposed = new Set([...preloadJs.matchAll(/^\s{2}([A-Za-z]+):/gm)].map((match) => match[1]))
@@ -575,9 +576,7 @@ async function main() {
         cssText
       ) &&
       /api\.onFullscreen\(/.test(rendererCode) &&
-      /onFullscreen:/.test(
-        fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8')
-      ) &&
+      /onFullscreen:/.test(preloadJs) &&
       /documentElement\.dataset\.platform\s*=/.test(platformJs) &&
       /setPlatform\(snapshot\.value\?\.env\?\.platform\)/.test(rendererCode),
     '左栏让位 + 应用内全屏顶栏让位 + 系统全屏撤回 + 非全屏不缩进 + platform/全屏状态都有来源'

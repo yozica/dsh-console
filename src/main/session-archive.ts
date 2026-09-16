@@ -1,5 +1,3 @@
-'use strict'
-
 /**
  * 归档会话管理：直接读写 DeepSeek Harness 的磁盘数据。
  *
@@ -18,58 +16,117 @@
  *
  * 注意：DSH 进程把 workspace.json 读进内存，直接改磁盘文件不会立刻反映到正在
  * 运行的界面里，需要重启 dsh 才会同步。所以取消归档/删除的返回里带上
- * `dshRunning`，由调用方（main.js 的 IPC handler）按 dsh 状态补上。
+ * `dshRunning`，由调用方（main.ts 的 IPC handler）按 dsh 状态补上。
+ *
+ * 类型说明：这里读的都是**别人写的磁盘文件**，所以形状一律按"可能缺字段"建模，
+ * 每个取值在使用处做窄化（typeof / Array.isArray），不做乐观断言。
  */
 
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const zlib = require('node:zlib')
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import zlib from 'node:zlib'
+
+import type {
+  ArchivedSessionSummary,
+  ConversationMessage,
+  ConversationReadResult,
+  RemoveArchivedResult,
+  UnarchiveResult
+} from '../shared/ipc'
 
 /** 单条消息最多保留的字符数，防止异常大的日志把 IPC 撑爆 */
 const MAX_MESSAGE_CHARS = 8000
 /** 对话全文最多保留的总字符数，超出则截断（保留靠后的新消息） */
 const MAX_CONVERSATION_CHARS = 1000000
 
+// ---------------------------------------------------------------- 外部文件形状
+
+/** workspace.json 里我们用到的部分 */
+interface WorkspaceJson {
+  global?: { archivedSessionIds?: unknown }
+  tables?: { workspaces?: Record<string, { sessionIds?: unknown }> }
+}
+
+/** 投影缓存（session_projcache/sessions/<id>.json）里我们用到的部分 */
+interface ProjectionFile {
+  record?: {
+    rows?: {
+      title?: { val?: unknown }
+      titleInput?: { val?: { first?: { text?: unknown } } }
+      sessionListMetadata?: { val?: { lastPromptAt?: unknown } }
+      turnOutline?: { val?: { turns?: unknown } }
+    }
+    identity?: { createdAt?: unknown; cwd?: unknown }
+  }
+}
+
+/** 会话日志里的一条事件（只声明我们读取的字段） */
+interface SessionEvent {
+  type?: unknown
+  time?: unknown
+  data?: {
+    source?: { kind?: unknown }
+    content?: unknown
+    message?: { content?: unknown }
+  }
+}
+
+/** 投影缓存里的"轮"（用于检索文本） */
+interface OutlineTurn {
+  prompt?: unknown
+  response?: unknown
+}
+
+/** 投影缓存提取结果 */
+interface Projection {
+  title: string
+  first: string
+  lastPromptAt: number | null
+  createdAt: number | null
+  cwd: string | null
+  turns: OutlineTurn[]
+}
+
 // ---------------------------------------------------------------- 路径解析
 
 /** 与 dsh-home-paths 一致的解析：$DSH_HOME（非空白）优先，否则 ~/.dsh */
-function resolveDshHome() {
+export function resolveDshHome(): string {
   const env = String(process.env.DSH_HOME || '').trim()
   if (env) return expandTilde(env)
   return path.join(os.homedir(), '.dsh')
 }
 
-function expandTilde(p) {
+function expandTilde(p: string): string {
   if (p === '~') return os.homedir()
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(os.homedir(), p.slice(2))
   return p
 }
 
-function workspaceFile(home) {
+function workspaceFile(home: string): string {
   return path.join(home, 'storages', 'workspace.json')
 }
 
-function projectionDir(home) {
+function projectionDir(home: string): string {
   return path.join(home, 'storages', 'session_projcache', 'sessions')
 }
 
-function sessionsRoot(home) {
+function sessionsRoot(home: string): string {
   return path.join(home, 'sessions')
 }
 
 // ---------------------------------------------------------------- 基础读写
 
-function readJson(file) {
+function readJson<T>(file: string): T | null {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as T
   } catch {
     return null
   }
 }
 
 /** 原子写：先写同目录临时文件，再 rename 覆盖，避免读写中途崩坏 */
-function atomicWriteJson(file, value) {
+function atomicWriteJson(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
   fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8')
@@ -79,8 +136,8 @@ function atomicWriteJson(file, value) {
 // ---------------------------------------------------------------- 会话定位
 
 /** 在 <home>/sessions/<项目目录>/ 下找某个会话目录（目录名即会话 id） */
-function findSessionDir(home, id) {
-  let projects
+function findSessionDir(home: string, id: string): string | null {
+  let projects: string[]
   try {
     projects = fs.readdirSync(sessionsRoot(home))
   } catch {
@@ -98,14 +155,14 @@ function findSessionDir(home, id) {
 }
 
 /** 挑出会话目录里最高 generation 的日志文件（session.jsonl 视为 v0） */
-function pickLogFile(dir) {
-  let names
+function pickLogFile(dir: string): string | null {
+  let names: string[]
   try {
     names = fs.readdirSync(dir)
   } catch {
     return null
   }
-  let best = null
+  let best: string | null = null
   let bestVersion = -1
   for (const name of names) {
     const match = /^session(?:\.v(\d+))?\.jsonl(\.zstd)?$/.exec(name)
@@ -125,11 +182,11 @@ function pickLogFile(dir) {
  * 解压 zstd JSONL 日志。DSH 把日志存成「多个独立 zstd 帧拼接」，
  * Node 内置的 zstdDecompressSync 只解第一个帧，所以按帧魔数切开逐帧解。
  */
-function decompressZstdFrames(buffer) {
+function decompressZstdFrames(buffer: Buffer): string {
   if (typeof zlib.zstdDecompressSync !== 'function') {
     throw new Error('当前 Electron/Node 不支持内置 zstd 解压（需要 Node ≥ 22.15）')
   }
-  const starts = []
+  const starts: number[] = []
   for (let i = 0; i <= buffer.length - 4; i++) {
     if (
       buffer[i] === 0x28 &&
@@ -141,7 +198,7 @@ function decompressZstdFrames(buffer) {
     }
   }
   if (starts.length === 0) throw new Error('会话日志不是有效的 zstd 帧序列')
-  const parts = []
+  const parts: Buffer[] = []
   for (let k = 0; k < starts.length; k++) {
     const begin = starts[k]
     const end = k + 1 < starts.length ? starts[k + 1] : buffer.length
@@ -150,15 +207,15 @@ function decompressZstdFrames(buffer) {
   return Buffer.concat(parts).toString('utf8')
 }
 
-function decodeSessionLog(file) {
+function decodeSessionLog(file: string): SessionEvent[] {
   const buffer = fs.readFileSync(file)
   const text = file.endsWith('.zstd') ? decompressZstdFrames(buffer) : buffer.toString('utf8')
-  const events = []
+  const events: SessionEvent[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
     try {
-      events.push(JSON.parse(trimmed))
+      events.push(JSON.parse(trimmed) as SessionEvent)
     } catch {
       /* 撕裂的尾部行：跳过 */
     }
@@ -168,17 +225,20 @@ function decodeSessionLog(file) {
 
 // ---------------------------------------------------------------- 会话提取
 
-function contentText(content) {
+function contentText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   let out = ''
   for (const block of content) {
-    if (block && block.type === 'text' && typeof block.text === 'string') out += block.text
+    if (block && typeof block === 'object') {
+      const candidate = block as { type?: unknown; text?: unknown }
+      if (candidate.type === 'text' && typeof candidate.text === 'string') out += candidate.text
+    }
   }
   return out
 }
 
-function truncateText(text) {
+function truncateText(text: unknown): string {
   const value = String(text)
   if (value.length <= MAX_MESSAGE_CHARS) return value
   return `${value.slice(0, MAX_MESSAGE_CHARS)}…`
@@ -189,52 +249,42 @@ function truncateText(text) {
  * 助手回复（assistant/message 的 text 块）。跳过运行时注入的上下文快照、
  * system-reminder、reasoning 与 tool-call。
  */
-function extractConversation(events) {
-  const messages = []
+function extractConversation(events: SessionEvent[]): {
+  messages: ConversationMessage[]
+  truncated: boolean
+} {
+  const messages: ConversationMessage[] = []
   let total = 0
   let truncated = false
+  const push = (role: ConversationMessage['role'], raw: string, time: unknown) => {
+    const text = raw.trim()
+    if (!text) return
+    const value = truncateText(text)
+    total += value.length
+    if (total > MAX_CONVERSATION_CHARS) {
+      truncated = true
+      return
+    }
+    messages.push({ role, text: value, time: typeof time === 'number' ? time : null })
+  }
+
   for (const event of events) {
     if (!event || typeof event !== 'object') continue
     const data = event.data
     if (event.type === 'user/message' && data && data.source && data.source.kind === 'user') {
-      const text = contentText(data.content).trim()
-      if (text) {
-        const value = truncateText(text)
-        total += value.length
-        if (total > MAX_CONVERSATION_CHARS) {
-          truncated = true
-          break
-        }
-        messages.push({
-          role: 'user',
-          text: value,
-          time: typeof event.time === 'number' ? event.time : null
-        })
-      }
+      push('user', contentText(data.content), event.time)
     } else if (event.type === 'assistant/message' && data && data.message) {
-      const text = contentText(data.message.content).trim()
-      if (text) {
-        const value = truncateText(text)
-        total += value.length
-        if (total > MAX_CONVERSATION_CHARS) {
-          truncated = true
-          break
-        }
-        messages.push({
-          role: 'assistant',
-          text: value,
-          time: typeof event.time === 'number' ? event.time : null
-        })
-      }
+      push('assistant', contentText(data.message.content), event.time)
     }
+    if (truncated) break
   }
   return { messages, truncated }
 }
 
 // ---------------------------------------------------------------- 投影缓存
 
-function readProjection(home, id) {
-  const raw = readJson(path.join(projectionDir(home), `${id}.json`))
+function readProjection(home: string, id: string): Projection | null {
+  const raw = readJson<ProjectionFile>(path.join(projectionDir(home), `${id}.json`))
   if (!raw) return null
   const record = raw.record || {}
   const rows = record.rows || {}
@@ -251,7 +301,7 @@ function readProjection(home, id) {
       : null
   const turns =
     rows.turnOutline && rows.turnOutline.val && Array.isArray(rows.turnOutline.val.turns)
-      ? rows.turnOutline.val.turns
+      ? (rows.turnOutline.val.turns as OutlineTurn[])
       : []
 
   return {
@@ -266,28 +316,30 @@ function readProjection(home, id) {
 
 // ---------------------------------------------------------------- 公开方法
 
-class SessionArchiveManager {
+export class SessionArchiveManager {
+  readonly home: string
+
   constructor() {
     this.home = resolveDshHome()
   }
 
-  homeInfo() {
+  homeInfo(): { home: string; exists: boolean } {
     return { home: this.home, exists: fs.existsSync(this.home) }
   }
 
-  list() {
-    const ws = readJson(workspaceFile(this.home))
-    const archived =
+  list(): ArchivedSessionSummary[] {
+    const ws = readJson<WorkspaceJson>(workspaceFile(this.home))
+    const archived: string[] =
       ws && ws.global && Array.isArray(ws.global.archivedSessionIds)
-        ? ws.global.archivedSessionIds
+        ? (ws.global.archivedSessionIds as string[])
         : []
 
-    const sessions = []
+    const sessions: ArchivedSessionSummary[] = []
     for (const id of archived) {
       const proj = readProjection(this.home, id)
       const dir = findSessionDir(this.home, id)
-      let logFile = null
-      let logSize = null
+      let logFile: string | null = null
+      let logSize: number | null = null
       if (dir) {
         logFile = pickLogFile(dir)
         if (logFile) {
@@ -328,7 +380,7 @@ class SessionArchiveManager {
     return sessions
   }
 
-  read(id) {
+  read(id: string): ConversationReadResult {
     const proj = readProjection(this.home, id)
     const dir = findSessionDir(this.home, id)
     const logFile = dir ? pickLogFile(dir) : null
@@ -354,25 +406,31 @@ class SessionArchiveManager {
   }
 
   /** 取消归档：只把它从 archivedSessionIds 里移除，会话与日志原样保留 */
-  unarchive(id) {
+  unarchive(id: string): UnarchiveResult {
     mutateWorkspace(this.home, (ws) => {
       ws.global = ws.global || {}
-      ws.global.archivedSessionIds = (ws.global.archivedSessionIds || []).filter((x) => x !== id)
+      const ids = Array.isArray(ws.global.archivedSessionIds)
+        ? (ws.global.archivedSessionIds as string[])
+        : []
+      ws.global.archivedSessionIds = ids.filter((x) => x !== id)
       return ws
     })
     return { id }
   }
 
   /** 删除：从归档集合 + 各 Workspace 的 sessionIds 移除，并删除日志目录与投影缓存 */
-  remove(id) {
+  remove(id: string): Omit<RemoveArchivedResult, 'dshRunning'> {
     mutateWorkspace(this.home, (ws) => {
       ws.global = ws.global || {}
-      ws.global.archivedSessionIds = (ws.global.archivedSessionIds || []).filter((x) => x !== id)
+      const ids = Array.isArray(ws.global.archivedSessionIds)
+        ? (ws.global.archivedSessionIds as string[])
+        : []
+      ws.global.archivedSessionIds = ids.filter((x) => x !== id)
       const tables = (ws.tables && ws.tables.workspaces) || {}
       for (const key of Object.keys(tables)) {
         const workspace = tables[key]
         if (workspace && Array.isArray(workspace.sessionIds)) {
-          workspace.sessionIds = workspace.sessionIds.filter((x) => x !== id)
+          workspace.sessionIds = (workspace.sessionIds as string[]).filter((x) => x !== id)
         }
       }
       return ws
@@ -402,13 +460,14 @@ class SessionArchiveManager {
 }
 
 /** 读 → 改 → 原子写 workspace.json 的通用封装 */
-function mutateWorkspace(home, mutate) {
+function mutateWorkspace(
+  home: string,
+  mutate: (ws: WorkspaceJson) => WorkspaceJson
+): WorkspaceJson {
   const file = workspaceFile(home)
-  const ws = readJson(file)
+  const ws = readJson<WorkspaceJson>(file)
   if (!ws) throw new Error('找不到 workspace.json：DSH 数据目录不存在或尚未初始化')
   const next = mutate(ws)
   atomicWriteJson(file, next)
   return next
 }
-
-module.exports = { SessionArchiveManager, resolveDshHome }

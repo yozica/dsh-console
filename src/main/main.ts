@@ -1,12 +1,14 @@
-'use strict'
-
 /**
  * Electron 主进程：窗口、IPC、生命周期。
+ *
+ * 关于路径：源码在 src/，编译产物在 dist/（tsconfig.main.json 的 rootDir=src / outDir=dist），
+ * 目录结构一一对应，所以下面的 `__dirname/../preload/preload.js`、`../../dist/renderer`
+ * 这些相对路径在编译后依然成立（dist/main/main.js → dist/preload、dist/renderer）。
  */
 
-const fs = require('node:fs')
-const path = require('node:path')
-const {
+import fs from 'node:fs'
+import path from 'node:path'
+import {
   app,
   BrowserWindow,
   Menu,
@@ -15,15 +17,40 @@ const {
   dialog,
   nativeImage,
   nativeTheme,
-  session
-} = require('electron')
+  session,
+  type BrowserWindowConstructorOptions,
+  type IpcMainInvokeEvent,
+  type MessageBoxOptions,
+  type NativeImage,
+  type WebContents
+} from 'electron'
 
-const { Settings } = require('./settings')
-const { PtySessions } = require('./pty-sessions')
-const { DshManager } = require('./dsh-manager')
-const { SessionArchiveManager } = require('./session-archive')
-const { installFileLogging } = require('./logger')
-const processUtils = require('./process-utils')
+import { Settings, type SettingsPatch, type SettingsValues } from './settings'
+import { PtySessions } from './pty-sessions'
+import { DshManager } from './dsh-manager'
+import { SessionArchiveManager } from './session-archive'
+import { installFileLogging } from './logger'
+import * as processUtils from './process-utils'
+import type {
+  AppSnapshot,
+  ArchiveListResult,
+  ArchiveReadResult,
+  ArchiveRemoveResult,
+  ArchiveUnarchiveResult,
+  ConfirmRequest,
+  CreateShellResult,
+  DshActionResult,
+  DshExitEvent,
+  DshLogEntry,
+  DshOutputEvent,
+  EnvInfo,
+  RenameSessionResult,
+  ResolvedTheme,
+  SessionExitEvent,
+  SessionOutputEvent,
+  ThemeInfo,
+  ThemeMode
+} from '../shared/ipc'
 
 const isDev = process.argv.includes('--dev')
 const isMac = process.platform === 'darwin'
@@ -34,31 +61,31 @@ if (userDataOverride) {
   try {
     app.setPath('userData', path.resolve(userDataOverride))
   } catch (error) {
-    console.error('[main] 无法设置 userData 目录:', error.message)
+    console.error(
+      '[main] 无法设置 userData 目录:',
+      error instanceof Error ? error.message : String(error)
+    )
   }
 }
 
 // 主进程日志同时落盘：<userData>/logs/console.log
 const fileLog = installFileLogging(path.join(app.getPath('userData'), 'logs'))
 
-/** @type {import('electron').BrowserWindow | null} */
-let mainWindow = null
-/** @type {Settings} */
-let settings
-/** @type {PtySessions} */
-let ptySessions
-/** @type {DshManager} */
-let dshManager
-/** @type {SessionArchiveManager} */
-let archiveManager
+// 下面这几个都在 bootstrap() 里赋值；用 `!` 明确"这里不重复判空"——
+// 所有 IPC handler 与事件回调都只在 bootstrap 之后才可能被触发。
+let mainWindow: BrowserWindow | null = null
+let settings!: Settings
+let ptySessions!: PtySessions
+let dshManager!: DshManager
+let archiveManager!: SessionArchiveManager
 
 let shellCounter = 0
 /** 应用自己开的终端会话 id（除 dsh 之外） */
-const extraSessions = new Set()
+const extraSessions = new Set<string>()
 /** 渲染层是否已经连上（用于日志确认页面没被 CSP 之类的东西拦死） */
 let rendererConnected = false
 
-function sendToRenderer(channel, payload) {
+function sendToRenderer(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
   }
@@ -66,13 +93,18 @@ function sendToRenderer(channel, payload) {
 
 // ---------------------------------------------------------------- 主题
 
-const THEME_MODES = ['system', 'light', 'dark']
+const THEME_MODES = ['system', 'light', 'dark'] as const
+
+function isThemeMode(value: string): value is ThemeMode {
+  return (THEME_MODES as readonly string[]).includes(value)
+}
+
 /**
  * 窗口底色与标题栏配色：与渲染层 CSS 的 --bg / --ink 保持一致。
  * （这是主进程侧唯一的颜色重复处 —— 窗口底色和系统控件浮层只能由主进程设置。）
  */
-const WINDOW_BG = { dark: '#0a0c10', light: '#eef1f5' }
-const TITLEBAR_COLORS = {
+const WINDOW_BG: Record<ResolvedTheme, string> = { dark: '#0a0c10', light: '#eef1f5' }
+const TITLEBAR_COLORS: Record<ResolvedTheme, { color: string; symbolColor: string }> = {
   dark: { color: '#0a0c10', symbolColor: '#e8eaf0' },
   light: { color: '#eef1f5', symbolColor: '#131a26' }
 }
@@ -83,17 +115,18 @@ const TITLEBAR_HEIGHT = 36
 const RENDERER_DIST = path.join(__dirname, '..', '..', 'dist', 'renderer')
 
 /** 当前主题：mode 是用户选择，resolved 是实际生效的明暗 */
-function themeInfo() {
-  const mode = String((settings && settings.get('themeMode')) || 'system')
+function themeInfo(): ThemeInfo {
+  const mode = String(settings?.get('themeMode') || 'system')
   return {
-    mode: THEME_MODES.includes(mode) ? mode : 'system',
+    mode: isThemeMode(mode) ? mode : 'system',
     resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   }
 }
 
 /** 把设置里的 mode 应用到 Electron（system 时交给系统决定） */
-function applyThemeSource(mode) {
-  const next = THEME_MODES.includes(String(mode)) ? String(mode) : 'system'
+function applyThemeSource(mode: unknown): ThemeMode {
+  const text = String(mode)
+  const next: ThemeMode = isThemeMode(text) ? text : 'system'
   if (nativeTheme.themeSource !== next) nativeTheme.themeSource = next
   return next
 }
@@ -103,7 +136,7 @@ function applyThemeSource(mode) {
  * 窗口不是用 titleBarOverlay 建的、或平台不支持时（macOS 用红绿灯，没有浮层），
  * 这里会抛异常，直接吞掉即可。
  */
-function applyTitleBarOverlay(resolved) {
+function applyTitleBarOverlay(resolved: ResolvedTheme): void {
   if (isMac) return // macOS 的红绿灯由系统绘制在左上角，没有 titleBarOverlay
   if (!mainWindow || mainWindow.isDestroyed()) return
   const colors = TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark
@@ -114,7 +147,7 @@ function applyTitleBarOverlay(resolved) {
   }
 }
 
-function broadcastTheme() {
+function broadcastTheme(): ThemeInfo {
   const info = themeInfo()
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setBackgroundColor(WINDOW_BG[info.resolved])
@@ -126,9 +159,20 @@ function broadcastTheme() {
 
 // ---------------------------------------------------------------- 内嵌页诊断
 
-/** Electron 新旧版本的 console-message 参数形状不同，这里统一取出来 */
-function readConsoleMessage(args) {
-  const details = args[0]
+interface ConsoleMessageInfo {
+  level: string
+  message: string
+  source: string
+  line: number
+}
+
+/**
+ * Electron 新旧版本的 console-message 参数形状不同（新版第一个参数是 details 对象，
+ * 旧版是 level/message/line/sourceId 五个位置参数），这里统一取出来。
+ */
+function readConsoleMessage(args: unknown[]): ConsoleMessageInfo {
+  const details = args[0] as
+    { level?: unknown; message?: unknown; sourceId?: unknown; lineNumber?: unknown } | undefined
   if (details && typeof details === 'object' && 'message' in details) {
     return {
       level: String(details.level ?? 'info'),
@@ -137,28 +181,29 @@ function readConsoleMessage(args) {
       line: Number(details.lineNumber ?? 0)
     }
   }
+  const legacy = args as [unknown, unknown, unknown, unknown, unknown]
   return {
-    level: ['debug', 'info', 'warning', 'error'][Number(args[1])] || 'info',
-    message: String(args[2] ?? ''),
-    source: String(args[4] ?? ''),
-    line: Number(args[3] ?? 0)
+    level: ['debug', 'info', 'warning', 'error'][Number(legacy[1])] || 'info',
+    message: String(legacy[2] ?? ''),
+    source: String(legacy[4] ?? ''),
+    line: Number(legacy[3] ?? 0)
   }
 }
 
 /** 抹掉 UA 里的 Electron 与包名 —— 不少第三方站点据此判定"不是正经浏览器" */
-function cleanedUserAgent(ua) {
+function cleanedUserAgent(ua: string): string {
   return String(ua)
     .replace(/\s*(dsh-console|Electron)\/[\d.]+/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
 }
 
-const EMBEDDED_LABELS = {
+const EMBEDDED_LABELS: Record<string, string> = {
   'persist:dsh-ui': '内嵌 DSH 界面',
   'persist:deepseek': 'DeepSeek 用量页'
 }
 
-function embeddedLabel(partition) {
+function embeddedLabel(partition: string): string {
   return EMBEDDED_LABELS[partition] || '内嵌页'
 }
 
@@ -166,8 +211,8 @@ function embeddedLabel(partition) {
  * Electron 自身的开发期安全提示（allowpopups / CSP 那几条）内容很长，会把事件日志刷屏，
  * 而且打包后就不会再出现。所以不进日志，只在终端里提一次。
  */
-const seenDevWarnings = new Set()
-function suppressElectronDevNoise(message) {
+const seenDevWarnings = new Set<string>()
+function suppressElectronDevNoise(message: string): boolean {
   if (!/Electron Security Warning/i.test(message)) return false
   const key = String(message).slice(0, 60)
   if (!seenDevWarnings.has(key)) {
@@ -181,16 +226,18 @@ function suppressElectronDevNoise(message) {
  * 内嵌第三方页面出问题时最爱"半渲染"：外壳画出来、内容一片空，页面上什么错都不说。
  * 所以把 guest 的 console 与加载失败都收进应用的事件日志里。
  */
-function wireGuestDiagnostics(guest) {
-  let partition
+function wireGuestDiagnostics(guest: WebContents): void {
+  let partition: string
   try {
-    partition = guest.session?.getPartition?.() || ''
+    // getPartition 没进 Electron 的类型声明（运行时存在），按可选方法取
+    const sessionLike = guest.session as unknown as { getPartition?: () => string }
+    partition = sessionLike.getPartition?.() || ''
   } catch {
     partition = ''
   }
   const label = embeddedLabel(partition)
 
-  guest.on('console-message', (...args) => {
+  guest.on('console-message', (...args: unknown[]) => {
     const info = readConsoleMessage(args)
     if (suppressElectronDevNoise(info.message)) return
     if (info.level === 'error') dshManager.log('error', `${label} 控制台报错：${info.message}`)
@@ -211,7 +258,8 @@ function wireGuestDiagnostics(guest) {
   })
 }
 
-/** 内嵌页发出的请求失败时也记一笔（CSP 拦截、DNS、连接被重置都会走这里） */ function wireEmbeddedRequestDiagnostics() {
+/** 内嵌页发出的请求失败时也记一笔（CSP 拦截、DNS、连接被重置都会走这里） */
+function wireEmbeddedRequestDiagnostics(): void {
   for (const partition of Object.keys(EMBEDDED_LABELS)) {
     try {
       session
@@ -222,7 +270,10 @@ function wireGuestDiagnostics(guest) {
           dshManager.log('warn', `${embeddedLabel(partition)} 请求失败 ${details.error} ${short}`)
         })
     } catch (error) {
-      console.error(`[main] 无法为 ${partition} 安装请求诊断:`, error.message)
+      console.error(
+        `[main] 无法为 ${partition} 安装请求诊断:`,
+        error instanceof Error ? error.message : String(error)
+      )
     }
   }
 }
@@ -234,11 +285,11 @@ function wireGuestDiagnostics(guest) {
  * 打包后不启用。默认菜单已被移除，Ctrl+R 之类的重载快捷键也就没有了，
  * 没有这条通路时改样式必须手动重启应用才能看到效果。
  */
-function watchRendererForDevReload() {
+function watchRendererForDevReload(): void {
   if (app.isPackaged) return
   const rendererDir = RENDERER_DIST
   if (!fs.existsSync(rendererDir)) return
-  let timer = null
+  let timer: NodeJS.Timeout | null = null
   try {
     fs.watch(rendererDir, { recursive: true }, (_event, filename) => {
       const name = String(filename || '')
@@ -251,16 +302,19 @@ function watchRendererForDevReload() {
       }, 250)
     })
   } catch (error) {
-    console.error('[main] 无法监听渲染层目录:', error.message)
+    console.error(
+      '[main] 无法监听渲染层目录:',
+      error instanceof Error ? error.message : String(error)
+    )
   }
 }
 
-function createWindow() {
+function createWindow(): void {
   const resolved = themeInfo().resolved
   // 标题栏策略按平台走：
   //  - Windows/Linux：hidden + titleBarOverlay，最小化/最大化/关闭由系统画在右上角浮层
   //  - macOS：hiddenInset + 红绿灯（trafficLightPosition 把红绿灯对准 36px 顶栏的中心）
-  const titleBarOptions = isMac
+  const titleBarOptions: BrowserWindowConstructorOptions = isMac
     ? {
         titleBarStyle: 'hiddenInset',
         trafficLightPosition: { x: 14, y: Math.round((TITLEBAR_HEIGHT - 14) / 2) }
@@ -272,7 +326,7 @@ function createWindow() {
           height: TITLEBAR_HEIGHT
         }
       }
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1220,
     height: 820,
     minWidth: 900,
@@ -291,18 +345,19 @@ function createWindow() {
       spellcheck: false
     }
   })
+  mainWindow = win
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show()
-    if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' })
+  win.once('ready-to-show', () => {
+    win.show()
+    if (isDev) win.webContents.openDevTools({ mode: 'detach' })
   })
 
-  mainWindow.on('closed', () => {
+  win.on('closed', () => {
     mainWindow = null
   })
 
   // 把渲染层的 console 转发到主进程 stdout，方便无 GUI 场景排查（CSP 拦截、脚本报错等）
-  mainWindow.webContents.on('console-message', (...args) => {
+  win.webContents.on('console-message', (...args: unknown[]) => {
     const info = readConsoleMessage(args)
     if (suppressElectronDevNoise(info.message)) return
     const text = `[renderer:${info.level}] ${info.message}${info.source ? ` (${info.source}:${info.line})` : ''}`
@@ -310,12 +365,12 @@ function createWindow() {
     else console.log(text)
   })
 
-  mainWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+  win.webContents.on('did-fail-load', (_event, code, description, url) => {
     console.error(`[renderer] 页面加载失败 ${code} ${description} ${url}`)
   })
 
   // 外链一律交给系统浏览器，不在应用内导航
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
     return { action: 'deny' }
   })
@@ -324,17 +379,17 @@ function createWindow() {
   // 为什么渲染层需要知道：macOS 全屏时红绿灯**平时是隐藏的**，只有鼠标移到屏幕顶端才出现，
   // 所以那时不该再为它留位置（留了就是一块说不清用途的空白，用户抓图指出过）。
   // 注意与「应用内全屏」区分：那个只是藏掉左栏与状态栏，不动系统窗口状态。
-  mainWindow.on('enter-full-screen', () => {
+  win.on('enter-full-screen', () => {
     dshManager.log('info', '窗口进入系统全屏')
     sendToRenderer('app:fullscreen', true)
   })
-  mainWindow.on('leave-full-screen', () => {
+  win.on('leave-full-screen', () => {
     dshManager.log('info', '窗口退出系统全屏')
     sendToRenderer('app:fullscreen', false)
   })
 
   // 内嵌页（DSH 界面 / DeepSeek 用量）：禁止它们自己弹原生窗口，弹窗一律交给系统浏览器
-  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+  win.webContents.on('did-attach-webview', (_event, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
       void shell.openExternal(url)
       return { action: 'deny' }
@@ -353,15 +408,15 @@ function createWindow() {
       `渲染层产物缺失：${entry} —— 先跑 npm run build（npm start 会自动构建）`
     )
   }
-  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+  win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
     if (code === -3) return
     dshManager.log(
       'error',
       `界面加载失败 ${code} ${description} ${url}${isMainFrame === false ? '（子框架）' : ''}`
     )
   })
-  wireDevTools(mainWindow.webContents)
-  void mainWindow.loadFile(entry)
+  wireDevTools(win.webContents)
+  void win.loadFile(entry)
 }
 
 /**
@@ -371,7 +426,7 @@ function createWindow() {
  *
  * 用 detach 而不是贴边停靠：停靠会改变窗口布局，而我们要看的恰恰是布局。
  */
-function wireDevTools(contents) {
+function wireDevTools(contents: WebContents): void {
   if (app.isPackaged) return
   contents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
@@ -399,8 +454,9 @@ function wireDevTools(contents) {
  * 做法是把同一个按键事件重新注入宿主 webContents，让渲染层原有的处理器照常处理
  * （不在这里复制一份快捷键逻辑，免得两处慢慢走样）。
  */
-function wireGuestShortcuts(guest) {
-  if (!mainWindow || mainWindow.isDestroyed()) return
+function wireGuestShortcuts(guest: WebContents): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
   guest.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return
     const key = String(input.key || '')
@@ -415,12 +471,12 @@ function wireGuestShortcuts(guest) {
     const isEscape = key === 'Escape'
     if (!isAppKey && !isEscape) return
 
-    const modifiers = []
+    const modifiers: NonNullable<Electron.InputEvent['modifiers']> = []
     if (input.control) modifiers.push('control')
     if (input.meta) modifiers.push('meta')
     if (input.shift) modifiers.push('shift')
     if (input.alt) modifiers.push('alt')
-    mainWindow.webContents.sendInputEvent({
+    win.webContents.sendInputEvent({
       type: 'keyDown',
       keyCode: key.length === 1 ? key.toUpperCase() : key,
       modifiers
@@ -438,7 +494,7 @@ function wireGuestShortcuts(guest) {
  * 并嵌进 exe / app bundle，系统直接取自可执行文件（所以 `build/` 不需要打进 asar）。
  * 这里只是为了**开发时**也有正确的图标 —— 从仓库里那张源图读。
  */
-function makeIcon() {
+function makeIcon(): NativeImage | undefined {
   try {
     const file = path.join(__dirname, '..', '..', 'build', 'icon.png')
     if (fs.existsSync(file)) {
@@ -452,7 +508,7 @@ function makeIcon() {
 }
 
 /** macOS 开发态：Dock 图标取自同一张源图（打包后由 .icns 提供，不必覆盖） */
-function applyDockIcon() {
+function applyDockIcon(): void {
   if (!isMac || app.isPackaged || !app.dock) return
   const icon = makeIcon()
   if (icon) {
@@ -473,7 +529,7 @@ function applyDockIcon() {
  * Cmd+M 最小化）都由菜单提供，菜单为空时这些键在文本框里都会失灵。
  * 所以给一个最小原生菜单：应用 / 编辑 / 显示 / 窗口。
  */
-function installApplicationMenu() {
+function installApplicationMenu(): void {
   if (!isMac) {
     Menu.setApplicationMenu(null)
     return
@@ -488,48 +544,49 @@ function installApplicationMenu() {
   )
 }
 
-function registerIpc() {
-  ipcMain.handle('app:snapshot', () => {
+function registerIpc(): void {
+  ipcMain.handle('app:snapshot', (): AppSnapshot => {
     if (!rendererConnected) {
       rendererConnected = true
       console.log('[main] 渲染层已连接')
+    }
+    const env: EnvInfo = {
+      platform: process.platform,
+      /** 是否打包运行：渲染层据此决定装不装开发期诊断快捷键 */
+      packaged: app.isPackaged,
+      /** 应用自身版本（设置页显示用） */
+      app: app.getVersion(),
+      /**
+       * 本次是不是"覆盖升级后第一次启动"。
+       * NSIS 在升级时会用 `--updated` 启动应用（见 electron-builder 的 NSIS 模板），
+       * 渲染层据此在状态栏说一句"已更新到 x.y.z"。
+       */
+      updated: process.argv.includes('--updated'),
+      /**
+       * 系统窗口是否处于全屏（macOS 绿灯 / Windows F11）。
+       * 渲染层据此决定要不要给红绿灯留位置 —— 全屏时它会自动隐藏。
+       */
+      nativeFullscreen: Boolean(
+        mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()
+      ),
+      versions: {
+        electron: String(process.versions.electron ?? ''),
+        node: String(process.versions.node ?? ''),
+        chrome: String(process.versions.chrome ?? '')
+      }
     }
     return {
       dsh: dshManager.snapshot(),
       settings: settings.all(),
       sessions: ptySessions.list(),
       launch: dshManager.describeLaunch(),
-      env: {
-        platform: process.platform,
-        /** 是否打包运行：渲染层据此决定装不装开发期诊断快捷键 */
-        packaged: app.isPackaged,
-        /** 应用自身版本（设置页显示用） */
-        app: app.getVersion(),
-        /**
-         * 本次是不是"覆盖升级后第一次启动"。
-         * NSIS 在升级时会用 `--updated` 启动应用（见 electron-builder 的 NSIS 模板），
-         * 渲染层据此在状态栏说一句"已更新到 x.y.z"。
-         */
-        updated: process.argv.includes('--updated'),
-        /**
-         * 系统窗口是否处于全屏（macOS 绿灯 / Windows F11）。
-         * 渲染层据此决定要不要给红绿灯留位置 —— 全屏时它会自动隐藏。
-         */
-        nativeFullscreen: Boolean(
-          mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()
-        ),
-        versions: {
-          electron: process.versions.electron,
-          node: process.versions.node,
-          chrome: process.versions.chrome
-        }
-      },
+      env,
       userData: app.getPath('userData'),
       theme: themeInfo()
     }
   })
 
-  ipcMain.handle('theme:set', (_event, mode) => {
+  ipcMain.handle('theme:set', (_event: IpcMainInvokeEvent, mode: unknown): ThemeInfo => {
     const next = applyThemeSource(mode)
     settings.patch({ themeMode: next })
     dshManager.log(
@@ -539,114 +596,141 @@ function registerIpc() {
     return broadcastTheme()
   })
 
-  ipcMain.handle('settings:patch', (_event, patch) => {
-    const next = settings.patch(patch)
-    // 设置页里也能改主题，保持与工具栏开关一致
-    if (patch && 'themeMode' in patch) applyThemeSource(next.themeMode)
-    dshManager.syncSettings()
-    dshManager.log('info', '设置已保存')
-    broadcastTheme()
-    return next
-  })
+  ipcMain.handle(
+    'settings:patch',
+    (_event: IpcMainInvokeEvent, patch: SettingsPatch): SettingsValues => {
+      const next = settings.patch(patch)
+      // 设置页里也能改主题，保持与工具栏开关一致
+      if (patch && 'themeMode' in patch) applyThemeSource(next.themeMode)
+      dshManager.syncSettings()
+      dshManager.log('info', '设置已保存')
+      broadcastTheme()
+      return next
+    }
+  )
 
-  ipcMain.handle('dsh:start', async () => {
+  ipcMain.handle('dsh:start', async (): Promise<DshActionResult> => {
     try {
       return { ok: true, state: await dshManager.start({ allowAdopt: true }) }
     } catch (error) {
-      return { ok: false, error: error.message, state: dshManager.snapshot() }
+      return { ok: false, error: messageOf(error), state: dshManager.snapshot() }
     }
   })
 
-  ipcMain.handle('dsh:stop', async (_event, options) => {
-    try {
-      return {
-        ok: true,
-        state: await dshManager.stop({
-          force: Boolean(options?.force),
-          killExternal: Boolean(options?.killExternal)
-        })
+  ipcMain.handle(
+    'dsh:stop',
+    async (_event: IpcMainInvokeEvent, options?: { force?: boolean; killExternal?: boolean }) => {
+      try {
+        return {
+          ok: true,
+          state: await dshManager.stop({
+            force: Boolean(options?.force),
+            killExternal: Boolean(options?.killExternal)
+          })
+        }
+      } catch (error) {
+        return { ok: false, error: messageOf(error), state: dshManager.snapshot() }
       }
-    } catch (error) {
-      return { ok: false, error: error.message, state: dshManager.snapshot() }
     }
-  })
+  )
 
-  ipcMain.handle('dsh:restart', async () => {
+  ipcMain.handle('dsh:restart', async (): Promise<DshActionResult> => {
     try {
       return { ok: true, state: await dshManager.restart() }
     } catch (error) {
-      return { ok: false, error: error.message, state: dshManager.snapshot() }
+      return { ok: false, error: messageOf(error), state: dshManager.snapshot() }
     }
   })
 
-  ipcMain.handle('dsh:input', (_event, data) => {
+  ipcMain.handle('dsh:input', (_event: IpcMainInvokeEvent, data: unknown): boolean => {
     dshManager.write(String(data ?? ''))
     return true
   })
 
-  ipcMain.handle('dsh:resize', (_event, size) => {
-    dshManager.resize(Number(size?.cols), Number(size?.rows))
-    return true
-  })
-
-  ipcMain.handle('dsh:replay', () => dshManager.replay())
-
-  ipcMain.handle('shell:create', (_event, size) => {
-    const id = `shell-${++shellCounter}`
-    const target = processUtils.resolveShell(settings.all())
-    const cwd = String(settings.get('cwd') || '') || processUtils.homeDir()
-    // 标题由主进程持有（渲染层只显示），可以重命名；它只活在本次运行里 ——
-    // 本地 Shell 不做任何持久化，下次启动就是全新的一页。
-    const label = `Shell ${shellCounter}`
-    const cols = Number(size?.cols) || 120
-    const rows = Number(size?.rows) || 30
-    try {
-      ptySessions.create({
-        id,
-        file: target.file,
-        args: target.args,
-        cwd,
-        cols,
-        rows,
-        // 行列也带给渲染层：界面重载后重新接上时按同样尺寸建立，
-        // 第一次 fit 就是空操作，不会白触发一次 PTY resize
-        meta: { kind: 'shell', label, command: target.display, cwd, cols, rows }
-      })
-      extraSessions.add(id)
-      return { ok: true, id, label, command: target.display }
-    } catch (error) {
-      return { ok: false, error: error.message }
+  ipcMain.handle(
+    'dsh:resize',
+    (_event: IpcMainInvokeEvent, size?: { cols?: number; rows?: number }): boolean => {
+      dshManager.resize(Number(size?.cols), Number(size?.rows))
+      return true
     }
-  })
+  )
 
-  ipcMain.handle('session:input', (_event, payload) => {
-    ptySessions.write(String(payload?.id), String(payload?.data ?? ''))
-    return true
-  })
+  ipcMain.handle('dsh:replay', (): string => dshManager.replay())
 
-  ipcMain.handle('session:resize', (_event, payload) => {
-    ptySessions.resize(String(payload?.id), Number(payload?.cols), Number(payload?.rows))
-    return true
-  })
+  ipcMain.handle(
+    'shell:create',
+    (_event: IpcMainInvokeEvent, size?: { cols?: number; rows?: number }): CreateShellResult => {
+      const id = `shell-${++shellCounter}`
+      const target = processUtils.resolveShell(settings.all())
+      const cwd = String(settings.get('cwd') || '') || processUtils.homeDir()
+      // 标题由主进程持有（渲染层只显示），可以重命名；它只活在本次运行里 ——
+      // 本地 Shell 不做任何持久化，下次启动就是全新的一页。
+      const label = `Shell ${shellCounter}`
+      const cols = Number(size?.cols) || 120
+      const rows = Number(size?.rows) || 30
+      try {
+        ptySessions.create({
+          id,
+          file: target.file,
+          args: target.args,
+          cwd,
+          cols,
+          rows,
+          // 行列也带给渲染层：界面重载后重新接上时按同样尺寸建立，
+          // 第一次 fit 就是空操作，不会白触发一次 PTY resize
+          meta: { kind: 'shell', label, command: target.display, cwd, cols, rows }
+        })
+        extraSessions.add(id)
+        return { ok: true, id, label, command: target.display }
+      } catch (error) {
+        return { ok: false, error: messageOf(error) }
+      }
+    }
+  )
 
-  ipcMain.handle('session:kill', (_event, id) => {
+  ipcMain.handle(
+    'session:input',
+    (_event: IpcMainInvokeEvent, payload?: { id?: string; data?: string }): boolean => {
+      ptySessions.write(String(payload?.id), String(payload?.data ?? ''))
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'session:resize',
+    (
+      _event: IpcMainInvokeEvent,
+      payload?: { id?: string; cols?: number; rows?: number }
+    ): boolean => {
+      ptySessions.resize(String(payload?.id), Number(payload?.cols), Number(payload?.rows))
+      return true
+    }
+  )
+
+  ipcMain.handle('session:kill', (_event: IpcMainInvokeEvent, id: unknown): boolean => {
     const killed = ptySessions.kill(String(id), true)
     extraSessions.delete(String(id))
     return killed
   })
 
   /** 重命名本地 Shell 的标题：只活在本次运行里（终端标题由主进程持有，渲染层只显示） */
-  ipcMain.handle('session:rename', (_event, payload) => {
-    const id = String(payload?.id || '')
-    const label = String(payload?.label || '')
-      .trim()
-      .slice(0, 40)
-    if (!id || !label) return { ok: false, error: '名字不能为空' }
-    ptySessions.rename(id, label)
-    return { ok: true, id, label }
-  })
+  ipcMain.handle(
+    'session:rename',
+    (
+      _event: IpcMainInvokeEvent,
+      payload?: { id?: string; label?: string }
+    ): RenameSessionResult => {
+      const id = String(payload?.id || '')
+      const label = String(payload?.label || '')
+        .trim()
+        .slice(0, 40)
+      if (!id || !label) return { ok: false, error: '名字不能为空' }
+      ptySessions.rename(id, label)
+      return { ok: true, id, label }
+    }
+  )
 
-  ipcMain.handle('app:openExternal', async (_event, url) => {
+  ipcMain.handle('app:openExternal', async (_event: IpcMainInvokeEvent, url?: string) => {
     const target = url || dshManager.uiUrl || dshManager.origin
     await shell.openExternal(target)
     return target
@@ -654,8 +738,8 @@ function registerIpc() {
 
   ipcMain.handle('app:revealUserData', () => shell.openPath(app.getPath('userData')))
 
-  ipcMain.handle('app:confirm', async (_event, payload) => {
-    const result = await dialog.showMessageBox(mainWindow, {
+  ipcMain.handle('app:confirm', async (_event: IpcMainInvokeEvent, payload?: ConfirmRequest) => {
+    const options: MessageBoxOptions = {
       type: payload?.type || 'question',
       buttons: payload?.buttons || ['取消', '确定'],
       defaultId: 1,
@@ -663,7 +747,12 @@ function registerIpc() {
       title: payload?.title || '确认',
       message: payload?.message || '',
       detail: payload?.detail || ''
-    })
+    }
+    // 窗口可能已经关了：那时退化成不带父窗口的对话框（原来的写法也是这么兜的）
+    const result =
+      mainWindow && !mainWindow.isDestroyed()
+        ? await dialog.showMessageBox(mainWindow, options)
+        : await dialog.showMessageBox(options)
     return result.response === 1
   })
 
@@ -671,7 +760,7 @@ function registerIpc() {
   // 这些操作直接读写 DSH 磁盘数据；正在运行的 dsh 会把 workspace.json 读进内存，
   // 所以改动要等 dsh 重启后才同步到界面里 —— 返回里的 dshRunning 让渲染层据此提示。
 
-  ipcMain.handle('archive:list', () => {
+  ipcMain.handle('archive:list', (): ArchiveListResult => {
     try {
       return {
         ok: true,
@@ -680,53 +769,64 @@ function registerIpc() {
         sessions: archiveManager.list()
       }
     } catch (error) {
-      return { ok: false, error: error.message }
+      return { ok: false, error: messageOf(error) }
     }
   })
 
-  ipcMain.handle('archive:read', (_event, id) => {
+  ipcMain.handle('archive:read', (_event: IpcMainInvokeEvent, id: unknown): ArchiveReadResult => {
     try {
       return { ok: true, session: archiveManager.read(String(id)) }
     } catch (error) {
-      return { ok: false, error: error.message }
+      return { ok: false, error: messageOf(error) }
     }
   })
 
-  ipcMain.handle('archive:unarchive', (_event, id) => {
-    try {
-      return {
-        ok: true,
-        dshRunning: dshManager.sessionAlive,
-        ...archiveManager.unarchive(String(id))
+  ipcMain.handle(
+    'archive:unarchive',
+    (_event: IpcMainInvokeEvent, id: unknown): ArchiveUnarchiveResult => {
+      try {
+        return {
+          ok: true,
+          dshRunning: dshManager.sessionAlive,
+          ...archiveManager.unarchive(String(id))
+        }
+      } catch (error) {
+        return { ok: false, error: messageOf(error) }
       }
-    } catch (error) {
-      return { ok: false, error: error.message }
     }
-  })
+  )
 
-  ipcMain.handle('archive:remove', (_event, id) => {
-    try {
-      return { ok: true, dshRunning: dshManager.sessionAlive, ...archiveManager.remove(String(id)) }
-    } catch (error) {
-      return { ok: false, error: error.message }
+  ipcMain.handle(
+    'archive:remove',
+    (_event: IpcMainInvokeEvent, id: unknown): ArchiveRemoveResult => {
+      try {
+        return {
+          ok: true,
+          dshRunning: dshManager.sessionAlive,
+          ...archiveManager.remove(String(id))
+        }
+      } catch (error) {
+        return { ok: false, error: messageOf(error) }
+      }
     }
-  })
+  )
 }
 
-function wireManagerEvents() {
+function wireManagerEvents(): void {
   dshManager.on('state', (snapshot) => sendToRenderer('dsh:state', snapshot))
-  dshManager.on('output', (payload) => sendToRenderer('dsh:output', payload))
-  dshManager.on('log', (entry) => sendToRenderer('dsh:log', entry))
-  dshManager.on('ui-url', (url) => sendToRenderer('dsh:ui-url', url))
+  dshManager.on('output', (payload: DshOutputEvent) => sendToRenderer('dsh:output', payload))
+  dshManager.on('log', (entry: DshLogEntry) => sendToRenderer('dsh:log', entry))
+  dshManager.on('ui-url', (url: string) => sendToRenderer('dsh:ui-url', url))
 
-  ptySessions.on('data', (event) => {
+  ptySessions.on('data', (event: SessionOutputEvent) => {
     if (event.id === dshManager.sessionId) return // dsh 输出走 dsh:output
     sendToRenderer('session:output', event)
   })
-  ptySessions.on('exit', (event) => {
+  ptySessions.on('exit', (event: SessionExitEvent) => {
     if (event.id === dshManager.sessionId) {
       // dsh 自己的退出也要告诉渲染层，否则终端里看不到任何收尾信息
-      sendToRenderer('dsh:exit', { exitCode: event.exitCode, signal: event.signal })
+      const payload: DshExitEvent = { exitCode: event.exitCode, signal: event.signal }
+      sendToRenderer('dsh:exit', payload)
       return
     }
     extraSessions.delete(event.id)
@@ -743,7 +843,7 @@ function wireManagerEvents() {
  *
  * 顺带清理早期版本留下的会话文件：它已经不读也不写了。
  */
-function dropLegacySessionFile() {
+function dropLegacySessionFile(): void {
   try {
     fs.rmSync(path.join(app.getPath('userData'), 'shell-sessions.json'), { force: true })
   } catch {
@@ -751,7 +851,12 @@ function dropLegacySessionFile() {
   }
 }
 
-async function bootstrap() {
+/** 统一的"把 unknown 错误取成消息" */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function bootstrap(): Promise<void> {
   settings = new Settings(path.join(app.getPath('userData'), 'settings.json'))
   // UA 要在任何请求发出之前定好：内嵌页首次导航也吃这个默认值
   // （以前是在 did-attach-webview 里改，可能晚于第一次请求）
@@ -805,7 +910,7 @@ async function bootstrap() {
     try {
       await dshManager.start({ allowAdopt: true })
     } catch (error) {
-      dshManager.log('error', `自动启动失败：${error.message}`)
+      dshManager.log('error', `自动启动失败：${messageOf(error)}`)
     }
   }
 }
