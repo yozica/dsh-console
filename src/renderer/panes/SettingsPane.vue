@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 设置页（第一个迁到 Vue 的页面）。
  *
@@ -7,13 +7,14 @@
  * 现在字段名直接写在模板的 v-model 上，"界面长什么样"和"读写了哪个设置项"
  * 在同一处，改一个字段只需要动这一个文件。
  *
- * 与还没迁移的 app.js 之间只通过一个 CustomEvent 通信（保存/重载后通知它刷新快照），
+ * 与外壳（app.ts）之间只通过一个 CustomEvent 通信（保存/重载后通知它刷新快照），
  * 不共享可变全局。
  */
-import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { snapshot } from '../lib/store.js'
+import { onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { snapshot } from '../lib/store.js';
+import type { EnvInfo, SettingsValues } from '../../shared/ipc';
 
-const api = window.dshConsole
+const api = window.dshConsole;
 
 /** 表单状态：键名与主进程的设置项一一对应 */
 const form = reactive({
@@ -31,103 +32,107 @@ const form = reactive({
   autoStart: true,
   openUiOnStart: true,
   uiFullscreenOnStart: true,
-  killOnExit: true
-})
+  killOnExit: true,
+});
 
-const userData = ref('')
-const status = ref('')
-const busy = ref(false)
+const userData = ref('');
+const status = ref('');
+const busy = ref(false);
 /** 版本信息来自快照的 env（主进程给），开发态与打包态都在这里如实显示 */
-const appVersion = ref('—')
-const packaged = ref(false)
-const runtime = reactive({ electron: '—', node: '—', chrome: '—' })
-let statusTimer = null
-let stopThemeWatch = null
+const appVersion = ref('—');
+const packaged = ref(false);
+const runtime = reactive({ electron: '—', node: '—', chrome: '—' });
+let statusTimer: ReturnType<typeof setTimeout> | null = null;
+let stopThemeWatch: (() => void) | null = null;
 
-function fill(settings) {
+function fill(values: Partial<SettingsValues>): void {
   for (const key of Object.keys(form)) {
-    if (settings[key] !== undefined) form[key] = settings[key]
+    const next = values[key as keyof SettingsValues];
+    if (next !== undefined) (form as Record<string, unknown>)[key] = next;
   }
 }
 
 /** 数字输入留空会变成 ''/NaN，这时保留原值，别把配置写成 NaN */
-function normalize(patch, fallback) {
+function normalize(
+  patch: Record<string, unknown>,
+  fallback: Record<string, unknown>,
+): Record<string, unknown> {
   for (const key of ['port', 'pollIntervalMs', 'startTimeoutMs', 'stopGraceMs']) {
-    const value = Number(patch[key])
-    patch[key] = Number.isFinite(value) ? value : fallback[key]
+    const value = Number(patch[key]);
+    patch[key] = Number.isFinite(value) ? value : fallback[key];
   }
-  return patch
+  return patch;
 }
 
-function flash(message) {
-  status.value = message
-  if (statusTimer) clearTimeout(statusTimer)
-  statusTimer = setTimeout(() => (status.value = ''), 4000)
+function flash(message: string): void {
+  status.value = message;
+  if (statusTimer) clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => (status.value = ''), 4000);
 }
 
-/** 告诉还没迁移的 app.js：设置变了，请刷新快照并重绘 */
-function announce(settings) {
-  window.dispatchEvent(new CustomEvent('dsh:settings-changed', { detail: settings }))
+/** 告诉外壳（app.ts）：设置变了，请刷新快照并重绘 */
+function announce(next: SettingsValues): void {
+  window.dispatchEvent(new CustomEvent('dsh:settings-changed', { detail: next }));
 }
 
-async function load() {
+async function load(): Promise<SettingsValues> {
   // 首屏读共享 store（外壳与其它页面读的是同一份）；「重新载入」按钮要的是最新值，
   // 所以这里照旧问主进程要一次完整快照。
-  const fresh = await api.getSnapshot()
-  fill(fresh.settings)
-  userData.value = fresh.userData || ''
-  applyEnv(fresh.env)
-  return fresh.settings
+  const fresh = await api.getSnapshot();
+  fill(fresh.settings);
+  userData.value = fresh.userData || '';
+  applyEnv(fresh.env);
+  return fresh.settings;
 }
 
 /** 版本信息：应用自身版本 + 运行时不变量 */
-function applyEnv(env) {
-  if (!env) return
-  appVersion.value = env.app || '—'
-  packaged.value = Boolean(env.packaged)
-  Object.assign(runtime, env.versions || {})
+function applyEnv(env?: EnvInfo): void {
+  if (!env) return;
+  appVersion.value = env.app || '—';
+  packaged.value = Boolean(env.packaged);
+  Object.assign(runtime, env.versions || {});
 }
 
 async function save() {
-  busy.value = true
+  busy.value = true;
   try {
-    const patch = normalize({ ...form }, { ...form })
-    const next = await api.patchSettings(patch)
-    fill(next)
-    announce(next)
-    flash('已保存')
+    const patch = normalize({ ...form }, { ...form });
+    const next = await api.patchSettings(patch);
+    fill(next);
+    announce(next);
+    flash('已保存');
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 
 async function reload() {
-  busy.value = true
+  busy.value = true;
   try {
-    const settings = await load()
-    announce(settings)
-    flash('已重新载入')
+    const settings = await load();
+    announce(settings);
+    flash('已重新载入');
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 
 onMounted(async () => {
-  await load()
+  await load();
   // 左下角的主题开关改的是同一个设置：store 已经订阅了 theme:changed，这里跟着同步
   stopThemeWatch = watch(
     () => snapshot.value?.theme?.mode,
     (mode) => {
-      if (mode) form.themeMode = mode
+      if (mode) form.themeMode = mode;
     },
-    { immediate: true }
-  )
-})
+    { immediate: true },
+  );
+});
 
 onUnmounted(() => {
-  if (statusTimer) clearTimeout(statusTimer)
-  if (stopThemeWatch) stopThemeWatch()
-})
+  if (statusTimer) clearTimeout(statusTimer);
+  if (stopThemeWatch) stopThemeWatch();
+});
 </script>
 
 <template>
@@ -143,7 +148,9 @@ onUnmounted(() => {
             <option value="dark">深色</option>
           </select>
         </div>
-        <p class="hint">左下角「自动 / 亮 / 深」是同一个设置。内嵌的 DSH 界面有自己的主题，不跟着改。</p>
+        <p class="hint">
+          左下角「自动 / 亮 / 深」是同一个设置。内嵌的 DSH 界面有自己的主题，不跟着改。
+        </p>
       </div>
     </section>
 
@@ -189,7 +196,12 @@ onUnmounted(() => {
       <div class="panel-block">
         <div class="form-row">
           <label for="s-dshCommand">dsh 命令</label>
-          <input id="s-dshCommand" type="text" placeholder="留空则自动探测" v-model.trim="form.dshCommand" />
+          <input
+            id="s-dshCommand"
+            type="text"
+            placeholder="留空则自动探测"
+            v-model.trim="form.dshCommand"
+          />
         </div>
         <div class="form-row">
           <label for="s-extraArgs">附加参数</label>
@@ -217,21 +229,39 @@ onUnmounted(() => {
         <div class="form-row">
           <label for="s-pollIntervalMs">状态轮询间隔</label>
           <div class="input-suffix">
-            <input id="s-pollIntervalMs" type="number" min="500" step="100" v-model.number="form.pollIntervalMs" />
+            <input
+              id="s-pollIntervalMs"
+              type="number"
+              min="500"
+              step="100"
+              v-model.number="form.pollIntervalMs"
+            />
             <span>毫秒</span>
           </div>
         </div>
         <div class="form-row">
           <label for="s-startTimeoutMs">启动超时</label>
           <div class="input-suffix">
-            <input id="s-startTimeoutMs" type="number" min="5000" step="1000" v-model.number="form.startTimeoutMs" />
+            <input
+              id="s-startTimeoutMs"
+              type="number"
+              min="5000"
+              step="1000"
+              v-model.number="form.startTimeoutMs"
+            />
             <span>毫秒</span>
           </div>
         </div>
         <div class="form-row">
           <label for="s-stopGraceMs">优雅停机等待</label>
           <div class="input-suffix">
-            <input id="s-stopGraceMs" type="number" min="500" step="500" v-model.number="form.stopGraceMs" />
+            <input
+              id="s-stopGraceMs"
+              type="number"
+              min="500"
+              step="500"
+              v-model.number="form.stopGraceMs"
+            />
             <span>毫秒</span>
           </div>
         </div>
@@ -258,9 +288,15 @@ onUnmounted(() => {
       <header class="panel-head"><h3>保存</h3></header>
       <div class="panel-block">
         <div class="btn-row">
-          <button id="btn-save-settings" class="btn primary" :disabled="busy" @click="save">保存设置</button>
-          <button id="btn-reload-settings" class="btn" :disabled="busy" @click="reload">重新载入</button>
-          <button id="btn-open-userdata" class="btn ghost" @click="api.revealUserData()">打开配置目录</button>
+          <button id="btn-save-settings" class="btn primary" :disabled="busy" @click="save">
+            保存设置
+          </button>
+          <button id="btn-reload-settings" class="btn" :disabled="busy" @click="reload">
+            重新载入
+          </button>
+          <button id="btn-open-userdata" class="btn ghost" @click="api.revealUserData()">
+            打开配置目录
+          </button>
         </div>
         <p class="hint" id="settings-path">配置目录：{{ userData }}</p>
         <p class="hint settings-status" id="settings-status">{{ status }}</p>

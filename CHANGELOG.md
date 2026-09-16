@@ -1,9 +1,13 @@
 # Changelog
 
 本文件是本项目**每一个发布版本的内容记录**，也是 GitHub Release 正文的**单一事实来源**：
-打 `v*` 标签时，CI 会用 `tools/changelog-extract.mjs` 取出对应版本的条目，直接当作 Release 正文
-（末尾再附一段固定的下载指引）。所以**发版前必须先在这里写条目** —— 没有条目时 CI 会直接失败，
+打 `v*` 标签时，CI 会用 `tools/changelog-extract.mts` 取出对应版本的条目，直接当作 Release 正文
+（末尾再附一段固定的下载指引）。所以**发版前必须先有内容** —— 没有条目时 CI 会直接失败，
 宁可不发，也不要发出一个空说明的 Release。
+
+**这个文件不手写。** 每条改动写成一个 `.changeset/*.md` 片段（`npx changeset add`），
+发版前跑 `npm run release:prepare`：它算出新版本号、把片段正文**原样**汇总成下面的新条目、
+改掉 `package.json` 的版本、删掉已汇总的片段。细节见 README 的「发布新版本」与 `.changeset/README.md`。
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 每节的标题必须是 `## [x.y.z] - YYYY-MM-DD`（方括号与日期都要有，提取脚本按这个找）。

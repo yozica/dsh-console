@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 控制台页（第二个迁到 Vue 的页面）。
  *
@@ -12,146 +12,150 @@
  *     等外壳也迁完就合并成一份）
  *   - 输出：操作结果用 `dsh:status-message` 事件交给底栏显示
  */
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { phaseText } from '../lib/phase-text.js'
-import { formatDurationMs, formatUptime } from '../lib/format.js'
-import { forceStopFlow, openUiExternally, restartFlow, stopFlow } from '../lib/dsh-actions.js'
-import { dsh, snapshot, startStore } from '../lib/store.js'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { phaseText } from '../lib/phase-text.js';
+import { formatDurationMs, formatUptime } from '../lib/format.js';
+import { forceStopFlow, openUiExternally, restartFlow, stopFlow } from '../lib/dsh-actions.js';
+import { dsh, snapshot, startStore } from '../lib/store.js';
+import type { DshLogEntry } from '../../shared/ipc.js';
 
-const api = window.dshConsole
+const api = window.dshConsole;
 
-const logs = ref([])
-const logList = ref(null)
+const logs = ref<DshLogEntry[]>([]);
+const logList = ref<HTMLElement | null>(null);
 /** 正在进行的操作名（按钮的 aria-busy / 互斥用） */
-const busy = ref('')
+const busy = ref('');
 /** 每秒自增，让「已运行」自己走字（其余字段等状态轮询刷新） */
-const tick = ref(0)
+const tick = ref(0);
 
-let offLog = null
-let timer = null
+let offLog: (() => void) | null = null;
+let timer: ReturnType<typeof setInterval> | null = null;
 
-const phase = computed(() => dsh.value?.phase || 'stopped')
-const info = computed(() => phaseText(phase.value))
+const phase = computed(() => dsh.value?.phase || 'stopped');
+const info = computed(() => phaseText(phase.value));
 /** 归属判断只看 dsh.owned；PID 可能是 null（PTY 刚拉起、还没就绪） */
-const own = computed(() => Boolean(dsh.value?.owned))
-const switching = computed(() => phase.value === 'starting' || phase.value === 'stopping')
+const own = computed(() => Boolean(dsh.value?.owned));
+const switching = computed(() => phase.value === 'starting' || phase.value === 'stopping');
 
 const pidText = computed(() => {
-  const d = dsh.value
-  if (!d) return '—'
-  if (own.value) return d.pid ? String(d.pid) : '识别中…'
-  return d.externalPid ? `外部 PID ${d.externalPid}` : '—'
-})
+  const d = dsh.value;
+  if (!d) return '—';
+  if (own.value) return d.pid ? String(d.pid) : '识别中…';
+  return d.externalPid ? `外部 PID ${d.externalPid}` : '—';
+});
 
 const uptimeText = computed(() => {
-  void tick.value
-  const d = dsh.value
-  if (!d) return '—'
-  return formatUptime(d.startedAt ? Date.now() - d.startedAt : d.uptimeMs)
-})
+  void tick.value;
+  const d = dsh.value;
+  if (!d) return '—';
+  return formatUptime(d.startedAt ? Date.now() - d.startedAt : d.uptimeMs);
+});
 
 const latencyText = computed(() => {
-  const probe = dsh.value?.probe
-  if (!probe?.reachable) return probe?.error || '不可达'
-  return `${probe.latencyMs} ms`
-})
+  const probe = dsh.value?.probe;
+  if (!probe?.reachable) return probe?.error || '不可达';
+  return `${probe.latencyMs} ms`;
+});
 
 const httpText = computed(() => {
-  const probe = dsh.value?.probe
-  if (!probe?.reachable) return '无响应'
-  return probe.isDsh ? String(probe.statusCode) : `${probe.statusCode}，非 dsh`
-})
+  const probe = dsh.value?.probe;
+  if (!probe?.reachable) return '无响应';
+  return probe.isDsh ? String(probe.statusCode) : `${probe.statusCode}，非 dsh`;
+});
 
 // 光秃秃一个 401 会被当成报错，说清它是 dsh 的正常健康响应
 const httpTitle = computed(() =>
   dsh.value?.probe?.reachable && dsh.value?.probe?.isDsh
     ? 'dsh 对没有令牌的请求一律返回 401，这是它在正常响应健康检查'
-    : ''
-)
+    : '',
+);
 
 const ownerText = computed(() => {
-  const owner = dsh.value?.portOwner
-  if (!owner) return '—'
-  return `${owner.name || '未知进程'}，PID ${owner.pid || '识别中'}`
-})
+  const owner = dsh.value?.portOwner;
+  if (!owner) return '—';
+  return `${owner.name || '未知进程'}，PID ${owner.pid || '识别中'}`;
+});
 
-const graceText = computed(() => formatDurationMs(snapshot.value?.settings?.stopGraceMs))
-const launchCommand = computed(() => dsh.value?.launch?.display || '—')
-const launchCwd = computed(() => String(snapshot.value?.settings?.cwd || '（用户主目录）'))
+const graceText = computed(() => formatDurationMs(snapshot.value?.settings?.stopGraceMs));
+const launchCommand = computed(() => dsh.value?.launch?.display || '—');
+const launchCwd = computed(() => String(snapshot.value?.settings?.cwd || '（用户主目录）'));
 
 // 延迟趋势：复用主进程已经采集的 latencyHistory
 const spark = computed(() => {
-  const samples = (dsh.value?.latencyHistory || []).filter((value) => Number.isFinite(value))
+  const samples = (dsh.value?.latencyHistory || []).filter((value) => Number.isFinite(value));
   if (samples.length < 2) {
-    return { area: '', line: '', stats: samples.length === 1 ? `${samples[0]} ms` : '样本不足' }
+    return { area: '', line: '', stats: samples.length === 1 ? `${samples[0]} ms` : '样本不足' };
   }
-  const max = Math.max(...samples)
-  const min = Math.min(...samples)
-  const avg = Math.round(samples.reduce((sum, value) => sum + value, 0) / samples.length)
-  const span = Math.max(1, max - min)
-  const step = 100 / (samples.length - 1)
+  const max = Math.max(...samples);
+  const min = Math.min(...samples);
+  const avg = Math.round(samples.reduce((sum, value) => sum + value, 0) / samples.length);
+  const span = Math.max(1, max - min);
+  const step = 100 / (samples.length - 1);
   const line = samples
-    .map((value, index) => `${(index * step).toFixed(2)},${(26 - ((value - min) / span) * 22).toFixed(2)}`)
-    .join(' ')
-  return { area: `0, 28 ${line} 100, 28`, line, stats: `平均 ${avg} ms，峰值 ${max} ms` }
-})
+    .map(
+      (value, index) =>
+        `${(index * step).toFixed(2)},${(26 - ((value - min) / span) * 22).toFixed(2)}`,
+    )
+    .join(' ');
+  return { area: `0, 28 ${line} 100, 28`, line, stats: `平均 ${avg} ms，峰值 ${max} ms` };
+});
 
 /** 操作结果交给外壳的底栏显示（底栏是外壳的一部分） */
-function say(message) {
-  window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: message }))
+function say(message: string): void {
+  window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: message }));
 }
 
-async function run(name, task) {
-  if (busy.value) return
-  busy.value = name
+async function run(name: string, task: () => Promise<void> | void): Promise<void> {
+  if (busy.value) return;
+  busy.value = name;
   try {
-    await task()
+    await task();
   } finally {
-    busy.value = ''
+    busy.value = '';
   }
 }
 
 const start = () =>
   run('start', async () => {
-    const result = await api.start()
-    if (!result.ok) alert(`启动失败：${result.error}`)
-  })
-const stop = () => run('stop', () => stopFlow(api, () => dsh.value))
-const restart = () => run('restart', () => restartFlow(api, () => dsh.value))
-const forceStop = () => run('force', () => forceStopFlow(api))
-const sendCtrlC = () => api.dshInput('\u0003')
-const openInBrowser = () => openUiExternally(api, () => dsh.value)
+    const result = await api.start();
+    if (!result.ok) alert(`启动失败：${result.error}`);
+  });
+const stop = () => run('stop', () => stopFlow(api, () => dsh.value));
+const restart = () => run('restart', () => restartFlow(api, () => dsh.value));
+const forceStop = () => run('force', () => forceStopFlow(api));
+const sendCtrlC = () => api.dshInput('\u0003');
+const openInBrowser = () => openUiExternally(api, () => dsh.value);
 
 async function copyUrl() {
-  const url = dsh.value?.uiUrl
+  const url = dsh.value?.uiUrl;
   if (!url) {
-    say('没有带令牌的地址可复制（该实例不是本应用启动的）')
-    return
+    say('没有带令牌的地址可复制（该实例不是本应用启动的）');
+    return;
   }
-  await navigator.clipboard.writeText(url)
-  say('地址已复制到剪贴板（含访问令牌，请勿外传）')
+  await navigator.clipboard.writeText(url);
+  say('地址已复制到剪贴板（含访问令牌，请勿外传）');
 }
 
-function appendLog(entry) {
-  logs.value.push(entry)
-  if (logs.value.length > 250) logs.value.splice(0, logs.value.length - 250)
+function appendLog(entry: DshLogEntry): void {
+  logs.value.push(entry);
+  if (logs.value.length > 250) logs.value.splice(0, logs.value.length - 250);
   void nextTick(() => {
-    if (logList.value) logList.value.scrollTop = logList.value.scrollHeight
-  })
+    if (logList.value) logList.value.scrollTop = logList.value.scrollHeight;
+  });
 }
 
 onMounted(async () => {
   // 快照走共享 store（外壳、设置页、这里读的是同一份，不再各订阅一遍）
-  await startStore()
-  for (const entry of snapshot.value?.dsh?.logs || []) appendLog(entry)
-  offLog = api.onLog((entry) => appendLog(entry))
-  timer = setInterval(() => (tick.value += 1), 1000)
-})
+  await startStore();
+  for (const entry of snapshot.value?.dsh?.logs || []) appendLog(entry);
+  offLog = api.onLog((entry) => appendLog(entry));
+  timer = setInterval(() => (tick.value += 1), 1000);
+});
 
 onUnmounted(() => {
-  if (offLog) offLog()
-  if (timer) clearInterval(timer)
-})
+  if (offLog) offLog();
+  if (timer) clearInterval(timer);
+});
 </script>
 
 <template>
@@ -170,7 +174,7 @@ onUnmounted(() => {
             id="btn-start"
             class="btn primary"
             :disabled="Boolean(busy) || switching || own || phase === 'external'"
-            :aria-busy="busy === 'start' ? 'true' : null"
+            :aria-busy="busy === 'start' ? 'true' : undefined"
             :title="
               own
                 ? 'dsh 正在运行，无需重复启动'
@@ -188,7 +192,7 @@ onUnmounted(() => {
             id="btn-stop"
             class="btn"
             :disabled="Boolean(busy) || switching || (!own && !dsh?.externalPid)"
-            :aria-busy="busy === 'stop' ? 'true' : null"
+            :aria-busy="busy === 'stop' ? 'true' : undefined"
             :title="
               switching
                 ? '正在切换状态，稍候'
@@ -206,7 +210,7 @@ onUnmounted(() => {
             id="btn-restart"
             class="btn ghost"
             :disabled="Boolean(busy) || switching"
-            :aria-busy="busy === 'restart' ? 'true' : null"
+            :aria-busy="busy === 'restart' ? 'true' : undefined"
             @click="restart"
           >
             <svg class="i"><use href="#i-restart" /></svg><span>重启</span>
@@ -273,7 +277,9 @@ onUnmounted(() => {
         </header>
         <ul id="event-log" ref="logList" class="event-log">
           <li v-for="(entry, index) in logs" :key="index" :data-level="entry.level">
-            <span class="ts">{{ new Date(entry.at).toLocaleTimeString('zh-CN', { hour12: false }) }}</span
+            <span class="ts">{{
+              new Date(entry.at).toLocaleTimeString('zh-CN', { hour12: false })
+            }}</span
             ><span class="lv">{{ entry.level }}</span
             ><span class="msg">{{ entry.text }}</span>
           </li>
@@ -291,7 +297,7 @@ onUnmounted(() => {
               id="btn-ctrl-c"
               class="btn small"
               :disabled="!own"
-              :aria-busy="busy === 'ctrlc' ? 'true' : null"
+              :aria-busy="busy === 'ctrlc' ? 'true' : undefined"
               @click="sendCtrlC"
             >
               <svg class="i"><use href="#i-terminal" /></svg><span>发送 Ctrl+C</span>
@@ -300,14 +306,15 @@ onUnmounted(() => {
               id="btn-force-stop"
               class="btn small danger"
               :disabled="(!own && !dsh?.externalPid) || Boolean(busy)"
-              :aria-busy="busy === 'force' ? 'true' : null"
+              :aria-busy="busy === 'force' ? 'true' : undefined"
               @click="forceStop"
             >
               <svg class="i"><use href="#i-warn" /></svg><span>强制结束进程树</span>
             </button>
           </div>
           <p class="hint">
-            「停止」先发 Ctrl+C 让 dsh 自己退出，超过 <span id="hint-grace">{{ graceText }}</span> 才强杀。
+            「停止」先发 Ctrl+C 让 dsh 自己退出，超过
+            <span id="hint-grace">{{ graceText }}</span> 才强杀。
             当前实例不是本应用启动时，停止前会先问一次。
           </p>
         </div>
@@ -334,7 +341,9 @@ onUnmounted(() => {
         <div class="panel-block">
           <div class="block-head">
             <span>启动命令</span>
-            <span class="block-note">工作目录 <span id="launch-cwd">{{ launchCwd }}</span></span>
+            <span class="block-note"
+              >工作目录 <span id="launch-cwd">{{ launchCwd }}</span></span
+            >
           </div>
           <code id="launch-command" class="command">{{ launchCommand }}</code>
         </div>

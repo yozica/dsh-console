@@ -1,0 +1,10 @@
+# 构建产物与第三方代码不参与格式化
+dist/
+release/
+build/
+node_modules/
+.verify/
+.build-home/
+
+# npm 自己生成的锁文件（每次 install 都会重写，格式化只会制造无谓 diff）
+package-lock.json

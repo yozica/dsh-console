@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 归档会话页：补上 DSH 官方缺的「查看 / 搜索 / 恢复 / 删除归档会话」。
  *
@@ -10,181 +10,195 @@
  * 呈现，用户发言用一条强调色竖线标出，助手内容作为连续正文流动
  * （一次回答跨多个 step 时会拆成多条 assistant/message，气泡会碎成一墙卡片）。
  */
-import { computed, onMounted, ref } from 'vue'
-import { renderMarkdown } from '../lib/markdown.js'
+import { computed, onMounted, ref } from 'vue';
+import { renderMarkdown } from '../lib/markdown.js';
+import type { ArchivedSessionSummary, ConversationReadResult } from '../../shared/ipc.js';
 
-const api = window.dshConsole
+const api = window.dshConsole;
 
-const sessions = ref([])
-const query = ref('')
-const dshRunning = ref(false)
-const home = ref('')
-const loading = ref(false)
-const error = ref('')
+const sessions = ref<ArchivedSessionSummary[]>([]);
+const query = ref('');
+const dshRunning = ref(false);
+const home = ref('');
+const loading = ref(false);
+const error = ref('');
 
-const selectedId = ref(null)
-const conversation = ref(null)
-const reading = ref(false)
-const readError = ref('')
+const selectedId = ref<string | null>(null);
+const conversation = ref<ConversationReadResult | null>(null);
+const reading = ref(false);
+const readError = ref('');
 
-const busy = ref('') // 'restore' | 'remove'
+const busy = ref<'' | 'restore' | 'remove'>('');
 
 /** 搜索：标题 / 首句 / 每轮问答摘要，不区分大小写 */
 const filtered = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  if (!q) return sessions.value
-  return sessions.value.filter((s) => s.searchBlob.toLowerCase().includes(q))
-})
+  const q = query.value.trim().toLowerCase();
+  if (!q) return sessions.value;
+  return sessions.value.filter((s) => s.searchBlob.toLowerCase().includes(q));
+});
 
-const selected = computed(() => sessions.value.find((s) => s.id === selectedId.value) || null)
+const selected = computed(() => sessions.value.find((s) => s.id === selectedId.value) || null);
 
-function say(message) {
-  window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: message }))
+function say(message: string): void {
+  window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: message }));
 }
 
-function pad(n) {
-  return String(n).padStart(2, '0')
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
 }
 
 /** 索引里的时间：今年省掉年份，给标题让地方 */
-function fmtListTime(ms) {
-  if (!ms) return ''
-  const d = new Date(ms)
-  const md = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  return d.getFullYear() === new Date().getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}-${md}`
+function fmtListTime(ms: number | null | undefined): string {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const md = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.getFullYear() === new Date().getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}-${md}`;
 }
 
 /** 详情里的时间：完整日期时间 */
-function fmtFullTime(ms) {
-  if (!ms) return ''
-  const d = new Date(ms)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+function fmtFullTime(ms: number | null | undefined): string {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function fmtSize(bytes) {
-  if (bytes == null) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+function fmtSize(bytes: number | null | undefined): string {
+  if (bytes == null) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /**
  * 角色栏文字：只在角色切换时给一次。同角色的连续消息（一次回答被工具调用
  * 拆成多个 step）不再重复写「助手」，靠留白连成一段。
  */
-function roleLabel(index) {
-  const list = conversation.value?.messages || []
-  const message = list[index]
-  if (!message) return ''
-  if (index > 0 && list[index - 1].role === message.role) return ''
-  return message.role === 'user' ? '你' : '助手'
+function roleLabel(index: number): string {
+  const list = conversation.value?.messages || [];
+  const message = list[index];
+  if (!message) return '';
+  if (index > 0 && list[index - 1]?.role === message.role) return '';
+  return message.role === 'user' ? '你' : '助手';
 }
 
-async function load() {
-  loading.value = true
-  error.value = ''
+async function load(): Promise<void> {
+  loading.value = true;
+  error.value = '';
   try {
-    const result = await api.archiveList()
+    const result = await api.archiveList();
     if (!result.ok) {
-      error.value = result.error || '读取归档会话失败'
-      return
+      error.value = result.error || '读取归档会话失败';
+      return;
     }
-    home.value = result.home || ''
-    dshRunning.value = Boolean(result.dshRunning)
-    sessions.value = result.sessions || []
+    home.value = result.home || '';
+    dshRunning.value = Boolean(result.dshRunning);
+    sessions.value = result.sessions || [];
     // 当前选中的会话被删掉后，自动清空选中
     if (selectedId.value && !sessions.value.some((s) => s.id === selectedId.value)) {
-      selectedId.value = null
-      conversation.value = null
+      selectedId.value = null;
+      conversation.value = null;
     }
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
-function select(session) {
-  if (selectedId.value === session.id) return
-  selectedId.value = session.id
-  void readConversation(session.id)
+function select(session: ArchivedSessionSummary): void {
+  if (selectedId.value === session.id) return;
+  selectedId.value = session.id;
+  void readConversation(session.id);
 }
 
-async function readConversation(id) {
-  reading.value = true
-  readError.value = ''
-  conversation.value = null
+async function readConversation(id: string): Promise<void> {
+  reading.value = true;
+  readError.value = '';
+  conversation.value = null;
   try {
-    const result = await api.archiveRead(id)
+    const result = await api.archiveRead(id);
     if (!result.ok) {
-      readError.value = result.error || '读取对话失败'
-      return
+      readError.value = result.error || '读取对话失败';
+      return;
     }
-    conversation.value = result.session || null
+    conversation.value = result.session || null;
   } finally {
-    reading.value = false
+    reading.value = false;
   }
 }
 
-async function restore() {
-  const s = selected.value
-  if (!s || busy.value) return
+async function restore(): Promise<void> {
+  const s = selected.value;
+  if (!s || busy.value) return;
   const ok = await api.confirm({
     type: 'question',
     title: '取消归档',
     message: `把「${s.title}」恢复到侧边栏？`,
-    detail: '取消归档只把它从归档列表移回侧边栏，会话与日志原样保留。正在运行的 dsh 需要重启后侧边栏才会出现它。'
-  })
-  if (!ok) return
-  busy.value = 'restore'
+    detail:
+      '取消归档只把它从归档列表移回侧边栏，会话与日志原样保留。正在运行的 dsh 需要重启后侧边栏才会出现它。',
+  });
+  if (!ok) return;
+  busy.value = 'restore';
   try {
-    const result = await api.archiveUnarchive(s.id)
+    const result = await api.archiveUnarchive(s.id);
     if (!result.ok) {
-      say(`恢复失败：${result.error}`)
-      return
+      say(`恢复失败：${result.error}`);
+      return;
     }
-    await load()
-    say(result.dshRunning ? '已恢复。dsh 正在运行，重启 dsh 后侧边栏会出现该会话。' : '已恢复到侧边栏。')
+    await load();
+    say(
+      result.dshRunning
+        ? '已恢复。dsh 正在运行，重启 dsh 后侧边栏会出现该会话。'
+        : '已恢复到侧边栏。',
+    );
   } finally {
-    busy.value = ''
+    busy.value = '';
   }
 }
 
-async function remove() {
-  const s = selected.value
-  if (!s || busy.value) return
+async function remove(): Promise<void> {
+  const s = selected.value;
+  if (!s || busy.value) return;
   const ok = await api.confirm({
     type: 'warning',
     title: '删除归档会话',
     message: `确定要删除「${s.title}」吗？`,
-    detail: '这会删除该会话的日志与投影缓存，并从工作区注册表里移除，无法撤销。附件不会被删除（可能被其它会话共享）。'
-  })
-  if (!ok) return
-  busy.value = 'remove'
+    detail:
+      '这会删除该会话的日志与投影缓存，并从工作区注册表里移除，无法撤销。附件不会被删除（可能被其它会话共享）。',
+  });
+  if (!ok) return;
+  busy.value = 'remove';
   try {
-    const result = await api.archiveRemove(s.id)
+    const result = await api.archiveRemove(s.id);
     if (!result.ok) {
-      say(`删除失败：${result.error}`)
-      return
+      say(`删除失败：${result.error}`);
+      return;
     }
-    selectedId.value = null
-    conversation.value = null
-    await load()
-    const size = result.removedLogBytes ? `，释放 ${fmtSize(result.removedLogBytes)}` : ''
-    say(result.dshRunning ? `已删除${size}。dsh 正在运行，重启后注册表会同步。` : `已删除${size}。`)
+    selectedId.value = null;
+    conversation.value = null;
+    await load();
+    const size = result.removedLogBytes ? `，释放 ${fmtSize(result.removedLogBytes)}` : '';
+    say(
+      result.dshRunning ? `已删除${size}。dsh 正在运行，重启后注册表会同步。` : `已删除${size}。`,
+    );
   } finally {
-    busy.value = ''
+    busy.value = '';
   }
 }
 
 onMounted(() => {
-  void load()
-})
+  void load();
+});
 </script>
 
 <template>
   <div class="archive">
     <div class="bar">
-      <button class="btn small primary" :disabled="loading" :aria-busy="loading ? 'true' : null" @click="load">
+      <button
+        class="btn small primary"
+        :disabled="loading"
+        :aria-busy="loading ? 'true' : undefined"
+        @click="load"
+      >
         <svg class="i"><use href="#i-replay" /></svg><span>刷新</span>
       </button>
       <div class="spacer"></div>
@@ -225,7 +239,9 @@ onMounted(() => {
           >
             <div class="archive-item-head">
               <span class="archive-item-title">{{ s.title }}</span>
-              <span class="archive-item-time">{{ fmtListTime(s.lastPromptAt || s.createdAt) }}</span>
+              <span class="archive-item-time">{{
+                fmtListTime(s.lastPromptAt || s.createdAt)
+              }}</span>
             </div>
             <div class="archive-item-meta">{{ s.firstPrompt || '（无首句）' }}</div>
             <div class="archive-item-sub">
@@ -251,7 +267,7 @@ onMounted(() => {
           <button
             class="btn small"
             :disabled="!selected || busy === 'remove'"
-            :aria-busy="busy === 'restore' ? 'true' : null"
+            :aria-busy="busy === 'restore' ? 'true' : undefined"
             title="从归档列表移回侧边栏（不改动任何数据）"
             @click="restore"
           >
@@ -260,7 +276,7 @@ onMounted(() => {
           <button
             class="btn small danger"
             :disabled="!selected || busy === 'restore'"
-            :aria-busy="busy === 'remove' ? 'true' : null"
+            :aria-busy="busy === 'remove' ? 'true' : undefined"
             title="删除该会话的日志与缓存，不可撤销"
             @click="remove"
           >
@@ -313,9 +329,13 @@ onMounted(() => {
               :class="m.role === 'user' ? 'archive-turn-user' : 'archive-turn-assistant'"
             >
               <div v-if="roleLabel(index)" class="archive-turn-role">{{ roleLabel(index) }}</div>
+              <!-- renderMarkdown 先整段转义 HTML 再生成标签，输出里只剩它自己造的安全标签 -->
+              <!-- eslint-disable-next-line vue/no-v-html -->
               <div class="archive-turn-body" v-html="renderMarkdown(m.text)"></div>
             </article>
-            <div v-if="conversation.truncated" class="archive-thread-note">内容过长，已截断到最近的对话。</div>
+            <div v-if="conversation.truncated" class="archive-thread-note">
+              内容过长，已截断到最近的对话。
+            </div>
           </div>
         </div>
       </section>

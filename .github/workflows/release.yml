@@ -1,15 +1,18 @@
 # 发布新版本：打一个 v* 标签，CI 打包两个平台并创建一个 Release **草稿**。
 #
-# 日常用法（本地跑这两条，剩下交给 CI）：
-#   npm version patch          # 改版本号 + 提交 + 打 v0.1.1 标签
-#   git push --follow-tags     # 把提交和标签一起推上去
+# 日常用法（本地跑，剩下交给 CI）：
+#   npm run release:prepare    # 汇总 .changeset/ 里的片段：算版本号、写 CHANGELOG、改 package.json
+#   git add -A && git commit -m "chore: 发布 0.2.3"
+#   git tag v0.2.3 && git push origin main --tags
+#
+# 注意别用 `npm version patch`：那会**再** bump 一次版本号，与 release:prepare 的结果打架。
 #
 # 产物包含：
 #   Windows：DSH Console Setup x.y.z.exe（NSIS 安装包）、DSH Console x.y.z.exe（便携版）
 #   macOS：  DSH Console-x.y.z-arm64.dmg / -x64.dmg（安装镜像）+ 同名 .zip（免安装）
 #   latest.yml / latest-mac.yml + *.blockmap   更新元数据（差分下载用；现在没接自动更新，先留着）
 #
-# Release 正文来自 **CHANGELOG.md 里对应版本的条目**（`tools/changelog-extract.mjs` 提取，
+# Release 正文来自 **CHANGELOG.md 里对应版本的条目**（`tools/changelog-extract.mts` 提取，
 # 末尾附一段固定的下载指引）。所以**发版前必须先写 CHANGELOG**：缺条目时提取脚本会非零退出、
 # publish job 直接失败 —— 宁可不发，也不发一个没有说明的 Release。
 #
@@ -63,6 +66,10 @@ jobs:
       - name: 自检
         run: npm test
 
+      # 代码规范、格式与类型：任一条不过就不继续打包（也就不可能发出不合规的版本）
+      - name: 代码规范
+        run: npm run lint && npm run format:check && npm run typecheck
+
       - name: 打包
         shell: pwsh
         run: |
@@ -103,6 +110,10 @@ jobs:
 
       - name: 自检
         run: npm test
+
+      # 代码规范、格式与类型：任一条不过就不继续打包（也就不可能发出不合规的版本）
+      - name: 代码规范
+        run: npm run lint && npm run format:check && npm run typecheck
 
       # ad-hoc 签名（package.json 里 mac.identity = "-"）：没有开发者证书时，**也必须签**。
       # 不签名的 .app 在 Apple 芯片上根本起不来 —— 系统弹的是「已损坏，无法打开」（0.2.1 就是这样），
@@ -152,7 +163,10 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          node tools/changelog-extract.mjs "$TAG" > notes.md
+          # 这个 job 没有 npm ci（只取产物 + 发 Release），所以用 npx --yes 现取一个 tsx：
+          # --yes 是必须的，非 TTY 下没有它 npx 会拒绝安装。要让版本完全可控，就给本 job
+          # 补 actions/setup-node + npm ci（代价是多下一次完整依赖，含 Electron 二进制）
+          npx --yes tsx tools/changelog-extract.mts "$TAG" > notes.md
           cat >> notes.md <<'FOOTER'
 
           ---

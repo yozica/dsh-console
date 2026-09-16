@@ -1,0 +1,47 @@
+# 每次 PR、以及合入 main 之后的检查。
+#
+# 为什么单独一个工作流：`release.yml` 只在**打标签**时跑（那是出包路径），而
+# "改了代码却没带 changeset 片段""lint / 类型不过"这类问题必须在 PR 阶段就拦住 ——
+# 等打完标签跑出包才发现，包已经在跑了、标签也推出去了。
+#
+# 与 release.yml 的关系：那边两个 build job 里仍会再跑一遍自检与代码规范
+# （要发出去的东西自己证明合规）；这里只是把同一套检查提前到 PR 与 main。
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # changeset status --since=origin/<base> 要和基线分支比对，浅克隆里没有它
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 自检
+        run: npm test
+
+      - name: 代码规范
+        run: npm run lint && npm run format:check && npm run typecheck
+
+      # 闸门：改了代码就必须带一个 changeset 片段。不需要发版的改动用
+      # `npx changeset add --empty` 放一个空片段（发布汇总时会自动清掉）。
+      - name: 本次改动要带 changeset 片段
+        if: github.event_name == 'pull_request'
+        run: npx changeset status --since=origin/${{ github.base_ref }}

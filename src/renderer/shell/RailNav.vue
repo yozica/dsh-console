@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 左侧导航（外壳的一部分）。
  *
@@ -7,39 +7,56 @@
  * computed 与模板绑定，跟着共享 store 走。
  *
  * 切页只改 store 里的 currentTab；真正的副作用（终端 fit、内嵌页载入等）
- * 由 app.js 监听 currentTab 自己处理 —— 那几页还没迁移。
+ * 由 app.ts 与各页自己的 watch 处理。
  */
-import { computed } from 'vue'
-import { currentTab, dsh, phase, phaseInfo, settings, setThemeMode, snapshot } from '../lib/store.js'
-import { formatUptime } from '../lib/format.js'
+import { computed } from 'vue';
+import {
+  currentTab,
+  dsh,
+  phase,
+  phaseInfo,
+  settings,
+  setThemeMode,
+  snapshot,
+  type TabId,
+} from '../lib/store.js';
+import { formatUptime } from '../lib/format.js';
 
-const TABS = [
+interface NavTab {
+  id: TabId;
+  icon: string;
+  label: string;
+}
+
+const TABS: NavTab[] = [
   { id: 'dashboard', icon: 'i-gauge', label: '控制台' },
   { id: 'terminal', icon: 'i-terminal', label: 'dsh 终端' },
   { id: 'shell', icon: 'i-shell', label: '本地 Shell' },
   { id: 'ui', icon: 'i-browser', label: 'DeepSeek Harness' },
   { id: 'usage', icon: 'i-usage', label: 'DeepSeek 用量' },
   { id: 'archive', icon: 'i-archive', label: '归档会话' },
-  { id: 'settings', icon: 'i-sliders', label: '设置' }
-]
+  { id: 'settings', icon: 'i-sliders', label: '设置' },
+];
 
-const themeMode = computed(() => snapshot.value?.theme?.mode || settings.value.themeMode || 'system')
+const themeMode = computed(
+  () => snapshot.value?.theme?.mode || settings.value.themeMode || 'system',
+);
 
-const owned = computed(() => Boolean(dsh.value?.owned))
+const owned = computed(() => Boolean(dsh.value?.owned));
 
-/** 切页：只改共享状态，"那几页自己的副作用"由各页与 app.js 的 watch 处理 */
-function selectTab(id) {
-  currentTab.value = id
+/** 切页：只改共享状态，"各页自己的副作用"由 app.ts 与各页的 watch 处理 */
+function selectTab(id: TabId): void {
+  currentTab.value = id;
 }
 
 /** 常驻状态块的副行：窄栏放不下"运行时长 + 延迟"两段，所以只留运行时长 */
 const serviceMeta = computed(() => {
-  const d = dsh.value
-  if (!d) return '—'
-  if (owned.value && d.uptimeMs) return `已运行 ${formatUptime(d.uptimeMs)}`
-  if (d.probe?.reachable) return '服务已就绪'
-  return d.origin || '—'
-})
+  const d = dsh.value;
+  if (!d) return '—';
+  if (owned.value && d.uptimeMs) return `已运行 ${formatUptime(d.uptimeMs)}`;
+  if (d.probe?.reachable) return '服务已就绪';
+  return d.origin || '—';
+});
 </script>
 
 <template>

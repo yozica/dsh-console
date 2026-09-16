@@ -4,7 +4,7 @@
   "version": "0.2.2",
   "private": true,
   "description": "Desktop console for DeepSeek Harness (Windows / macOS): start/stop dsh, monitor its service health, and watch it in a real terminal.",
-  "main": "src/main/main.js",
+  "main": "dist/main/main.js",
   "license": "MIT",
   "author": {
     "name": "yozica",
@@ -19,11 +19,26 @@
     "url": "https://github.com/yozica/dsh-console/issues"
   },
   "scripts": {
-    "build": "vite build",
-    "build:sandbox": "node scripts/build.mjs",
+    "build": "npm run build:renderer && npm run build:main",
+    "build:renderer": "vite build",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:sandbox": "tsx scripts/build.mts",
     "start": "npm run build && electron .",
     "watch": "vite build --watch",
-    "test": "node test/selftest.js",
+    "watch:main": "tsc -p tsconfig.main.json --watch",
+    "test": "tsx test/selftest.ts",
+    "changeset": "changeset add",
+    "release:check": "changeset status --since=origin/main",
+    "release:prepare": "tsx tools/release-prepare.mts",
+    "typecheck": "npm run typecheck:main && npm run typecheck:renderer && npm run typecheck:node",
+    "typecheck:main": "tsc -p tsconfig.main.json --noEmit",
+    "typecheck:renderer": "vue-tsc -p tsconfig.renderer.json --noEmit",
+    "typecheck:node": "tsc -p tsconfig.node.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "pack:win": "npm run build && electron-builder --win --dir",
@@ -41,17 +56,41 @@
     "vue": "^3.5.42"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@eslint/js": "^10.0.1",
     "@lobehub/icons-static-png": "^1.75.0",
+    "@types/node": "^24.13.5",
     "@vitejs/plugin-vue": "^6.0.8",
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
-    "vite": "^8.3.0"
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.11.0",
+    "globals": "^17.12.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.3.0",
+    "vue-eslint-parser": "^10.4.1",
+    "vue-tsc": "^3.3.11"
   },
   "allowScripts": [
     "electron",
     "node-pty",
     "esbuild"
   ],
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,mts,cts,tsx,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,html,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
   "build": {
     "appId": "com.dsh.console",
     "productName": "DSH Console",
@@ -67,7 +106,6 @@
       "**/node_modules/node-pty/**"
     ],
     "files": [
-      "src/**/*",
       "dist/**/*",
       "package.json",
       "node_modules/**/*",
