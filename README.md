@@ -59,6 +59,33 @@ npm start
 > ES module 在 `file://` 下会走 CORS 检查（origin 为 null）而加载失败。因此入口 `main.js`
 > **不要用动态 import** —— 那会切出第二个 chunk，跨 chunk 就必须用模块语法了。这条有自检兜着。
 
+### 代码风格与提交前检查
+
+格式与静态检查由三样东西守着，配置都在仓库里：
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm run lint` | ESLint 全量检查（含 Vue 单文件组件） |
+| `npm run lint:fix` | 同上，顺带修可自动修的问题 |
+| `npm run format` | Prettier 全量格式化 |
+| `npm run format:check` | 只检查不改写（CI 与 review 用） |
+
+规则取向见 `eslint.config.mjs`：
+
+- 基础是 `js.configs.recommended` + `eslint-plugin-vue` 的 `flat/recommended`；
+- 最后接 `eslint-config-prettier` —— **格式只由 Prettier 负责**，ESLint 不掺和缩进与换行；
+- 按文件类型分别给全局：主进程 / preload / 自检是 Node 的 CommonJS，`tools`、`scripts` 是 Node ESM，
+  `src/renderer` 是浏览器环境；
+- 有意关掉两条并写了理由：`no-control-regex`（本项目的领域就是 ANSI 控制序列与内部占位符，
+  都是显式字面量）、`vue/attributes-order`（模板里 `class` 写在最前是既定写法，Prettier 也不重排属性）。
+
+`husky` 的 `pre-commit` 只跑 **`lint-staged`**：仅处理**这次改到的文件**（先 `eslint --fix` 再
+`prettier --write`），不碰没动过的文件。全量检查是上面那几条命令与 CI 的事 —— CI 的两个打包 job 都会跑
+`npm test` 与 `npm run lint && npm run format:check`，任一不过就不会发版。
+
+> 临时要跳过钩子：`git commit --no-verify`。偶尔用可以，别形成习惯 —— 它跳过的只是"本地这次检查"，
+> CI 那一关照样在。
+
 ### 模块求值顺序（踩过一次，白屏）
 
 `main.js` 里的 import 顺序有语义，别调换：

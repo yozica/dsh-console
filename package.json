@@ -24,6 +24,11 @@
     "start": "npm run build && electron .",
     "watch": "vite build --watch",
     "test": "node test/selftest.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "pack:win": "npm run build && electron-builder --win --dir",
@@ -41,17 +46,35 @@
     "vue": "^3.5.42"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@lobehub/icons-static-png": "^1.75.0",
     "@vitejs/plugin-vue": "^6.0.8",
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
-    "vite": "^8.3.0"
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.11.0",
+    "globals": "^17.12.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.6",
+    "vite": "^8.3.0",
+    "vue-eslint-parser": "^10.4.1"
   },
   "allowScripts": [
     "electron",
     "node-pty",
     "esbuild"
   ],
+  "lint-staged": {
+    "*.{js,mjs,cjs,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,html,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
   "build": {
     "appId": "com.dsh.console",
     "productName": "DSH Console",

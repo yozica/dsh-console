@@ -1,0 +1,5 @@
+# 提交前只检查「这次改到的文件」：ESLint 顺手修可自动修的问题，Prettier 统一格式。
+# 全量检查是另一回事，交给 npm run lint / npm run format:check / npm test。
+#
+# 想临时跳过：git commit --no-verify（但别拿它当习惯）。
+npx lint-staged
