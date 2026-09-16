@@ -41,66 +41,110 @@ npm start
 
 需要 Node ≥ 20（本机 v24 可用）。
 
-**渲染层现在要经过 Vite 构建**（因为开始往 Vue 单文件组件迁移），产物在 `dist/renderer/`，
-主进程加载的是那里而不是源码。相关命令：
+**渲染层要经过 Vite 构建、主进程 / preload / 共享类型要经过 tsc 编译**：产物分别在
+`dist/renderer/` 与 `dist/main/`、`dist/preload/`、`dist/shared/`，Electron 加载的是产物而不是源码。
+相关命令：
 
 | 命令                    | 作用                                                                                          |
 | ----------------------- | --------------------------------------------------------------------------------------------- |
-| `npm run build`         | 构建渲染层（`vite build`）到 `dist/renderer`                                                  |
+| `npm run build`         | 全量构建：渲染层（`vite build`）+ 主进程 / preload / 共享类型（`tsc -p tsconfig.main.json`）  |
 | `npm start`             | 先构建再启动                                                                                  |
 | `npm run watch`         | 只跑 `vite build --watch`：开发时开一个它，改源码会自动重建，应用里那个产物监听会随即重载窗口 |
+| `npm run watch:main`    | 只跑 `tsc -p tsconfig.main.json --watch`：改主进程 / preload 时增量编译（要重启应用才生效）   |
 | `npm run build:sandbox` | 受限环境（禁止子进程用管道）下用的包装脚本，见下                                              |
 
-> `npm run build:sandbox`（`scripts/build.mjs`）只做一件事：把 Vite 探测 Windows 网络驱动器用的
+> `npm run build:sandbox`（`scripts/build.mts`）只做一件事：把 Vite 探测 Windows 网络驱动器用的
 > `exec('net use')` 短路成"没有网络驱动器"。在不允许管道 stdio 的沙箱里，那次调用会直接
 > `spawn EPERM` 让整个构建失败；普通开发机不需要它。
 >
 > 另外构建产物刻意做成**单个自包含的普通脚本**（构建插件把 `<script type="module">` 改回 `defer`）：
-> ES module 在 `file://` 下会走 CORS 检查（origin 为 null）而加载失败。因此入口 `main.js`
+> ES module 在 `file://` 下会走 CORS 检查（origin 为 null）而加载失败。因此入口 `main.ts`
 > **不要用动态 import** —— 那会切出第二个 chunk，跨 chunk 就必须用模块语法了。这条有自检兜着。
 
 ### 代码风格与提交前检查
 
-格式与静态检查由三样东西守着，配置都在仓库里：
+格式、静态检查与类型检查的命令如下，配置都在仓库里：
 
-| 命令                   | 作用                                 |
-| ---------------------- | ------------------------------------ |
-| `npm run lint`         | ESLint 全量检查（含 Vue 单文件组件） |
-| `npm run lint:fix`     | 同上，顺带修可自动修的问题           |
-| `npm run format`       | Prettier 全量格式化                  |
-| `npm run format:check` | 只检查不改写（CI 与 review 用）      |
+| 命令                   | 作用                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| `npm run lint`         | ESLint 全量检查（含 Vue 单文件组件）                                                    |
+| `npm run lint:fix`     | 同上，顺带修可自动修的问题                                                              |
+| `npm run format`       | Prettier 全量格式化                                                                     |
+| `npm run format:check` | 只检查不改写（CI 与 review 用）                                                         |
+| `npm run typecheck`    | 类型检查全量：主进程（tsc）+ 渲染层（vue-tsc）+ 测试与脚本（tsc，`tsconfig.node.json`） |
+
+格式的**唯一事实来源**是 `.prettierrc.json`。其中有四条是**有意改掉 Prettier 默认值**的：
+
+- `semi: false`：语句末尾不写分号；
+- `trailingComma: "none"`：多行数组 / 对象 / 参数的最后一项后面不加逗号（Prettier 3 的默认是 `"all"`）；
+- `singleQuote: true`：字符串用单引号；
+- `endOfLine: "lf"`：配合 `.gitattributes` 的 `* text=auto eol=lf`，Windows 与 macOS 双机开发
+  不会互相改换行，也不会出现"整文件被改动"的假 diff。
+
+其余键（`printWidth: 100`、`tabWidth: 2`、`useTabs: false`、`bracketSpacing`、`arrowParens: "always"`、
+`quoteProps`、`proseWrap`、`htmlWhitespaceSensitivity`、`vueIndentScriptAndStyle: false`、
+`singleAttributePerLine: false`、`embeddedLanguageFormatting`）写出来**不是为了改行为**，而是把当前默认值
+钉死：其中 `singleAttributePerLine` 与 `vueIndentScriptAndStyle` 一旦跟着 Prettier 的默认值变化，
+10 个单文件组件会被整体重排，diff 就没法 review 了。
+
+那为什么在 `eslint.config.mjs` 里搜不到 `semi` / `comma-dangle` 这类规则？因为格式只由 Prettier 一家
+负责：配置最后一行接的就是 `eslint-config-prettier`，它把所有与 Prettier 冲突的格式规则全部关掉。
+两边都开的话，编辑器里两个 `--fix` 会互相打架。
 
 规则取向见 `eslint.config.mjs`：
 
 - 基础是 `js.configs.recommended` + `eslint-plugin-vue` 的 `flat/recommended`；
-- 最后接 `eslint-config-prettier` —— **格式只由 Prettier 负责**，ESLint 不掺和缩进与换行；
-- 按文件类型分别给全局：主进程 / preload / 自检是 Node 的 CommonJS，`tools`、`scripts` 是 Node ESM，
-  `src/renderer` 是浏览器环境；
+- 最后接 `eslint-config-prettier`（理由见上：格式一律交给 Prettier）；
+- 按文件类型分别给全局：`src/main`、`src/preload`、`src/shared` 与 `test` 是 Node（源码写 ESM 语法，
+  由 tsc 编译成 CJS），`tools`、`scripts` 与 Vite 配置是 Node ESM，`src/renderer` 是浏览器环境；
 - 有意关掉两条并写了理由：`no-control-regex`（本项目的领域就是 ANSI 控制序列与内部占位符，
   都是显式字面量）、`vue/attributes-order`（模板里 `class` 写在最前是既定写法，Prettier 也不重排属性）。
 
 `husky` 的 `pre-commit` 只跑 **`lint-staged`**：仅处理**这次改到的文件**（先 `eslint --fix` 再
 `prettier --write`），不碰没动过的文件。全量检查是上面那几条命令与 CI 的事 —— CI 的两个打包 job 都会跑
-`npm test` 与 `npm run lint && npm run format:check`，任一不过就不会发版。
+`npm test` 与 `npm run lint && npm run format:check && npm run typecheck`，任一不过就不会发版。
 
 > 临时要跳过钩子：`git commit --no-verify`。偶尔用可以，别形成习惯 —— 它跳过的只是"本地这次检查"，
 > CI 那一关照样在。
 
 ### 模块求值顺序（踩过一次，白屏）
 
-`main.js` 里的 import 顺序有语义，别调换：
+`src/renderer/main.ts` 里的 import 顺序有语义，别调换：
 
 ```js
-import './xterm-globals.js' // 1. 先把 window.Terminal 等挂上
-import './app.js' // 2. app.js 才被求值
+import '@xterm/xterm/css/xterm.css' // 1. xterm 自带样式在前
+import './styles.css' // 2. 我们的覆盖在后（同权重靠顺序决定谁生效）
+
+import './app.js' // 3. 应用级胶水先求值
+
+import { installDevDiagnostics } from './dev-diagnostics.js'
+import { snapshot, startStore } from './lib/store.js'
+import { mountAll } from './mount.js'
 ```
 
-原因：`app.js` 一被求值就可能**立刻** `boot()`。它原来等 `DOMContentLoaded`，但 `<script defer>`
-执行时 `document.readyState` 已经是 `interactive`，于是走了"立即启动"那条分支 —— 而 `boot()` 里要建终端。
+（源码是 TS，但相对导入沿用源码里的 `./x.js` 写法；Vite 与 vue-tsc 都会把它解析到同名的 `.ts`。）
 
-**不能**把 `window.Terminal = ...` 写在入口的模块体里：静态 import 会被提升，
-赋值反而落在 `app.js` 之后。当时的症状是白屏 + `xterm 未就绪`，`npm test` 里现在有一条
-"xterm 全局在 app.js 之前求值"的检查盯着它。
+三条理由：
+
+1. **xterm 自带 css 必须排在 `styles.css` 之前**：两者对 `.xterm-viewport` 的规则同权重，
+   靠顺序决定谁生效 —— 反了会让 xterm 写死的黑底盖住我们的覆盖（症状：亮色主题下终端底部一块黑）。
+2. **`app.ts` 要在建立共享状态与挂载之前求值**：它一被求值就接上启动锁、快捷键、自动打开这些
+   应用级逻辑；接着 `startStore()` 建立**唯一**的快照订阅，最后才 `mountAll()` —— 组件一挂上就要读数据，
+   订阅晚于挂载的话首个挂载会读到空快照（事件日志首个挂载是空的，这个坑踩过）。
+3. **开发诊断用静态 import + 运行时判断**（`if (!snapshot.value?.env?.packaged) installDevDiagnostics()`），
+   不能写成动态 import —— 那会切出第二个 chunk，产物就不能是单文件普通脚本了。
+
+当时白屏的那一次是：`app.ts` 一被求值就可能**立刻**启动界面（它不再等 `DOMContentLoaded` —— 产物是
+`<script defer>`，执行时 `document.readyState` 已经是 `interactive`，于是走了"立即启动"那条分支），
+而启动要建终端，所以终端依赖的东西必须在那之前就位。教训现在仍然成立：**静态 import 会被提升**，
+想在入口的模块体里做赋值去抢在 import 之前是不可能的 —— 那类初始化只能写成一个被 import 的模块。
+
+至于自检守着哪一条：现在**没有**一条直接断言这份 import 顺序的检查 —— 过渡期那条
+"`xterm` 全局在 `app.ts` 之前求值"随 `xterm-globals.ts` 一起删掉了（`src/renderer/` 下已没有这个文件，
+xterm 与 addon 由 `lib/xterm.ts` 直接用导入的类）。相邻的契约由这三条守着：
+「渲染层：入口被引入，样式与 xterm 都有来源」（核对入口导入了 `./styles.css`，且 xterm 的来源是
+`lib/xterm.ts` 里对 `@xterm/xterm` / `@xterm/addon-fit` 的导入）、
+「渲染层：xterm 与 addon 用导入的类，不经过 window 全局」、以及「构建：入口不用动态 import」。
 
 ## 打包
 
@@ -167,7 +211,8 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 - `asarUnpack: ["**/node_modules/node-pty/**"]` —— node-pty 是原生模块，`.node` 与 conpty 的
   `OpenConsole.exe` 不能塞进 asar；
-- `files` 里要包含 `dist/**/*`（渲染层产物）与 `src/**/*`。
+- `files` 里要包含 `dist/**/*` —— 渲染层与主进程 / preload / shared 的产物都在那里；源码不再随包分发
+  （`src/**/*` 已从 `files` 里去掉，`package.json` 的 `main` 指向编译后的 `dist/main/main.js`）。
 
 两个平台的图标都由 `build/icon.png`（512×512）生成：electron-builder 会自动转成 Windows 的
 `.ico` 与 macOS 的 `.icns`。
@@ -222,7 +267,7 @@ npx electron-builder --mac --config.npmRebuild=false
 
 ```powershell
 npm i -D @lobehub/icons-static-png   # 只需要一次：图标资源来源
-node tools/make-icon.mjs             # 重新生成 build/icon.png
+npx tsx tools/make-icon.mts          # 重新生成 build/icon.png
 ```
 
 `node_modules/@lobehub/icons-static-png/dark/deepseek.png` 是"深底用的浅色标记"，
@@ -249,7 +294,7 @@ npm version patch        # → v0.1.1
 git push --follow-tags
 ```
 
-**Release 正文就是 CHANGELOG 里这一版的条目**（`tools/changelog-extract.mjs` 按版本号取出来，
+**Release 正文就是 CHANGELOG 里这一版的条目**（`tools/changelog-extract.mts` 按版本号取出来，
 末尾再附一段固定的下载指引）。所以忘了写条目会**直接失败**：提取脚本非零退出 → `publish` job 红，
 不会发出一个没有说明的 Release。自检里也有一条守着这件事（`npm test` 会报「CHANGELOG.md 有当前
 版本的条目」），免得包都打好了才发现。
@@ -292,7 +337,7 @@ NSIS 的默认行为，模板里逐条可查：
 （`npm version patch`）—— 否则安装包文件名不变，双方都分不清装的是哪个版本。
 
 升级后第一次启动，NSIS 会用 `--updated` 拉起应用；主进程把它放进快照的 `env.updated`，
-渲染层在状态栏说一句「已更新到 x.y.z」（`app.js` 的 `announceUpdate()`）。当前版本号在
+渲染层在状态栏说一句「已更新到 x.y.z」（`app.ts` 的 `announceUpdate()`）。当前版本号在
 「设置 → 关于」。（`--updated` 是 NSIS 的约定，macOS 上没有这一步 —— `env.updated` 恒为 false，
 那句提示自然不出现，不需要分支。）
 
@@ -325,6 +370,7 @@ NSIS 的默认行为，模板里逐条可查：
 | 本地 Shell       | 另开一个 shell 终端（Windows 是 pwsh/powershell/cmd，macOS/Linux 是 zsh/bash），会话以 chip 形式切换，与 dsh 互不干扰 |
 | DeepSeek Harness | 用带令牌的地址在窗口内加载 DSH Web UI；支持应用内全屏；令牌失效会给出明确提示，并支持手动粘贴地址                     |
 | DeepSeek 用量    | 内嵌 DeepSeek 开放平台的用量页，方便随时看 token 消耗；地址可配置                                                     |
+| 归档会话         | 浏览 / 搜索 DSH 的归档会话，按「索引 + 转录稿」两栏读对话全文，可取消归档或删除（含日志与缓存）                       |
 | 设置             | 外观（主题）、DeepSeek 用量页、服务端点、启动方式、监控与生命周期、保存                                               |
 
 ### 启动行为（默认：起来就能直接用）
@@ -339,7 +385,7 @@ NSIS 的默认行为，模板里逐条可查：
 ```
 
 三个开关都在「设置 → 监控与生命周期」，可以各自关掉：`autoStart`、`openUiOnStart`、`uiFullscreenOnStart`。
-**这三个默认值是 v2 才改的**，所以 `settings.js` 里有一次性的版本迁移（`settingsVersion: 1 → 2`）：
+**这三个默认值是 v2 才改的**，所以 `settings.ts` 里有一次性的版本迁移（`settingsVersion: 1 → 2`）：
 载入时发现文件里没有版本号，就把这三项对齐到新默认并写回，事件日志里会留一行说明；
 之后你自己怎么改都不会被覆盖。
 
@@ -367,7 +413,7 @@ NSIS 的默认行为，模板里逐条可查：
 
 - **只在"应用启动时就在拉起"这条路径上加锁**：判断依据是渲染层拿到的第一份快照里 dsh 已经是 `starting`。
   用户后来自己点「启动」不会加锁 —— 那时他多半正想看终端和日志。
-- 锁着时键盘捷径（`Ctrl+1~6`）一并挡住，否则"锁"只锁了鼠标。
+- 锁着时键盘捷径（`Ctrl+1~7`）一并挡住，否则"锁"只锁了鼠标。
 
 **踩过的坑（已用测试固化）**：第一版是"布尔量 + 每次状态变化重新判定"，而且解锁条件里带了
 "当前是否在应用内全屏"。结果是启动完成解锁后，**一手动退出全屏**条件又变回不满足，锁重新扣了上来。
@@ -403,7 +449,7 @@ NSIS 的默认行为，模板里逐条可查：
   右侧内容被挤没（症状是地址显示成 `http://127.`）；而全屏时容器等于窗口，所以看不出问题。
   macOS 上 `env(titlebar-area-*)` 不生效，那条 calc 会退回兜底的 150px，所以顶栏右侧要用
   `html[data-platform='darwin']` 覆盖成普通内边距（否则右侧会凭空少一大块）
-- 平台属性由渲染层的 `lib/platform.js` 写入（先用 UA 同步判定，快照到了再用主进程的
+- 平台属性由渲染层的 `lib/platform.ts` 写入（先用 UA 同步判定，快照到了再用主进程的
   `env.platform` 校准）；系统全屏状态由主进程给（见下）。自检里有契约守着这四种状态的留白规则，
   以及"三处快捷键都走平台修饰键"
 - 标题栏高度在两侧各写了一次（CSS 的 `--bar-h` 与主进程的 `TITLEBAR_HEIGHT`），**必须一致**，否则系统按钮会和顶栏错位
@@ -434,7 +480,7 @@ NSIS 的默认行为，模板里逐条可查：
 
 - 这是**应用内**全屏，不动系统窗口的全屏状态（标题栏还在，随时能拖走）
 - **Esc 退出**，标题栏另一侧也有「退出全屏」按钮
-- 全屏期间导航是隐藏的，所以任何切页动作（含 `Ctrl+1~6` / `⌘1~6`）都会先退出全屏
+- 全屏期间导航是隐藏的，所以任何切页动作（含 `Ctrl+1~7` / `⌘1~7`）都会先退出全屏
 - 退出/进入时会主动让内嵌页重算一次视口，避免 guest 还按旧尺寸排版
 
 ### 关于「DeepSeek 用量」页
@@ -454,7 +500,7 @@ NSIS 的默认行为，模板里逐条可查：
 - 这一页与本应用主界面互相隔离：应用没有读取该页面内容的代码，也没有把 token 传给它
 - **页面容器不能用 `display:none` 隐藏**：`<webview>` 在 `display:none` 的容器里会以 **0 尺寸挂载 guest**，
   切回该页时 guest 的视口可能仍是旧的 —— 症状就是内嵌页只渲染出顶部一小条（横幅 + logo），下面的内容要滚动才看得见。
-  现在六个页面用 `position:absolute + visibility:hidden` 常驻布局，切换时再补一次视口重算；自检里有专门一条守着这个写法
+  现在七个页面用 `position:absolute + visibility:hidden` 常驻布局，切换时再补一次视口重算；自检里有专门一条守着这个写法
 - **半渲染页面会自己说明原因**：内嵌第三方页面出问题最爱"外壳画出来、内容一片空，页面上什么错都不说"。
   所以主进程把 guest 的 `console` 报错、加载失败、渲染进程崩溃、以及失败的请求（`onErrorOccurred`，例如 `ERR_BLOCKED_BY_CSP`）
   都收进应用的事件日志（控制台页可见）。排查看日志，不用再猜
@@ -464,7 +510,7 @@ NSIS 的默认行为，模板里逐条可查：
 
 `<webview>` 的尺寸问题有两个独立的成因，症状相似，叠在一起时特别像"页面没加载完"：
 
-1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：六个页面改为
+1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：七个页面改为
    `position:absolute + visibility:hidden` 常驻布局（见上一节）。
 2. **`<webview>` 自己没写尺寸** → 它是替换元素，漏写 CSS 就退化成浏览器默认的约 300×150，页面上只出现顶部一小条。
    我加第二个内嵌页时就漏了这条，只给 `#ui-view` 写了样式。修法：两个内嵌页共用 `.embedded-view`
@@ -483,7 +529,7 @@ NSIS 的默认行为，模板里逐条可查：
 
 - 页面上方常驻一句说明：`dsh web 不读键盘输入，Ctrl+C 可以让它退出`；没有进程时更会显示空状态，直接给一个「启动 dsh」按钮
 - 唯一有意义的键盘输入是 **Ctrl+C**（右上角按钮），等价于往 PTY 写 `\x03`
-- 进程退出时终端里会补一行灰字 `── dsh 已退出（退出码 0）──`。**之前这是个 bug**：`main.js` 把 dsh 会话的 exit 事件
+- 进程退出时终端里会补一行灰字 `── dsh 已退出（退出码 0）──`。**之前这是个 bug**：`main.ts` 把 dsh 会话的 exit 事件
   直接 `return` 掉了，渲染层收不到，点了 Ctrl+C 之后终端看着像卡死（已修，顺带给本地 Shell 也补了同样的收尾提示）
 - **删掉了「自适应」按钮**：终端尺寸本来就该跟着容器走，现在用 `ResizeObserver` + 切页时 fit 自动处理。
   一个需要手动点才对齐的终端，本质是缺了自动化的补丁
@@ -491,7 +537,7 @@ NSIS 的默认行为，模板里逐条可查：
   重画一遍，用来找回被清掉的内容。原来叫「清屏 / 重放缓冲」，用的是实现语言，没人看得懂
 - 拖动窗口时 `ResizeObserver` 会逐帧触发，所以加了道闸：**只在行列数真的变了才通知主进程**，避免刷爆 IPC
 
-快捷键：`Ctrl+1` ~ `Ctrl+6`（macOS 上是 `⌘1` ~ `⌘6`）依次切换上面六个页面。
+快捷键：`Ctrl+1` ~ `Ctrl+7`（macOS 上是 `⌘1` ~ `⌘7`）依次切换上面七个页面。
 
 ### 设计取向（照 `frontend-design` 技能走了两轮）
 
@@ -530,7 +576,7 @@ SaaS 卡片套路，我把它读成了"圆角、阴影、层次都不能有"，�
 - 主题由**主进程解析**（`themeInfo()` → `{ mode, resolved }`），渲染层只负责把结果写到 `<html data-theme>`；
   CSS 变量、窗口底色（`setBackgroundColor`，避免切换/启动瞬间闪白闪黑）都跟着它走。
 - 变量分两类：**颜色令牌**（两套主题各 28 个，亮色必须全覆盖，自检会查）和**尺度令牌**（字号、圆角、宽度、时长，主题无关，只在深色块里定义一次）。
-- **终端配色必须单独给**（xterm 的配色是 JS 配置，不走 CSS），所以 `app.js` 里有
+- **终端配色必须单独给**（xterm 的配色是 JS 配置，不走 CSS），所以 `lib/xterm.ts` 里有
   `TERM_THEMES.dark / .light` 两套，切换时对已有终端调用 `term.options.theme = ...` 重绘。
 - 内嵌的 DSH Web 界面有自己的主题设置，**不受这里影响**（它是独立的 webview 页面）。
 
@@ -572,66 +618,84 @@ SaaS 卡片套路，我把它读成了"圆角、阴影、层次都不能有"，�
 ## 目录结构
 
 ```
-vite.config.mjs         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
-scripts/build.mjs       受限环境用的构建包装（短路 Vite 的 net address 探测，见"运行"一节）
+vite.config.mts         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
+scripts/build.mts       受限环境用的构建包装（短路 Vite 的 net address 探测，见"运行"一节）
+tsconfig.base.json      主进程 / preload / shared 共用的编译选项
+tsconfig.main.json      主进程 + preload + shared：tsc 直出 CJS 到 dist/
+tsconfig.renderer.json  渲染层：vue-tsc 类型检查（产物仍由 Vite 生成）
+tsconfig.node.json      测试 / 工具脚本 / Vite 配置：tsc 类型检查，noEmit
 src/
   main/
-    main.js             Electron 主进程：窗口、IPC、生命周期、退出清理
-    dsh-manager.js      dsh 进程状态机：启动/停止/接管/健康轮询/令牌 URL 捕获
-    pty-sessions.js     node-pty 会话注册表（dsh 终端 + 本地 Shell）
-    process-utils.js    跨平台进程/网络工具：命令探测、端口占用（netstat / lsof）、进程名、结束进程树、HTTP 探测、ANSI 清理
-    settings.js         settings.json 读写（含 v1→v2 一次性迁移）
-  preload/preload.js    contextBridge，向渲染层暴露受限 API
+    main.ts             Electron 主进程：窗口、IPC、生命周期、退出清理、开发工具快捷键
+    dsh-manager.ts      dsh 进程状态机：启动/停止/接管/健康轮询/令牌 URL 捕获
+    pty-sessions.ts     node-pty 会话注册表（dsh 终端 + 本地 Shell）
+    process-utils.ts    跨平台进程/网络工具：命令探测、端口占用（netstat / lsof）、进程名、结束进程树、HTTP 探测、ANSI 清理
+    settings.ts         settings.json 读写（含 v1→v2 一次性迁移）
+    logger.ts           主进程日志：console 同时落盘到 <userData>/logs/console.log
+    session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存（列出 / 读全文 / 取消归档 / 删除）
+  preload/preload.ts    contextBridge，向渲染层暴露受限 API
+  shared/ipc.ts         主进程 ↔ 渲染层的契约类型（只放类型与纯常量，不引运行时依赖）
   renderer/
-    index.html          页面骨架：六个页面容器 + 外壳挂载点 + 启动锁
-    main.js             入口：模块导入 → 建立共享状态 → 挂载外壳与页面
-    mount.js            挂载清单：外壳三块 + 已迁移的页面
-    xterm-globals.js    过渡期：把 xterm 挂到 window（顺序敏感，见"模块求值顺序"）
-    app.js              还没迁移的四页（终端 / Shell / Harness / 用量）
+    index.html          页面骨架：七个页面容器 + 外壳挂载点 + 内联图标精灵 + 启动锁
+    main.ts             入口：样式导入 → app.ts → 建立共享状态 → 挂载外壳与页面
+    app.ts              应用级胶水：启动守卫、启动锁状态机、自动打开 Harness、键盘快捷键
+    mount.ts            挂载清单：外壳三块 + 全部页面
+    dev-diagnostics.ts  开发期诊断：Ctrl+Shift+D 把元素结构导出到日志
+    env.d.ts            渲染层全局声明：把 preload 暴露的 API 挂到 window
     styles.css          全部样式（Vue 组件沿用同一套 class 与 CSS 变量）
     lib/
-      store.js          共享状态：唯一的快照订阅 + currentTab + immersive
-      platform.js       平台判定与快捷键文案（macOS 用 Cmd / ⌘，其它平台用 Ctrl）
-      phase-text.js     状态词（外壳与页面共用，避免同一份文案写两遍）
-      format.js         时长格式化
-      dsh-actions.js    要先确认再动手的操作（停止 / 强制结束 / 重启 / 浏览器打开）
+      store.ts          共享状态：唯一的快照订阅 + currentTab + immersive
+      platform.ts       平台判定与快捷键文案（macOS 用 Cmd / ⌘，其它平台用 Ctrl）
+      phase-text.ts     状态词（外壳与页面共用，避免同一份文案写两遍）
+      format.ts         时长格式化
+      dsh-actions.ts    要先确认再动手的操作（停止 / 强制结束 / 重启 / 浏览器打开）
+      xterm.ts          xterm 共享部分：两套配色、建实例、尺寸同步
+      markdown.ts       极简安全的 Markdown 渲染器（归档会话页的对话正文）
+      webview.ts        `<webview>` 的最小类型声明（DOM 标准库里没有）
     shell/
       RailNav.vue       左栏：品牌、常驻状态块、导航、主题三态开关
       TopBar.vue        顶栏（同时是窗口标题栏）：状态灯、页码、上下文、退出全屏
       StatusBar.vue     底栏：常驻状态 + 临时消息（`dsh:status-message`）
     panes/
       DashboardPane.vue 控制台页
+      TerminalPane.vue  dsh 终端页
+      ShellPane.vue     本地 Shell 页
+      UiPane.vue        DeepSeek Harness 页
+      UsagePane.vue     DeepSeek 用量页
+      ArchivePane.vue   归档会话页
       SettingsPane.vue  设置页
-dist/renderer/          构建产物（Electron 加载的就是这里）
-test/selftest.js        49 项自检，不需要 Electron
+test/selftest.ts        71 项自检，不需要 Electron
+tools/
+  changelog-extract.mts 从 CHANGELOG.md 按版本号取出 Release 正文
+  make-icon.mts         生成 build/icon.png（手写 PNG 编解码）
 ```
 
 ### 迁移状态（原生 → Vue：已完成）
 
-| 部分                       | 状态                                                                   |
-| -------------------------- | ---------------------------------------------------------------------- |
-| 外壳（左栏 / 顶栏 / 底栏） | ✅ `shell/*.vue`                                                       |
-| 六个页面                   | ✅ `panes/*.vue`（控制台 / 终端 / 本地 Shell / Harness / 用量 / 设置） |
-| 启动锁                     | 卡片在 `index.html`，状态机在 `app.js`（约 60 行）                     |
+| 部分                       | 状态                                                                              |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| 外壳（左栏 / 顶栏 / 底栏） | ✅ `shell/*.vue`                                                                  |
+| 七个页面                   | ✅ `panes/*.vue`（控制台 / 终端 / 本地 Shell / Harness / 用量 / 归档会话 / 设置） |
+| 启动锁                     | 卡片在 `index.html`，状态机在 `app.ts`（约 60 行）                                |
 
-`app.js` 从 1256 行降到 210 行，剩下的是**应用级胶水**（没有 DOM 归属的那部分）：
+`app.ts` 从 1256 行降到 255 行，剩下的是**应用级胶水**（没有 DOM 归属的那部分）：
 启动守卫、启动锁状态机、dsh 就绪后自动打开 Harness、键盘快捷键、页面容器 active 类。
-`index.html` 从 498 行降到 100 行，只剩六个页面容器 + 挂载点 + 启动锁卡片。
+`index.html` 从 498 行降到 171 行，只剩七个页面容器 + 挂载点 + 内联图标精灵 + 启动锁卡片。
 
 迁移是按页做的，每一步都跑测试、能启动、能抓图验证。几条规矩：
 
-- **共享状态只有一份**：`lib/store.js` 里做唯一的 `getSnapshot` + `onState` + `onTheme` 订阅，
+- **共享状态只有一份**：`lib/store.ts` 里做唯一的 `getSnapshot` + `onState` + `onTheme` 订阅，
   外壳与页面都读它；主题落地到 `<html data-theme>` 也在这里。
   > 这个"幂等建立"必须**缓存 Promise** 而不是只用一个 boolean：入口是
   > `void startStore()` 先发起，组件挂载后再 `await startStore()`；只判断 boolean 的话
   > 第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
-- **每个组件都必须在 `mount.js` 的挂载清单里**，否则界面上那块永远是空的（有检查守着）
+- **每个组件都必须在 `mount.ts` 的挂载清单里**，否则界面上那块永远是空的（有检查守着）
 - **挂载点必须是 `display: contents`**（见 styles.css）。漏一个就会把父级的 flex/grid 链断掉：
   组件内容外面多包一层块级元素，`flex: 1` 全部失效 —— 症状是内嵌页只剩顶上一条
   （`<webview>` 退回默认的 150px 高）。这条也有检查守着。
 - **xterm 独占的元素里不能有 Vue 管理的子节点**：两边往同一块 DOM 里塞东西会打架。
   所以终端挂在 `.term-mount`（空元素）上，空状态覆盖层是它的**兄弟**而不是子节点。
-- **`<webview>` 要在 Vue 配置里声明为自定义元素**（`vite.config.mjs` 的
+- **`<webview>` 要在 Vue 配置里声明为自定义元素**（`vite.config.mts` 的
   `compilerOptions.isCustomElement`），否则编译器会试着把它当组件解析
 - **`@xterm/xterm/css/xterm.css` 必须在 `styles.css` 之前导入**：两者对
   `.xterm-viewport` 的规则同权重，靠导入顺序决定谁生效 —— 顺序反了会让 xterm 写死的
@@ -661,7 +725,7 @@ test/selftest.js        49 项自检，不需要 Electron
   > **fit 从来没跑过**，于是 572×432 正是 80 列的宽度 × 24 行的高度。
   > 教训：**先量"这一步到底跑了没有"，再猜"它为什么算错"。**
 - **已迁走的部分必须一起参与静态检查**：id / class / api / webview 检查扫描
-  `index.html + panes/*.vue + shell/*.vue + lib/*.js` 的合集
+  `index.html + panes/*.vue + shell/*.vue + lib/*.ts` 的合集
 - 静态检查**只看代码不看注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、
   `#000` 这类示意写法举例，当真值去查会误报（已经误报三次）
 - **class 检查要认得动态绑定**：`:class="{ active: 条件 }"` 的键名算用到的 class，
@@ -714,7 +778,7 @@ test/selftest.js        49 项自检，不需要 Electron
 | `Ctrl+Shift+D`（macOS：`⌘⇧D`）         | 把当前界面的**元素结构**导出到日志：每个元素的尺寸/位置/背景/display/overflow/z-index，外加一行当前状态（page/immersive/locked/theme + 哪个 pane 是 active） |
 
 **焦点在内嵌页里时这些键也要能用**：键盘事件本来只到 `<webview>` 里的 guest，
-渲染层那个 window 级处理器收不到（症状：人在 Harness 页里时 Ctrl+1~6 / Esc / Ctrl+R /
+渲染层那个 window 级处理器收不到（症状：人在 Harness 页里时 Ctrl+1~7 / Esc / Ctrl+R /
 Ctrl+Shift+D 全部失灵）。所以主进程在 guest 的 `before-input-event` 里把应用快捷键
 **重新注入宿主窗口**（`sendInputEvent`），复用渲染层原有的处理器，不复制一份逻辑。
 `Esc` 只转发不拦截 —— 内嵌页自己也常用它关弹层。修饰键按平台取（macOS 认 `meta`，其它平台认 `ctrl`）。
@@ -722,7 +786,7 @@ Ctrl+Shift+D 全部失灵）。所以主进程在 guest 的 `before-input-event`
 导出走的是渲染层 `console.log` → 主进程转发 → 落进日志文件
 （Windows `%APPDATA%\DSH Console\logs\console.log`，macOS `~/Library/Application Support/DSH Console/logs/console.log`），
 所以**排查的一方（人或 agent）可以直接读那个文件**，
-不必反复要截图。实现在 `src/renderer/dev-diagnostics.js`，只在 `env.packaged === false` 时安装。
+不必反复要截图。实现在 `src/renderer/dev-diagnostics.ts`，只在 `env.packaged === false` 时安装。
 
 > 这套东西是被一次真实排查逼出来的：终端底部出现一块黑，我靠猜绕了四五轮；
 > 后来写临时探针遍历 DOM 才定位到是 xterm 自带样式写死的 `.xterm-viewport` 黑底。
@@ -804,7 +868,10 @@ powershell -File ..\.dsh\click-app.ps1 -Keys '^+d'     # Ctrl+Shift+D
 - **改了 `src/renderer/` 下的文件没生效**：渲染层要**先构建**才生效。开发时开一个 `npm run watch`
   （`vite build --watch`），它重建产物后，应用里那个监听会重载窗口，事件日志里会有一行
   「渲染层产物变化（xxx），自动重载窗口」。没开 watch 的话改完跑一次 `npm run build` 也行。
-  **改主进程文件（`src/main/*`）必须重启应用。** 另外 Windows/Linux 上默认菜单被移除了，所以
+  **改主进程 / preload / shared 下的文件要重新编译再重启应用**：它们由 tsc 编到 `dist/`（见「运行」一节），
+  Electron 跑的是编译产物，直接重启只会跑旧的 `dist/main/main.js`；开发时开一个 `npm run watch:main`
+  （或改完跑一次 `npm run build:main`）再重启 —— 渲染层那个产物监听只管 `dist/renderer/`，不会帮你重载主进程。
+  另外 Windows/Linux 上默认菜单被移除了，所以
   `Ctrl+R` 是我自己补回来的重载快捷键（macOS 上是 `⌘R`，那条原生菜单里也有「重新载入」）。
 - **窗口白屏**：先看事件日志/日志文件里有没有 `渲染层产物缺失：...dist\renderer\index.html` ——
   那就是没构建；跑 `npm run build` 即可。另外构建失败时 `npm start` 会直接失败（不会带着坏产物启动）。
@@ -840,7 +907,7 @@ powershell -File ..\.dsh\click-app.ps1 -Keys '^+d'     # Ctrl+Shift+D
 
 已在本机（macOS，Apple 芯片）跑通的部分：
 
-- `npm test`（`test/selftest.js`，69/69）：
+- `npm test`（`test/selftest.ts`，71/71）：
   - 命令解析三级回退、ANSI/横幅令牌提取、dsh 健康判据（真实探测到本机 3080 上运行的 dsh 返回 `401 dsh web authentication required`）
   - **解释器实测**：解析出的 `node + bin.js` 组合会跑一次 `--version` 验证真的能跑 dsh —— 本机候选里
     只有 nvm 的 v24.14.1 通过，PATH 里的 v22（vite-plus 包装）与 v22 安装都被判定为不可用，
@@ -868,9 +935,9 @@ powershell -File ..\.dsh\click-app.ps1 -Keys '^+d'     # Ctrl+Shift+D
     不再压住品牌；顶栏 `padding-left: 20px`、标题 `x=208`（= 左栏 188 + 20），
     不再被冤枉缩进 84px；顶栏 `padding-right: 12px`（右侧没有被 Windows 那条 `titlebar-area` 兜底值挤掉）
   - 应用内全屏：左栏 `display: none`，顶栏变成最左列，此时 `padding-left: 84px`、标题 `x=100`，红绿灯区干净
-  - 文案：状态栏提示 `⌘+1~6 切换页面`、左栏主题开关 tooltip「跟随系统的深色模式」
+  - 文案：状态栏提示 `⌘+1~7 切换页面`、左栏主题开关 tooltip「跟随系统的深色模式」
   - 还抓了渲染图各看了一遍（`capturePage()`），确认没有错位
-- **系统全屏识别实测**（临时脚本 require 应用的**真实 main.js**，用 `win.setFullScreen(true)` 触发）：
+- **系统全屏识别实测**（临时脚本 require 应用的**真实主进程**——构建后的 `dist/main/main.js`，用 `win.setFullScreen(true)` 触发）：
   `isFullScreen` 翻转后渲染层的 `body[data-native-fullscreen]` 跟着变，
   左栏留白 `48px → 16px`、退出后 `16px → 48px` 自动恢复；
   四种状态（普通 / 普通+应用内全屏 / 系统全屏 / 系统全屏+应用内全屏）的
