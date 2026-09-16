@@ -9,81 +9,81 @@
  * observeTerminalSize / fitAndSync + 四个按钮的处理），生命周期靠手工挂载与卸载；
  * 现在收在一个组件里：onMounted 建终端、onUnmounted 销毁并把 ResizeObserver 断掉。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   applyTerminalSurface,
   attachTerminal,
   fitAndSync,
   passAppShortcutsThrough,
-  TERM_THEMES
-} from '../lib/xterm.js'
-import { currentTab, dsh, phaseInfo, snapshot } from '../lib/store.js'
-import type { TerminalEntry } from '../lib/xterm.js'
+  TERM_THEMES,
+} from '../lib/xterm.js';
+import { currentTab, dsh, phaseInfo, snapshot } from '../lib/store.js';
+import type { TerminalEntry } from '../lib/xterm.js';
 
-const api = window.dshConsole
+const api = window.dshConsole;
 
-const host = ref<HTMLElement | null>(null)
-const hasContent = ref(false)
-const busyStart = ref(false)
-let entry: TerminalEntry | null = null
-let observer: ResizeObserver | null = null
-let offOutput: (() => void) | null = null
-let offExit: (() => void) | null = null
+const host = ref<HTMLElement | null>(null);
+const hasContent = ref(false);
+const busyStart = ref(false);
+let entry: TerminalEntry | null = null;
+let observer: ResizeObserver | null = null;
+let offOutput: (() => void) | null = null;
+let offExit: (() => void) | null = null;
 
-const own = computed(() => Boolean(dsh.value?.owned))
+const own = computed(() => Boolean(dsh.value?.owned));
 const note = computed(() => {
-  if (!own.value) return phaseInfo.value.title
-  return dsh.value?.pid ? `运行中，PID ${dsh.value.pid}` : '运行中，PID 识别中'
-})
+  if (!own.value) return phaseInfo.value.title;
+  return dsh.value?.pid ? `运行中，PID ${dsh.value.pid}` : '运行中，PID 识别中';
+});
 // 说清"为什么打字没反应"，否则这个终端看着像坏了
-const hint = computed(() => (own.value ? 'dsh web 不读键盘输入，Ctrl+C 可以让它退出' : ''))
-const emptyVisible = computed(() => !own.value && !hasContent.value)
+const hint = computed(() => (own.value ? 'dsh web 不读键盘输入，Ctrl+C 可以让它退出' : ''));
+const emptyVisible = computed(() => !own.value && !hasContent.value);
 
 function resolvedTheme() {
-  return snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark'
+  return snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark';
 }
 
 function syncFit() {
-  if (!entry || !host.value) return
-  fitAndSync(entry, (cols, rows) => api.dshResize(cols, rows))
+  if (!entry || !host.value) return;
+  fitAndSync(entry, (cols, rows) => api.dshResize(cols, rows));
 }
 
 function clearDisplay() {
-  entry?.term.clear()
+  entry?.term.clear();
   window.dispatchEvent(
     new CustomEvent('dsh:status-message', {
-      detail: '已清空终端显示，dsh 的输出还在主进程缓冲里（可用「重新显示历史」找回）'
-    })
-  )
+      detail: '已清空终端显示，dsh 的输出还在主进程缓冲里（可用「重新显示历史」找回）',
+    }),
+  );
 }
 
 async function replay() {
-  const text = await api.dshReplay()
-  if (!entry) return
-  entry.term.reset()
+  const text = await api.dshReplay();
+  if (!entry) return;
+  entry.term.reset();
   if (text) {
-    entry.term.write(text)
-    hasContent.value = true
+    entry.term.write(text);
+    hasContent.value = true;
   } else {
-    entry.term.write('\u001b[2m（缓冲里还没有输出）\u001b[0m\r\n')
+    entry.term.write('\u001b[2m（缓冲里还没有输出）\u001b[0m\r\n');
   }
 }
 
 function sendCtrlC() {
-  api.dshInput('\u0003')
+  api.dshInput('\u0003');
   window.dispatchEvent(
-    new CustomEvent('dsh:status-message', { detail: '已发送 Ctrl+C，等 dsh 自己退出' })
-  )
+    new CustomEvent('dsh:status-message', { detail: '已发送 Ctrl+C，等 dsh 自己退出' }),
+  );
 }
 
 async function startDsh() {
-  if (busyStart.value) return
-  busyStart.value = true
+  if (busyStart.value) return;
+  busyStart.value = true;
   try {
-    const result = await api.start()
-    if (!result.ok) alert(`启动失败：${result.error}`)
+    const result = await api.start();
+    if (!result.ok) alert(`启动失败：${result.error}`);
   } finally {
-    busyStart.value = false
+    busyStart.value = false;
   }
 }
 
@@ -95,82 +95,82 @@ async function startDsh() {
  * 输出不会丢：主进程一直缓存着，建好之后 replay 回来。
  */
 function ensureTerminal() {
-  if (entry || !host.value) return entry
-  entry = attachTerminal(host.value, resolvedTheme())
+  if (entry || !host.value) return entry;
+  entry = attachTerminal(host.value, resolvedTheme());
   // 让 Ctrl+1~7 与 Ctrl+R 穿过终端交给应用（dsh 终端本来就不读键盘输入）
-  passAppShortcutsThrough(entry.term, { includeReload: true })
-  entry.term.onData((data) => api.dshInput(data))
-  entry.term.onResize(({ cols, rows }) => api.dshResize(cols, rows))
-  syncFit()
+  passAppShortcutsThrough(entry.term, { includeReload: true });
+  entry.term.onData((data) => api.dshInput(data));
+  entry.term.onResize(({ cols, rows }) => api.dshResize(cols, rows));
+  syncFit();
 
   // 把主进程里缓存的输出补上，切页不丢历史
   void api.dshReplay().then((text) => {
     if (text && text.length > 0) {
-      entry?.term.write(text)
-      hasContent.value = true
+      entry?.term.write(text);
+      hasContent.value = true;
     }
-  })
+  });
 
   offOutput = api.onOutput(({ chunk }) => {
-    entry?.term.write(chunk)
-    if (!hasContent.value) hasContent.value = true
-  })
+    entry?.term.write(chunk);
+    if (!hasContent.value) hasContent.value = true;
+  });
 
   offExit = api.onDshExit(({ exitCode, signal }) => {
-    const reason = signal ? `信号 ${signal}` : `退出码 ${exitCode}`
-    entry?.term.write(`\r\n\u001b[2m── dsh 已退出（${reason}）──\u001b[0m\r\n`)
-    hasContent.value = true
+    const reason = signal ? `信号 ${signal}` : `退出码 ${exitCode}`;
+    entry?.term.write(`\r\n\u001b[2m── dsh 已退出（${reason}）──\u001b[0m\r\n`);
+    hasContent.value = true;
     window.dispatchEvent(
-      new CustomEvent('dsh:status-message', { detail: `dsh 已退出（${reason}）` })
-    )
-  })
+      new CustomEvent('dsh:status-message', { detail: `dsh 已退出（${reason}）` }),
+    );
+  });
 
   // 尺寸跟着容器走。不按"当前是否在本页"过滤：页面用 visibility 隐藏、布局一直有效，
   // 所以窗口变化时即使人在别的页也一并算准 —— 切回来就是对的。
   if (typeof ResizeObserver !== 'undefined') {
-    observer = new ResizeObserver(() => syncFit())
-    observer.observe(host.value)
+    observer = new ResizeObserver(() => syncFit());
+    observer.observe(host.value);
   }
-  return entry
+  return entry;
 }
 
 onMounted(() => {
   // 挂载时如果本页就是当前页（例如刷新时停在终端页），直接建
-  if (currentTab.value === 'terminal') ensureTerminal()
-})
+  if (currentTab.value === 'terminal') ensureTerminal();
+});
 
 onUnmounted(() => {
-  if (observer) observer.disconnect()
-  if (offOutput) offOutput()
-  if (offExit) offExit()
-  entry?.term.dispose()
-  entry = null
-})
+  if (observer) observer.disconnect();
+  if (offOutput) offOutput();
+  if (offExit) offExit();
+  entry?.term.dispose();
+  entry = null;
+});
 
 // 切到本页：没有终端就现在建（此时页面已可见、布局已定型），然后 fit 并聚焦
 watch(
   currentTab,
   (tab) => {
-    if (tab !== 'terminal') return
-    ensureTerminal()
+    if (tab !== 'terminal') return;
+    ensureTerminal();
     requestAnimationFrame(() => {
-      syncFit()
-      entry?.term.focus()
+      syncFit();
+      entry?.term.focus();
       // 再补一拍：切页那一帧容器的尺寸可能还没最终确定
-      setTimeout(syncFit, 200)
-    })
+      setTimeout(syncFit, 200);
+    });
   },
-  { immediate: true }
-)
+  { immediate: true },
+);
 
 // 主题变化：xterm 的配色是 JS 选项，得显式改；面板底色也一起跟上
 watch(
   () => snapshot.value?.theme?.resolved,
   () => {
-    applyTerminalSurface(host.value, resolvedTheme())
-    if (entry) entry.term.options.theme = { ...TERM_THEMES[resolvedTheme()] }
-  }
-)
+    applyTerminalSurface(host.value, resolvedTheme());
+    if (entry) entry.term.options.theme = { ...TERM_THEMES[resolvedTheme()] };
+  },
+);
 </script>
 
 <template>

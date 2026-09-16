@@ -10,11 +10,11 @@
  * 与还没迁移的 app.js 之间只通过一个 CustomEvent 通信（保存/重载后通知它刷新快照），
  * 不共享可变全局。
  */
-import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { snapshot } from '../lib/store.js'
-import type { EnvInfo, SettingsValues } from '../../shared/ipc'
+import { onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { snapshot } from '../lib/store.js';
+import type { EnvInfo, SettingsValues } from '../../shared/ipc';
 
-const api = window.dshConsole
+const api = window.dshConsole;
 
 /** 表单状态：键名与主进程的设置项一一对应 */
 const form = reactive({
@@ -32,107 +32,107 @@ const form = reactive({
   autoStart: true,
   openUiOnStart: true,
   uiFullscreenOnStart: true,
-  killOnExit: true
-})
+  killOnExit: true,
+});
 
-const userData = ref('')
-const status = ref('')
-const busy = ref(false)
+const userData = ref('');
+const status = ref('');
+const busy = ref(false);
 /** 版本信息来自快照的 env（主进程给），开发态与打包态都在这里如实显示 */
-const appVersion = ref('—')
-const packaged = ref(false)
-const runtime = reactive({ electron: '—', node: '—', chrome: '—' })
-let statusTimer: ReturnType<typeof setTimeout> | null = null
-let stopThemeWatch: (() => void) | null = null
+const appVersion = ref('—');
+const packaged = ref(false);
+const runtime = reactive({ electron: '—', node: '—', chrome: '—' });
+let statusTimer: ReturnType<typeof setTimeout> | null = null;
+let stopThemeWatch: (() => void) | null = null;
 
 function fill(values: Partial<SettingsValues>): void {
   for (const key of Object.keys(form)) {
-    const next = values[key as keyof SettingsValues]
-    if (next !== undefined) (form as Record<string, unknown>)[key] = next
+    const next = values[key as keyof SettingsValues];
+    if (next !== undefined) (form as Record<string, unknown>)[key] = next;
   }
 }
 
 /** 数字输入留空会变成 ''/NaN，这时保留原值，别把配置写成 NaN */
 function normalize(
   patch: Record<string, unknown>,
-  fallback: Record<string, unknown>
+  fallback: Record<string, unknown>,
 ): Record<string, unknown> {
   for (const key of ['port', 'pollIntervalMs', 'startTimeoutMs', 'stopGraceMs']) {
-    const value = Number(patch[key])
-    patch[key] = Number.isFinite(value) ? value : fallback[key]
+    const value = Number(patch[key]);
+    patch[key] = Number.isFinite(value) ? value : fallback[key];
   }
-  return patch
+  return patch;
 }
 
 function flash(message: string): void {
-  status.value = message
-  if (statusTimer) clearTimeout(statusTimer)
-  statusTimer = setTimeout(() => (status.value = ''), 4000)
+  status.value = message;
+  if (statusTimer) clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => (status.value = ''), 4000);
 }
 
 /** 告诉还没迁移的 app.js：设置变了，请刷新快照并重绘 */
 function announce(next: SettingsValues): void {
-  window.dispatchEvent(new CustomEvent('dsh:settings-changed', { detail: next }))
+  window.dispatchEvent(new CustomEvent('dsh:settings-changed', { detail: next }));
 }
 
 async function load(): Promise<SettingsValues> {
   // 首屏读共享 store（外壳与其它页面读的是同一份）；「重新载入」按钮要的是最新值，
   // 所以这里照旧问主进程要一次完整快照。
-  const fresh = await api.getSnapshot()
-  fill(fresh.settings)
-  userData.value = fresh.userData || ''
-  applyEnv(fresh.env)
-  return fresh.settings
+  const fresh = await api.getSnapshot();
+  fill(fresh.settings);
+  userData.value = fresh.userData || '';
+  applyEnv(fresh.env);
+  return fresh.settings;
 }
 
 /** 版本信息：应用自身版本 + 运行时不变量 */
 function applyEnv(env?: EnvInfo): void {
-  if (!env) return
-  appVersion.value = env.app || '—'
-  packaged.value = Boolean(env.packaged)
-  Object.assign(runtime, env.versions || {})
+  if (!env) return;
+  appVersion.value = env.app || '—';
+  packaged.value = Boolean(env.packaged);
+  Object.assign(runtime, env.versions || {});
 }
 
 async function save() {
-  busy.value = true
+  busy.value = true;
   try {
-    const patch = normalize({ ...form }, { ...form })
-    const next = await api.patchSettings(patch)
-    fill(next)
-    announce(next)
-    flash('已保存')
+    const patch = normalize({ ...form }, { ...form });
+    const next = await api.patchSettings(patch);
+    fill(next);
+    announce(next);
+    flash('已保存');
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 
 async function reload() {
-  busy.value = true
+  busy.value = true;
   try {
-    const settings = await load()
-    announce(settings)
-    flash('已重新载入')
+    const settings = await load();
+    announce(settings);
+    flash('已重新载入');
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 
 onMounted(async () => {
-  await load()
+  await load();
   // 左下角的主题开关改的是同一个设置：store 已经订阅了 theme:changed，这里跟着同步
   stopThemeWatch = watch(
     () => snapshot.value?.theme?.mode,
     (mode) => {
-      if (mode) form.themeMode = mode
+      if (mode) form.themeMode = mode;
     },
-    { immediate: true }
-  )
-})
+    { immediate: true },
+  );
+});
 
 onUnmounted(() => {
-  if (statusTimer) clearTimeout(statusTimer)
-  if (stopThemeWatch) stopThemeWatch()
-})
+  if (statusTimer) clearTimeout(statusTimer);
+  if (stopThemeWatch) stopThemeWatch();
+});
 </script>
 
 <template>

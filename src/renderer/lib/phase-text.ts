@@ -5,11 +5,11 @@
  * 避免同一份文案在 app.js 和 Vue 组件里各写一遍、然后慢慢走样。
  */
 
-import type { DshPhase } from '../../shared/ipc'
+import type { DshPhase } from '../../shared/ipc';
 
 export interface PhaseText {
-  title: string
-  desc: string
+  title: string;
+  desc: string;
 }
 
 /** 与 DshPhase 一一对应：新增状态时这里漏写会编译失败 */
@@ -21,13 +21,13 @@ export const PHASE_TEXT: Record<DshPhase, PhaseText> = {
   stopping: { title: '停止中', desc: '等 dsh 自己退出' },
   external: {
     title: '运行中，外部实例',
-    desc: '这个 dsh 不是本应用启动的，内嵌界面需要由本应用重新启动才能用'
+    desc: '这个 dsh 不是本应用启动的，内嵌界面需要由本应用重新启动才能用',
   },
-  conflict: { title: '端口被占用', desc: '这个端口上有别的进程在监听，dsh 拿不到它' }
-}
+  conflict: { title: '端口被占用', desc: '这个端口上有别的进程在监听，dsh 拿不到它' },
+};
 
 /** 未知取值（比如主进程加了新状态而前端还没跟上）也要给得出话 */
 export function phaseText(phase: string): PhaseText {
-  if (phase in PHASE_TEXT) return PHASE_TEXT[phase as DshPhase]
-  return { title: String(phase || ''), desc: '' }
+  if (phase in PHASE_TEXT) return PHASE_TEXT[phase as DshPhase];
+  return { title: String(phase || ''), desc: '' };
 }

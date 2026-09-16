@@ -6,19 +6,19 @@
  * 又不会把整个 Electron API 面拖进渲染层的类型空间。
  */
 export interface WebviewElement extends HTMLElement {
-  src: string
+  src: string;
   /** 用 loadURL 而不是给 src 赋值：切换地址时上一笔导航被中止不会抛 ERR_ABORTED */
-  loadURL(url: string): Promise<void>
-  reload(): void
-  canGoBack(): boolean
-  goBack(): void
-  getURL(): string
-  executeJavaScript(code: string): Promise<string>
+  loadURL(url: string): Promise<void>;
+  reload(): void;
+  canGoBack(): boolean;
+  goBack(): void;
+  getURL(): string;
+  executeJavaScript(code: string): Promise<string>;
 }
 
 /** `<webview>` 的 did-fail-load 事件载荷（Electron 把详情挂在事件对象上） */
 export interface WebviewFailLoadEvent extends Event {
-  errorCode: number
-  errorDescription: string
-  validatedURL: string
+  errorCode: number;
+  errorDescription: string;
+  validatedURL: string;
 }

@@ -1,6 +1,6 @@
-import { defineConfig, type Plugin } from 'vite'
-import vue from '@vitejs/plugin-vue'
-import { fileURLToPath, URL } from 'node:url'
+import { defineConfig, type Plugin } from 'vite';
+import vue from '@vitejs/plugin-vue';
+import { fileURLToPath, URL } from 'node:url';
 
 /**
  * file:// 下不能加载 ES module（模块脚本一律走 CORS 检查，而 file:// 的 origin 是 null），
@@ -18,9 +18,9 @@ function classicScriptPlugin(): Plugin {
       return html
         .replace(/<script type="module" crossorigin /g, '<script defer ')
         .replace(/<script type="module" /g, '<script defer ')
-        .replace(/ crossorigin(?=[^>]*href="\.\/assets\/)/g, '')
-    }
-  }
+        .replace(/ crossorigin(?=[^>]*href="\.\/assets\/)/g, '');
+    },
+  };
 }
 
 /**
@@ -40,11 +40,11 @@ export default defineConfig({
         compilerOptions: {
           // <webview> 是 Electron 的原生自定义元素，不是 Vue 组件：
           // 不声明的话编译器会尝试解析组件并告警（内嵌页全靠它）。
-          isCustomElement: (tag) => tag === 'webview'
-        }
-      }
+          isCustomElement: (tag) => tag === 'webview',
+        },
+      },
     }),
-    classicScriptPlugin()
+    classicScriptPlugin(),
   ],
   build: {
     outDir: fileURLToPath(new URL('./dist/renderer', import.meta.url)),
@@ -56,8 +56,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // 不切分：保证产物是自包含的普通脚本（跨 chunk 就必须用模块语法）
-        codeSplitting: false
-      }
-    }
-  }
-})
+        codeSplitting: false,
+      },
+    },
+  },
+});

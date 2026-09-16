@@ -73,19 +73,21 @@ npm start
 | `npm run format:check` | 只检查不改写（CI 与 review 用）                                                         |
 | `npm run typecheck`    | 类型检查全量：主进程（tsc）+ 渲染层（vue-tsc）+ 测试与脚本（tsc，`tsconfig.node.json`） |
 
-格式的**唯一事实来源**是 `.prettierrc.json`。其中有四条是**有意改掉 Prettier 默认值**的：
+格式的**唯一事实来源**是 `.prettierrc.json`。这个仓库的硬约定：**语句结尾要有分号**（`semi: true`）、
+**多行数组 / 对象 / 参数的最后一项后面要有尾随逗号**（`trailingComma: "all"`）、**字符串用单引号**
+（`singleQuote: true`）、**换行一律 LF**（`endOfLine: "lf"`，配合 `.gitattributes` 的
+`* text=auto eol=lf`，Windows 与 macOS 双机开发不会互相改换行、也不会出现"整文件被改动"的假 diff）。
 
-- `semi: false`：语句末尾不写分号；
-- `trailingComma: "none"`：多行数组 / 对象 / 参数的最后一项后面不加逗号（Prettier 3 的默认是 `"all"`）；
-- `singleQuote: true`：字符串用单引号；
-- `endOfLine: "lf"`：配合 `.gitattributes` 的 `* text=auto eol=lf`，Windows 与 macOS 双机开发
-  不会互相改换行，也不会出现"整文件被改动"的假 diff。
-
-其余键（`printWidth: 100`、`tabWidth: 2`、`useTabs: false`、`bracketSpacing`、`arrowParens: "always"`、
+其中**有意改掉 Prettier 默认值**的只有两条：`printWidth: 100`（默认 80）与 `singleQuote: true`（默认双引号）。
+其余键（`semi`、`trailingComma`、`tabWidth: 2`、`useTabs: false`、`bracketSpacing`、`arrowParens: "always"`、
 `quoteProps`、`proseWrap`、`htmlWhitespaceSensitivity`、`vueIndentScriptAndStyle: false`、
 `singleAttributePerLine: false`、`embeddedLanguageFormatting`）写出来**不是为了改行为**，而是把当前默认值
-钉死：其中 `singleAttributePerLine` 与 `vueIndentScriptAndStyle` 一旦跟着 Prettier 的默认值变化，
-10 个单文件组件会被整体重排，diff 就没法 review 了。
+钉死，理由有两条：
+
+- **这些是约定，不是"碰巧的默认值"**：`semi` / `trailingComma` 明写出来，就不会被哪次"顺手关掉"而没人发现
+  （Prettier 3 之前尾随逗号的默认还是 `"es5"`，不同版本行为不一致）；
+- **防整体重排**：`singleAttributePerLine` 与 `vueIndentScriptAndStyle` 一旦跟着 Prettier 的默认值变化，
+  10 个单文件组件会被整体重排，diff 就没法 review 了。
 
 那为什么在 `eslint.config.mjs` 里搜不到 `semi` / `comma-dangle` 这类规则？因为格式只由 Prettier 一家
 负责：配置最后一行接的就是 `eslint-config-prettier`，它把所有与 Prettier 冲突的格式规则全部关掉。
@@ -112,14 +114,14 @@ npm start
 `src/renderer/main.ts` 里的 import 顺序有语义，别调换：
 
 ```js
-import '@xterm/xterm/css/xterm.css' // 1. xterm 自带样式在前
-import './styles.css' // 2. 我们的覆盖在后（同权重靠顺序决定谁生效）
+import '@xterm/xterm/css/xterm.css'; // 1. xterm 自带样式在前
+import './styles.css'; // 2. 我们的覆盖在后（同权重靠顺序决定谁生效）
 
-import './app.js' // 3. 应用级胶水先求值
+import './app.js'; // 3. 应用级胶水先求值
 
-import { installDevDiagnostics } from './dev-diagnostics.js'
-import { snapshot, startStore } from './lib/store.js'
-import { mountAll } from './mount.js'
+import { installDevDiagnostics } from './dev-diagnostics.js';
+import { snapshot, startStore } from './lib/store.js';
+import { mountAll } from './mount.js';
 ```
 
 （源码是 TS，但相对导入沿用源码里的 `./x.js` 写法；Vite 与 vue-tsc 都会把它解析到同名的 `.ts`。）

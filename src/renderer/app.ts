@@ -12,10 +12,10 @@
  * 这里会只剩守卫与快捷键。
  */
 
-import { watch } from 'vue'
+import { watch } from 'vue';
 
-import { phaseText } from './lib/phase-text.js'
-import { isAppModifier } from './lib/platform.js'
+import { phaseText } from './lib/phase-text.js';
+import { isAppModifier } from './lib/platform.js';
 import {
   currentTab,
   dsh,
@@ -24,35 +24,35 @@ import {
   settings,
   snapshot,
   startStore,
-  type TabId
-} from './lib/store.js'
-import type { DshPhase } from '../shared/ipc'
+  type TabId,
+} from './lib/store.js';
+import type { DshPhase } from '../shared/ipc';
 
-const api = window.dshConsole
+const api = window.dshConsole;
 
 function showBootError(message: string): void {
-  const div = document.createElement('div')
-  div.id = 'boot-error'
-  div.textContent = `DSH Console 启动失败\n\n${message}`
-  document.body.appendChild(div)
+  const div = document.createElement('div');
+  div.id = 'boot-error';
+  div.textContent = `DSH Console 启动失败\n\n${message}`;
+  document.body.appendChild(div);
 }
 
 if (!api) {
   showBootError(
-    'preload 未注入：window.dshConsole 不存在。请检查 src/preload/preload.ts 是否被编译到 dist/preload/。'
-  )
+    'preload 未注入：window.dshConsole 不存在。请检查 src/preload/preload.ts 是否被编译到 dist/preload/。',
+  );
 } else {
-  void main()
+  void main();
 }
 
 async function main(): Promise<void> {
-  await startStore()
-  wireBootLock()
-  wireAutoOpen()
-  wireImmersive()
-  wirePaneVisibility()
-  wireShortcuts()
-  announceUpdate()
+  await startStore();
+  wireBootLock();
+  wireAutoOpen();
+  wireImmersive();
+  wirePaneVisibility();
+  wireShortcuts();
+  announceUpdate();
 }
 
 // ------------------------------------------------------------ 升级提示
@@ -64,11 +64,11 @@ async function main(): Promise<void> {
  * 之所以延迟一下：启动锁盖着整个界面（含状态栏），立刻说会被盖掉。
  */
 function announceUpdate(): void {
-  if (!snapshot.value?.env?.updated) return
-  const version = snapshot.value.env.app || ''
+  if (!snapshot.value?.env?.updated) return;
+  const version = snapshot.value.env.app || '';
   setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: `已更新到 ${version}` }))
-  }, 2000)
+    window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: `已更新到 ${version}` }));
+  }, 2000);
 }
 
 // ------------------------------------------------------------ 应用内全屏
@@ -83,10 +83,10 @@ function wireImmersive(): void {
   watch(
     immersive,
     (on) => {
-      document.body.dataset.immersive = on ? 'true' : 'false'
+      document.body.dataset.immersive = on ? 'true' : 'false';
     },
-    { immediate: true }
-  )
+    { immediate: true },
+  );
 }
 
 // ------------------------------------------------------------ 页面可见性
@@ -103,11 +103,11 @@ function wirePaneVisibility(): void {
     currentTab,
     (name) => {
       for (const pane of document.querySelectorAll('.pane')) {
-        pane.classList.toggle('active', pane.id === `pane-${name}`)
+        pane.classList.toggle('active', pane.id === `pane-${name}`);
       }
     },
-    { immediate: true }
-  )
+    { immediate: true },
+  );
 }
 
 // ------------------------------------------------------------ 启动锁
@@ -121,74 +121,74 @@ function wirePaneVisibility(): void {
  * 早期版本用"布尔量 + 每次状态变化重新判定"，结果解锁后只要条件又变回不满足
  * （例如用户手动退出全屏），锁就会重新扣上来 —— done 之后直接返回，杜绝这类回归。
  */
-const BOOT_LOCK_MAX_MS = 90000
-type BootLockState = 'idle' | 'waiting' | 'done'
-let bootLockState: BootLockState = 'idle'
-let bootLockDeadline = 0
-let bootLockStartedAt = 0
+const BOOT_LOCK_MAX_MS = 90000;
+type BootLockState = 'idle' | 'waiting' | 'done';
+let bootLockState: BootLockState = 'idle';
+let bootLockDeadline = 0;
+let bootLockStartedAt = 0;
 
 function setBootLock(on: boolean): void {
-  document.body.dataset.locked = on ? 'true' : 'false'
-  document.getElementById('boot-lock')?.classList.toggle('hidden', !on)
+  document.body.dataset.locked = on ? 'true' : 'false';
+  document.getElementById('boot-lock')?.classList.toggle('hidden', !on);
 }
 
 /** 解锁是一次性的：走到 done 就再也不会重新上锁 */
 function releaseBootLock(): void {
-  bootLockState = 'done'
-  setBootLock(false)
+  bootLockState = 'done';
+  setBootLock(false);
 }
 
 /** 锁上的那几秒给个时间感：已等待几秒 + 接下来会自动发生什么 */
 function updateBootLockNote(): void {
-  if (bootLockState !== 'waiting') return
-  const waited = Math.max(1, Math.round((Date.now() - bootLockStartedAt) / 1000))
-  const note = document.getElementById('boot-note')
-  if (note) note.textContent = `已等待 ${waited} 秒 · 就绪后自动打开 DeepSeek Harness 并进入全屏`
+  if (bootLockState !== 'waiting') return;
+  const waited = Math.max(1, Math.round((Date.now() - bootLockStartedAt) / 1000));
+  const note = document.getElementById('boot-note');
+  if (note) note.textContent = `已等待 ${waited} 秒 · 就绪后自动打开 DeepSeek Harness 并进入全屏`;
 }
 
 function updateBootLock(phase: DshPhase): void {
-  if (bootLockState === 'done') return
+  if (bootLockState === 'done') return;
 
   if (bootLockState === 'idle') {
     // 只有"启动应用时就在拉起"才加锁；用户自己点「启动」不加锁（那时他要看日志）
     if (phase !== 'starting') {
-      bootLockState = 'done'
-      return
+      bootLockState = 'done';
+      return;
     }
-    bootLockState = 'waiting'
-    bootLockStartedAt = Date.now()
-    bootLockDeadline = Date.now() + BOOT_LOCK_MAX_MS
-    setBootLock(true)
-    updateBootLockNote()
+    bootLockState = 'waiting';
+    bootLockStartedAt = Date.now();
+    bootLockDeadline = Date.now() + BOOT_LOCK_MAX_MS;
+    setBootLock(true);
+    updateBootLockNote();
   }
 
   // waiting：就绪 = dsh 跑起来了、该开的页面也开了
   // （自动全屏和"打开 Harness 页"是同一次流程里做的，所以不把全屏当解锁条件）
-  const wantsUi = Boolean(settings.value.openUiOnStart)
-  const ready = phase === 'running' && (!wantsUi || harnessAutoOpened)
-  const abnormal = ['stopped', 'degraded', 'conflict', 'external'].includes(phase)
-  const timedOut = Date.now() > bootLockDeadline
+  const wantsUi = Boolean(settings.value.openUiOnStart);
+  const ready = phase === 'running' && (!wantsUi || harnessAutoOpened);
+  const abnormal = ['stopped', 'degraded', 'conflict', 'external'].includes(phase);
+  const timedOut = Date.now() > bootLockDeadline;
 
   if (ready || abnormal || timedOut) {
-    releaseBootLock()
-    return
+    releaseBootLock();
+    return;
   }
-  const desc = document.getElementById('boot-desc')
-  if (desc) desc.textContent = phaseText(phase).desc || '正在拉起进程并等待健康检查'
+  const desc = document.getElementById('boot-desc');
+  if (desc) desc.textContent = phaseText(phase).desc || '正在拉起进程并等待健康检查';
 }
 
 function wireBootLock(): void {
-  document.getElementById('btn-boot-skip')?.addEventListener('click', () => releaseBootLock())
+  document.getElementById('btn-boot-skip')?.addEventListener('click', () => releaseBootLock());
   setInterval(() => {
-    updateBootLockNote()
+    updateBootLockNote();
     // 锁着的时候超时判定也得跑，否则状态不再变化就永远不解锁
-    if (bootLockState === 'waiting' && dsh.value) updateBootLock(dsh.value.phase)
-  }, 1000)
+    if (bootLockState === 'waiting' && dsh.value) updateBootLock(dsh.value.phase);
+  }, 1000);
   watch(
     () => dsh.value?.phase || 'stopped',
     (phase) => updateBootLock(phase),
-    { immediate: true }
-  )
+    { immediate: true },
+  );
 }
 
 // ------------------------------------------------------------ 自动打开
@@ -198,7 +198,7 @@ function wireBootLock(): void {
  * （注意：store 里也有一个同名的 ref，那是给组件读的"是否已自动打开"；这里是本模块内部
  * 用来防重复触发的一次性开关，两者互不影响。）
  */
-let harnessAutoOpened = false
+let harnessAutoOpened = false;
 
 /**
  * dsh 就绪后按设置切到 Harness 页并进全屏 —— "打开应用直接开始用"。
@@ -208,48 +208,48 @@ function wireAutoOpen(): void {
   watch(
     () => dsh.value?.phase,
     (phase) => {
-      if (harnessAutoOpened || phase !== 'running' || !settings.value.openUiOnStart) return
-      harnessAutoOpened = true
-      if (currentTab.value !== 'ui') currentTab.value = 'ui'
+      if (harnessAutoOpened || phase !== 'running' || !settings.value.openUiOnStart) return;
+      harnessAutoOpened = true;
+      if (currentTab.value !== 'ui') currentTab.value = 'ui';
       // 切页时 UiPane 已按设置进过一次全屏，这里只是兜住"本来就在该页"的情况
       if (!immersiveAutoEntered.value && settings.value.uiFullscreenOnStart) {
-        immersiveAutoEntered.value = true
-        immersive.value = true
+        immersiveAutoEntered.value = true;
+        immersive.value = true;
       }
-    }
-  )
+    },
+  );
 }
 
 // ------------------------------------------------------------ 快捷键
 
 /** 快捷键切页的顺序（1~7）——与左栏导航一致 */
-const TAB_ORDER: TabId[] = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'archive', 'settings']
+const TAB_ORDER: TabId[] = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'archive', 'settings'];
 
 function wireShortcuts(): void {
   window.addEventListener('keydown', (event) => {
     // 启动锁期间键盘捷径也一并挡住 —— 锁的意义就是"别乱动"
     if (bootLockState === 'waiting') {
       if (event.key === 'Escape') {
-        releaseBootLock()
-        event.preventDefault()
+        releaseBootLock();
+        event.preventDefault();
       }
-      return
+      return;
     }
     // 全屏时 Esc 退出（这也是键盘用户的唯一出路）
     if (event.key === 'Escape' && immersive.value) {
-      immersive.value = false
-      event.preventDefault()
-      return
+      immersive.value = false;
+      event.preventDefault();
+      return;
     }
     // 默认菜单被移除了，Ctrl+R / ⌘R 的默认重载也随之消失；这里补回来
     if (isAppModifier(event) && !event.shiftKey && event.key.toLowerCase() === 'r') {
-      location.reload()
-      event.preventDefault()
-      return
+      location.reload();
+      event.preventDefault();
+      return;
     }
     if (isAppModifier(event) && !event.shiftKey && /^[1-7]$/.test(event.key)) {
-      currentTab.value = TAB_ORDER[Number(event.key) - 1]
-      event.preventDefault()
+      currentTab.value = TAB_ORDER[Number(event.key) - 1];
+      event.preventDefault();
     }
-  })
+  });
 }

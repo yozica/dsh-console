@@ -12,46 +12,46 @@
  * 正常情况下两者一致；用 ref 是为了万一副进程环境特殊，界面能跟着更新。
  */
 
-import { computed, ref } from 'vue'
+import { computed, ref } from 'vue';
 
-const ua = typeof navigator === 'undefined' ? '' : String(navigator.userAgent || '')
+const ua = typeof navigator === 'undefined' ? '' : String(navigator.userAgent || '');
 
 function detectPlatform(): string {
-  if (/Macintosh|Mac OS X/i.test(ua)) return 'darwin'
-  if (/Windows/i.test(ua)) return 'win32'
-  if (/Linux|X11/i.test(ua)) return 'linux'
-  return ''
+  if (/Macintosh|Mac OS X/i.test(ua)) return 'darwin';
+  if (/Windows/i.test(ua)) return 'win32';
+  if (/Linux|X11/i.test(ua)) return 'linux';
+  return '';
 }
 
-export const platform = ref(detectPlatform())
-export const isMac = computed(() => platform.value === 'darwin')
+export const platform = ref(detectPlatform());
+export const isMac = computed(() => platform.value === 'darwin');
 
 /** 用主进程的权威值校准（store 拿到快照后调用） */
 export function setPlatform(next?: string): string {
-  if (next && typeof next === 'string') platform.value = next
-  return platform.value
+  if (next && typeof next === 'string') platform.value = next;
+  return platform.value;
 }
 
 /** 落到 <html data-platform>：styles.css 靠它给 macOS 的红绿灯留出让位空间 */
 export function applyPlatformAttribute(): void {
-  if (typeof document === 'undefined') return
-  document.documentElement.dataset.platform = platform.value
+  if (typeof document === 'undefined') return;
+  document.documentElement.dataset.platform = platform.value;
 }
 
 /** 应用级快捷键的修饰键是否按下（macOS 认 Cmd，其它平台认 Ctrl） */
 export function isAppModifier(event: KeyboardEvent): boolean {
-  return isMac.value ? Boolean(event.metaKey) : Boolean(event.ctrlKey)
+  return isMac.value ? Boolean(event.metaKey) : Boolean(event.ctrlKey);
 }
 
 /** 快捷键文案里的修饰键：⌘ / Ctrl */
 export function modLabel(): string {
-  return isMac.value ? '⌘' : 'Ctrl'
+  return isMac.value ? '⌘' : 'Ctrl';
 }
 
 /** 拼一条快捷键提示，例如 ⌘+1~7 / Ctrl+1~7 */
 export function shortcutLabel(key: string): string {
-  return `${modLabel()}+${key}`
+  return `${modLabel()}+${key}`;
 }
 
 // 模块加载即落地：首帧的顶栏留白不能等异步快照
-applyPlatformAttribute()
+applyPlatformAttribute();

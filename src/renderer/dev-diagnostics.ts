@@ -12,10 +12,10 @@
  * 只在开发态安装：打包后 index 入口不会调 installDevDiagnostics()。
  */
 
-import { isAppModifier, shortcutLabel } from './lib/platform.js'
+import { isAppModifier, shortcutLabel } from './lib/platform.js';
 
-const MAX_DEPTH = 12
-const MAX_LINES = 600
+const MAX_DEPTH = 12;
+const MAX_LINES = 600;
 
 /**
  * 跳过对排查布局没用的子树：
@@ -24,67 +24,67 @@ const MAX_LINES = 600
  *     结果还没走到要看的那一页就截断了）
  */
 function skip(el: Element): boolean {
-  return el.classList?.contains('sprite') || el.tagName === 'LI'
+  return el.classList?.contains('sprite') || el.tagName === 'LI';
 }
 
 function describe(el: Element): string {
-  const rect = el.getBoundingClientRect()
-  const style = getComputedStyle(el)
-  const id = el.id ? `#${el.id}` : ''
-  const classes = el.classList.length ? `.${[...el.classList].slice(0, 3).join('.')}` : ''
-  const size = `${Math.round(rect.width)}x${Math.round(rect.height)}`
-  const pos = `@${Math.round(rect.left)},${Math.round(rect.top)}`
+  const rect = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  const id = el.id ? `#${el.id}` : '';
+  const classes = el.classList.length ? `.${[...el.classList].slice(0, 3).join('.')}` : '';
+  const size = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
+  const pos = `@${Math.round(rect.left)},${Math.round(rect.top)}`;
   const flags = [
     `display=${style.display}`,
     style.visibility === 'hidden' ? 'visibility=hidden' : '',
     style.overflow !== 'visible' ? `overflow=${style.overflow}` : '',
     style.backgroundColor !== 'rgba(0, 0, 0, 0)' ? `bg=${style.backgroundColor}` : '',
-    style.zIndex !== 'auto' ? `z=${style.zIndex}` : ''
-  ].filter(Boolean)
-  return `${el.tagName.toLowerCase()}${id}${classes} ${size}${pos} ${flags.join(' ')}`
+    style.zIndex !== 'auto' ? `z=${style.zIndex}` : '',
+  ].filter(Boolean);
+  return `${el.tagName.toLowerCase()}${id}${classes} ${size}${pos} ${flags.join(' ')}`;
 }
 
 /** 当前可见的是哪一页：以 .pane.active 为准（body[data-page] 可能是陈旧值，会误导） */
 function activePage(): string {
-  const active = document.querySelector('.pane.active')
-  return active ? active.id.replace(/^pane-/, '') : '?'
+  const active = document.querySelector('.pane.active');
+  return active ? active.id.replace(/^pane-/, '') : '?';
 }
 
 function dumpDom(): void {
-  const lines: string[] = []
+  const lines: string[] = [];
   const walk = (el: Element, depth: number): void => {
-    if (lines.length >= MAX_LINES || depth > MAX_DEPTH || skip(el)) return
-    lines.push(`${'  '.repeat(depth)}${describe(el)}`)
-    for (const child of el.children) walk(child, depth + 1)
-  }
-  walk(document.body, 0)
-  const truncated = lines.length >= MAX_LINES ? `（已截断到 ${MAX_LINES} 行）` : ''
-  console.log(`[dom-dump] 当前页面：${activePage()} ${truncated}\n${lines.join('\n')}`)
+    if (lines.length >= MAX_LINES || depth > MAX_DEPTH || skip(el)) return;
+    lines.push(`${'  '.repeat(depth)}${describe(el)}`);
+    for (const child of el.children) walk(child, depth + 1);
+  };
+  walk(document.body, 0);
+  const truncated = lines.length >= MAX_LINES ? `（已截断到 ${MAX_LINES} 行）` : '';
+  console.log(`[dom-dump] 当前页面：${activePage()} ${truncated}\n${lines.join('\n')}`);
 }
 
 /** 顺带把"当前状态"也打一行：界面不对时，往往先要确认状态对不对 */
 function dumpState(): void {
   const panes = [...document.querySelectorAll('.pane')].map(
-    (pane) => `${pane.id}${pane.classList.contains('active') ? '(active)' : ''}`
-  )
+    (pane) => `${pane.id}${pane.classList.contains('active') ? '(active)' : ''}`,
+  );
   console.log(
     `[dom-state] page=${activePage()} immersive=${document.body.dataset.immersive}` +
       ` locked=${document.body.dataset.locked} theme=${document.documentElement.dataset.theme}` +
-      ` panes=${panes.join(' ')}`
-  )
+      ` panes=${panes.join(' ')}`,
+  );
 }
 
 export function installDevDiagnostics(): void {
   window.addEventListener('keydown', (event) => {
-    if (!isAppModifier(event) || !event.shiftKey) return
-    const key = String(event.key).toLowerCase()
+    if (!isAppModifier(event) || !event.shiftKey) return;
+    const key = String(event.key).toLowerCase();
     if (key === 'd') {
-      event.preventDefault()
-      dumpState()
-      dumpDom()
+      event.preventDefault();
+      dumpState();
+      dumpDom();
     }
-  })
+  });
   console.log(
-    `[dev] 诊断快捷键已就绪：F12 开发者工具，${shortcutLabel('Shift+D')} 导出界面结构到日志`
-  )
+    `[dev] 诊断快捷键已就绪：F12 开发者工具，${shortcutLabel('Shift+D')} 导出界面结构到日志`,
+  );
 }

@@ -6,15 +6,15 @@
  * 或者参数顺序对不上，渲染层那边（Step 2 起）就是编译错误而不是运行时才发现。
  */
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
-import type { DshConsoleApi } from '../shared/ipc'
+import type { DshConsoleApi } from '../shared/ipc';
 
 /** 订阅工具：返回取消订阅函数 */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
-  const listener = (_event: IpcRendererEvent, payload: T) => handler(payload)
-  ipcRenderer.on(channel, listener)
-  return () => ipcRenderer.removeListener(channel, listener)
+  const listener = (_event: IpcRendererEvent, payload: T) => handler(payload);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
 }
 
 const api: DshConsoleApi = {
@@ -65,7 +65,7 @@ const api: DshConsoleApi = {
   onLog: (handler) => subscribe('dsh:log', handler),
   onUiUrl: (handler) => subscribe('dsh:ui-url', handler),
   onSessionOutput: (handler) => subscribe('session:output', handler),
-  onSessionExit: (handler) => subscribe('session:exit', handler)
-}
+  onSessionExit: (handler) => subscribe('session:exit', handler),
+};
 
-contextBridge.exposeInMainWorld('dshConsole', api)
+contextBridge.exposeInMainWorld('dshConsole', api);

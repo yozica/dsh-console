@@ -7,13 +7,13 @@
 
 /// <reference types="vite/client" />
 
-import type { DshConsoleApi } from '../shared/ipc'
+import type { DshConsoleApi } from '../shared/ipc';
 
 declare global {
   interface Window {
     /** preload 通过 contextBridge 注入；dev 下若 preload 没加载，运行时会是 undefined */
-    dshConsole: DshConsoleApi
+    dshConsole: DshConsoleApi;
   }
 }
 
-export {}
+export {};

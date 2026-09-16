@@ -11,17 +11,17 @@
  * 终端永远停在默认的 80×24（踩过：容器 966×723，终端却一直只画 572×432）。
  */
 
-import { Terminal, type ITerminalOptions } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
+import { Terminal, type ITerminalOptions } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 
-import { isAppModifier, isMac } from './platform.js'
-import type { ResolvedTheme } from '../../shared/ipc'
+import { isAppModifier, isMac } from './platform.js';
+import type { ResolvedTheme } from '../../shared/ipc';
 
 /** 一个终端实例 + 它的 fit addon（页面自己保管，卸载时 dispose） */
 export interface TerminalEntry {
-  term: Terminal
-  fit: FitAddon
+  term: Terminal;
+  fit: FitAddon;
 }
 
 /** 终端配色，与 styles.css 的两套主题对应 */
@@ -38,7 +38,7 @@ export const TERM_THEMES: Record<ResolvedTheme, Record<string, string>> = {
     blue: '#4f7cff',
     magenta: '#c586e0',
     cyan: '#4dd0e1',
-    white: '#d5dae3'
+    white: '#d5dae3',
   },
   light: {
     background: '#ffffff',
@@ -52,9 +52,9 @@ export const TERM_THEMES: Record<ResolvedTheme, Record<string, string>> = {
     blue: '#1a4fd6',
     magenta: '#8250df',
     cyan: '#0b6f8a',
-    white: '#57606a'
-  }
-}
+    white: '#57606a',
+  },
+};
 
 /**
  * 等宽字体栈按平台给：终端里的字符宽度是 xterm 量出来的，
@@ -64,7 +64,7 @@ export const TERM_THEMES: Record<ResolvedTheme, Record<string, string>> = {
 function monoStack(): string {
   return isMac.value
     ? 'Menlo, Monaco, "SF Mono", "PingFang SC", "IBM Plex Mono", monospace'
-    : 'Consolas, "Cascadia Mono", "Microsoft YaHei", "IBM Plex Mono", monospace'
+    : 'Consolas, "Cascadia Mono", "Microsoft YaHei", "IBM Plex Mono", monospace';
 }
 
 export function terminalOptions(resolved: ResolvedTheme): ITerminalOptions {
@@ -75,8 +75,8 @@ export function terminalOptions(resolved: ResolvedTheme): ITerminalOptions {
     cursorBlink: true,
     scrollback: 5000,
     allowProposedApi: true,
-    theme: { ...(TERM_THEMES[resolved] || TERM_THEMES.dark) }
-  }
+    theme: { ...(TERM_THEMES[resolved] || TERM_THEMES.dark) },
+  };
 }
 
 /**
@@ -88,23 +88,23 @@ export function terminalOptions(resolved: ResolvedTheme): ITerminalOptions {
  */
 export function applyTerminalSurface(
   el: HTMLElement | null | undefined,
-  resolved: ResolvedTheme
+  resolved: ResolvedTheme,
 ): void {
-  if (!el) return
-  const theme = TERM_THEMES[resolved] || TERM_THEMES.dark
-  el.style.setProperty('--term-bg', theme.background)
-  el.style.setProperty('--term-fg', theme.foreground)
+  if (!el) return;
+  const theme = TERM_THEMES[resolved] || TERM_THEMES.dark;
+  el.style.setProperty('--term-bg', theme.background);
+  el.style.setProperty('--term-fg', theme.foreground);
 }
 
 /** 建一个终端实例并打开在 host 上，返回 { term, fit } */
 export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): TerminalEntry {
-  applyTerminalSurface(host, resolved)
-  const term = new Terminal(terminalOptions(resolved))
-  const fit = new FitAddon()
-  term.loadAddon(fit)
-  term.loadAddon(new WebLinksAddon())
-  term.open(host)
-  return { term, fit }
+  applyTerminalSurface(host, resolved);
+  const term = new Terminal(terminalOptions(resolved));
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  term.loadAddon(new WebLinksAddon());
+  term.open(host);
+  return { term, fit };
 }
 
 /**
@@ -121,15 +121,15 @@ export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): Term
  */
 export function passAppShortcutsThrough(
   term: Terminal,
-  { includeReload = false }: { includeReload?: boolean } = {}
+  { includeReload = false }: { includeReload?: boolean } = {},
 ): void {
   term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-    if (event.type !== 'keydown') return true
-    if (!isAppModifier(event) || event.shiftKey || event.altKey) return true
-    if (/^[1-7]$/.test(event.key)) return false
-    if (includeReload && String(event.key).toLowerCase() === 'r') return false
-    return true
-  })
+    if (event.type !== 'keydown') return true;
+    if (!isAppModifier(event) || event.shiftKey || event.altKey) return true;
+    if (/^[1-7]$/.test(event.key)) return false;
+    if (includeReload && String(event.key).toLowerCase() === 'r') return false;
+    return true;
+  });
 }
 
 /**
@@ -138,15 +138,15 @@ export function passAppShortcutsThrough(
  */
 export function fitAndSync(
   entry: TerminalEntry | null | undefined,
-  send: (cols: number, rows: number) => void
+  send: (cols: number, rows: number) => void,
 ): void {
-  if (!entry?.fit) return
-  const before = `${entry.term.cols}x${entry.term.rows}`
+  if (!entry?.fit) return;
+  const before = `${entry.term.cols}x${entry.term.rows}`;
   try {
-    entry.fit.fit()
+    entry.fit.fit();
   } catch {
-    return
+    return;
   }
-  const after = `${entry.term.cols}x${entry.term.rows}`
-  if (after !== before) send(entry.term.cols, entry.term.rows)
+  const after = `${entry.term.cols}x${entry.term.rows}`;
+  if (after !== before) send(entry.term.cols, entry.term.rows);
 }

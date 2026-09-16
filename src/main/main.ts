@@ -6,8 +6,8 @@
  * 这些相对路径在编译后依然成立（dist/main/main.js → dist/preload、dist/renderer）。
  */
 
-import fs from 'node:fs'
-import path from 'node:path'
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   app,
   BrowserWindow,
@@ -22,15 +22,15 @@ import {
   type IpcMainInvokeEvent,
   type MessageBoxOptions,
   type NativeImage,
-  type WebContents
-} from 'electron'
+  type WebContents,
+} from 'electron';
 
-import { Settings, type SettingsPatch, type SettingsValues } from './settings'
-import { PtySessions } from './pty-sessions'
-import { DshManager } from './dsh-manager'
-import { SessionArchiveManager } from './session-archive'
-import { installFileLogging } from './logger'
-import * as processUtils from './process-utils'
+import { Settings, type SettingsPatch, type SettingsValues } from './settings';
+import { PtySessions } from './pty-sessions';
+import { DshManager } from './dsh-manager';
+import { SessionArchiveManager } from './session-archive';
+import { installFileLogging } from './logger';
+import * as processUtils from './process-utils';
 import type {
   AppSnapshot,
   ArchiveListResult,
@@ -49,86 +49,86 @@ import type {
   SessionExitEvent,
   SessionOutputEvent,
   ThemeInfo,
-  ThemeMode
-} from '../shared/ipc'
+  ThemeMode,
+} from '../shared/ipc';
 
-const isDev = process.argv.includes('--dev')
-const isMac = process.platform === 'darwin'
+const isDev = process.argv.includes('--dev');
+const isMac = process.platform === 'darwin';
 
 // 允许把配置/缓存目录挪到别处（便携部署，或本机验证时不污染 %APPDATA%）
-const userDataOverride = process.env.DSH_CONSOLE_USER_DATA
+const userDataOverride = process.env.DSH_CONSOLE_USER_DATA;
 if (userDataOverride) {
   try {
-    app.setPath('userData', path.resolve(userDataOverride))
+    app.setPath('userData', path.resolve(userDataOverride));
   } catch (error) {
     console.error(
       '[main] 无法设置 userData 目录:',
-      error instanceof Error ? error.message : String(error)
-    )
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
 // 主进程日志同时落盘：<userData>/logs/console.log
-const fileLog = installFileLogging(path.join(app.getPath('userData'), 'logs'))
+const fileLog = installFileLogging(path.join(app.getPath('userData'), 'logs'));
 
 // 下面这几个都在 bootstrap() 里赋值；用 `!` 明确"这里不重复判空"——
 // 所有 IPC handler 与事件回调都只在 bootstrap 之后才可能被触发。
-let mainWindow: BrowserWindow | null = null
-let settings!: Settings
-let ptySessions!: PtySessions
-let dshManager!: DshManager
-let archiveManager!: SessionArchiveManager
+let mainWindow: BrowserWindow | null = null;
+let settings!: Settings;
+let ptySessions!: PtySessions;
+let dshManager!: DshManager;
+let archiveManager!: SessionArchiveManager;
 
-let shellCounter = 0
+let shellCounter = 0;
 /** 应用自己开的终端会话 id（除 dsh 之外） */
-const extraSessions = new Set<string>()
+const extraSessions = new Set<string>();
 /** 渲染层是否已经连上（用于日志确认页面没被 CSP 之类的东西拦死） */
-let rendererConnected = false
+let rendererConnected = false;
 
 function sendToRenderer(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, payload)
+    mainWindow.webContents.send(channel, payload);
   }
 }
 
 // ---------------------------------------------------------------- 主题
 
-const THEME_MODES = ['system', 'light', 'dark'] as const
+const THEME_MODES = ['system', 'light', 'dark'] as const;
 
 function isThemeMode(value: string): value is ThemeMode {
-  return (THEME_MODES as readonly string[]).includes(value)
+  return (THEME_MODES as readonly string[]).includes(value);
 }
 
 /**
  * 窗口底色与标题栏配色：与渲染层 CSS 的 --bg / --ink 保持一致。
  * （这是主进程侧唯一的颜色重复处 —— 窗口底色和系统控件浮层只能由主进程设置。）
  */
-const WINDOW_BG: Record<ResolvedTheme, string> = { dark: '#0a0c10', light: '#eef1f5' }
+const WINDOW_BG: Record<ResolvedTheme, string> = { dark: '#0a0c10', light: '#eef1f5' };
 const TITLEBAR_COLORS: Record<ResolvedTheme, { color: string; symbolColor: string }> = {
   dark: { color: '#0a0c10', symbolColor: '#e8eaf0' },
-  light: { color: '#eef1f5', symbolColor: '#131a26' }
-}
+  light: { color: '#eef1f5', symbolColor: '#131a26' },
+};
 /** 标题栏高度：和渲染层的 --bar-h 对齐，否则系统控件会和顶栏错位 */
-const TITLEBAR_HEIGHT = 36
+const TITLEBAR_HEIGHT = 36;
 
 /** 渲染层产物目录：Vite 构建输出（npm start 会先构建），主进程从这里加载页面 */
-const RENDERER_DIST = path.join(__dirname, '..', '..', 'dist', 'renderer')
+const RENDERER_DIST = path.join(__dirname, '..', '..', 'dist', 'renderer');
 
 /** 当前主题：mode 是用户选择，resolved 是实际生效的明暗 */
 function themeInfo(): ThemeInfo {
-  const mode = String(settings?.get('themeMode') || 'system')
+  const mode = String(settings?.get('themeMode') || 'system');
   return {
     mode: isThemeMode(mode) ? mode : 'system',
-    resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  }
+    resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+  };
 }
 
 /** 把设置里的 mode 应用到 Electron（system 时交给系统决定） */
 function applyThemeSource(mode: unknown): ThemeMode {
-  const text = String(mode)
-  const next: ThemeMode = isThemeMode(text) ? text : 'system'
-  if (nativeTheme.themeSource !== next) nativeTheme.themeSource = next
-  return next
+  const text = String(mode);
+  const next: ThemeMode = isThemeMode(text) ? text : 'system';
+  if (nativeTheme.themeSource !== next) nativeTheme.themeSource = next;
+  return next;
 }
 
 /**
@@ -137,33 +137,33 @@ function applyThemeSource(mode: unknown): ThemeMode {
  * 这里会抛异常，直接吞掉即可。
  */
 function applyTitleBarOverlay(resolved: ResolvedTheme): void {
-  if (isMac) return // macOS 的红绿灯由系统绘制在左上角，没有 titleBarOverlay
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  const colors = TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark
+  if (isMac) return; // macOS 的红绿灯由系统绘制在左上角，没有 titleBarOverlay
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const colors = TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark;
   try {
-    mainWindow.setTitleBarOverlay({ ...colors, height: TITLEBAR_HEIGHT })
+    mainWindow.setTitleBarOverlay({ ...colors, height: TITLEBAR_HEIGHT });
   } catch {
     /* 没有启用 titleBarOverlay 时忽略 */
   }
 }
 
 function broadcastTheme(): ThemeInfo {
-  const info = themeInfo()
+  const info = themeInfo();
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBackgroundColor(WINDOW_BG[info.resolved])
-    applyTitleBarOverlay(info.resolved)
+    mainWindow.setBackgroundColor(WINDOW_BG[info.resolved]);
+    applyTitleBarOverlay(info.resolved);
   }
-  sendToRenderer('theme:changed', info)
-  return info
+  sendToRenderer('theme:changed', info);
+  return info;
 }
 
 // ---------------------------------------------------------------- 内嵌页诊断
 
 interface ConsoleMessageInfo {
-  level: string
-  message: string
-  source: string
-  line: number
+  level: string;
+  message: string;
+  source: string;
+  line: number;
 }
 
 /**
@@ -172,22 +172,22 @@ interface ConsoleMessageInfo {
  */
 function readConsoleMessage(args: unknown[]): ConsoleMessageInfo {
   const details = args[0] as
-    { level?: unknown; message?: unknown; sourceId?: unknown; lineNumber?: unknown } | undefined
+    { level?: unknown; message?: unknown; sourceId?: unknown; lineNumber?: unknown } | undefined;
   if (details && typeof details === 'object' && 'message' in details) {
     return {
       level: String(details.level ?? 'info'),
       message: String(details.message ?? ''),
       source: String(details.sourceId ?? ''),
-      line: Number(details.lineNumber ?? 0)
-    }
+      line: Number(details.lineNumber ?? 0),
+    };
   }
-  const legacy = args as [unknown, unknown, unknown, unknown, unknown]
+  const legacy = args as [unknown, unknown, unknown, unknown, unknown];
   return {
     level: ['debug', 'info', 'warning', 'error'][Number(legacy[1])] || 'info',
     message: String(legacy[2] ?? ''),
     source: String(legacy[4] ?? ''),
-    line: Number(legacy[3] ?? 0)
-  }
+    line: Number(legacy[3] ?? 0),
+  };
 }
 
 /** 抹掉 UA 里的 Electron 与包名 —— 不少第三方站点据此判定"不是正经浏览器" */
@@ -195,31 +195,31 @@ function cleanedUserAgent(ua: string): string {
   return String(ua)
     .replace(/\s*(dsh-console|Electron)\/[\d.]+/g, '')
     .replace(/\s{2,}/g, ' ')
-    .trim()
+    .trim();
 }
 
 const EMBEDDED_LABELS: Record<string, string> = {
   'persist:dsh-ui': '内嵌 DSH 界面',
-  'persist:deepseek': 'DeepSeek 用量页'
-}
+  'persist:deepseek': 'DeepSeek 用量页',
+};
 
 function embeddedLabel(partition: string): string {
-  return EMBEDDED_LABELS[partition] || '内嵌页'
+  return EMBEDDED_LABELS[partition] || '内嵌页';
 }
 
 /**
  * Electron 自身的开发期安全提示（allowpopups / CSP 那几条）内容很长，会把事件日志刷屏，
  * 而且打包后就不会再出现。所以不进日志，只在终端里提一次。
  */
-const seenDevWarnings = new Set<string>()
+const seenDevWarnings = new Set<string>();
 function suppressElectronDevNoise(message: string): boolean {
-  if (!/Electron Security Warning/i.test(message)) return false
-  const key = String(message).slice(0, 60)
+  if (!/Electron Security Warning/i.test(message)) return false;
+  const key = String(message).slice(0, 60);
   if (!seenDevWarnings.has(key)) {
-    seenDevWarnings.add(key)
-    console.log('[renderer] 已忽略 Electron 开发期安全提示（打包后不再出现）')
+    seenDevWarnings.add(key);
+    console.log('[renderer] 已忽略 Electron 开发期安全提示（打包后不再出现）');
   }
-  return true
+  return true;
 }
 
 /**
@@ -227,35 +227,35 @@ function suppressElectronDevNoise(message: string): boolean {
  * 所以把 guest 的 console 与加载失败都收进应用的事件日志里。
  */
 function wireGuestDiagnostics(guest: WebContents): void {
-  let partition: string
+  let partition: string;
   try {
     // getPartition 没进 Electron 的类型声明（运行时存在），按可选方法取
-    const sessionLike = guest.session as unknown as { getPartition?: () => string }
-    partition = sessionLike.getPartition?.() || ''
+    const sessionLike = guest.session as unknown as { getPartition?: () => string };
+    partition = sessionLike.getPartition?.() || '';
   } catch {
-    partition = ''
+    partition = '';
   }
-  const label = embeddedLabel(partition)
+  const label = embeddedLabel(partition);
 
   guest.on('console-message', (...args: unknown[]) => {
-    const info = readConsoleMessage(args)
-    if (suppressElectronDevNoise(info.message)) return
-    if (info.level === 'error') dshManager.log('error', `${label} 控制台报错：${info.message}`)
+    const info = readConsoleMessage(args);
+    if (suppressElectronDevNoise(info.message)) return;
+    if (info.level === 'error') dshManager.log('error', `${label} 控制台报错：${info.message}`);
     else if (info.level === 'warning')
-      dshManager.log('warn', `${label} 控制台警告：${info.message}`)
-  })
+      dshManager.log('warn', `${label} 控制台警告：${info.message}`);
+  });
 
   guest.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-    if (code === -3) return // 被新导航取代，属正常
+    if (code === -3) return; // 被新导航取代，属正常
     dshManager.log(
       'error',
-      `${label} ${isMainFrame === false ? '子框架' : '页面'}加载失败 ${code} ${description} ${url}`
-    )
-  })
+      `${label} ${isMainFrame === false ? '子框架' : '页面'}加载失败 ${code} ${description} ${url}`,
+    );
+  });
 
   guest.on('render-process-gone', (_event, details) => {
-    dshManager.log('error', `${label} 渲染进程退出：${details?.reason || '未知原因'}`)
-  })
+    dshManager.log('error', `${label} 渲染进程退出：${details?.reason || '未知原因'}`);
+  });
 }
 
 /** 内嵌页发出的请求失败时也记一笔（CSP 拦截、DNS、连接被重置都会走这里） */
@@ -265,15 +265,15 @@ function wireEmbeddedRequestDiagnostics(): void {
       session
         .fromPartition(partition)
         .webRequest.onErrorOccurred({ urls: ['*://*/*'] }, (details) => {
-          if (/ERR_ABORTED/.test(details.error)) return // 导航被取代 / 主动取消
-          const short = details.url.length > 120 ? `${details.url.slice(0, 117)}…` : details.url
-          dshManager.log('warn', `${embeddedLabel(partition)} 请求失败 ${details.error} ${short}`)
-        })
+          if (/ERR_ABORTED/.test(details.error)) return; // 导航被取代 / 主动取消
+          const short = details.url.length > 120 ? `${details.url.slice(0, 117)}…` : details.url;
+          dshManager.log('warn', `${embeddedLabel(partition)} 请求失败 ${details.error} ${short}`);
+        });
     } catch (error) {
       console.error(
         `[main] 无法为 ${partition} 安装请求诊断:`,
-        error instanceof Error ? error.message : String(error)
-      )
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 }
@@ -286,46 +286,46 @@ function wireEmbeddedRequestDiagnostics(): void {
  * 没有这条通路时改样式必须手动重启应用才能看到效果。
  */
 function watchRendererForDevReload(): void {
-  if (app.isPackaged) return
-  const rendererDir = RENDERER_DIST
-  if (!fs.existsSync(rendererDir)) return
-  let timer: NodeJS.Timeout | null = null
+  if (app.isPackaged) return;
+  const rendererDir = RENDERER_DIST;
+  if (!fs.existsSync(rendererDir)) return;
+  let timer: NodeJS.Timeout | null = null;
   try {
     fs.watch(rendererDir, { recursive: true }, (_event, filename) => {
-      const name = String(filename || '')
-      if (!/\.(js|css|html)$/i.test(name)) return
-      if (timer) clearTimeout(timer)
+      const name = String(filename || '');
+      if (!/\.(js|css|html)$/i.test(name)) return;
+      if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        if (!mainWindow || mainWindow.isDestroyed()) return
-        dshManager.log('info', `渲染层产物变化（${name}），自动重载窗口`)
-        mainWindow.webContents.reload()
-      }, 250)
-    })
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        dshManager.log('info', `渲染层产物变化（${name}），自动重载窗口`);
+        mainWindow.webContents.reload();
+      }, 250);
+    });
   } catch (error) {
     console.error(
       '[main] 无法监听渲染层目录:',
-      error instanceof Error ? error.message : String(error)
-    )
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
 function createWindow(): void {
-  const resolved = themeInfo().resolved
+  const resolved = themeInfo().resolved;
   // 标题栏策略按平台走：
   //  - Windows/Linux：hidden + titleBarOverlay，最小化/最大化/关闭由系统画在右上角浮层
   //  - macOS：hiddenInset + 红绿灯（trafficLightPosition 把红绿灯对准 36px 顶栏的中心）
   const titleBarOptions: BrowserWindowConstructorOptions = isMac
     ? {
         titleBarStyle: 'hiddenInset',
-        trafficLightPosition: { x: 14, y: Math.round((TITLEBAR_HEIGHT - 14) / 2) }
+        trafficLightPosition: { x: 14, y: Math.round((TITLEBAR_HEIGHT - 14) / 2) },
       }
     : {
         titleBarStyle: 'hidden',
         titleBarOverlay: {
           ...(TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark),
-          height: TITLEBAR_HEIGHT
-        }
-      }
+          height: TITLEBAR_HEIGHT,
+        },
+      };
   const win = new BrowserWindow({
     width: 1220,
     height: 820,
@@ -342,81 +342,81 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: false,
       webviewTag: true,
-      spellcheck: false
-    }
-  })
-  mainWindow = win
+      spellcheck: false,
+    },
+  });
+  mainWindow = win;
 
   win.once('ready-to-show', () => {
-    win.show()
-    if (isDev) win.webContents.openDevTools({ mode: 'detach' })
-  })
+    win.show();
+    if (isDev) win.webContents.openDevTools({ mode: 'detach' });
+  });
 
   win.on('closed', () => {
-    mainWindow = null
-  })
+    mainWindow = null;
+  });
 
   // 把渲染层的 console 转发到主进程 stdout，方便无 GUI 场景排查（CSP 拦截、脚本报错等）
   win.webContents.on('console-message', (...args: unknown[]) => {
-    const info = readConsoleMessage(args)
-    if (suppressElectronDevNoise(info.message)) return
-    const text = `[renderer:${info.level}] ${info.message}${info.source ? ` (${info.source}:${info.line})` : ''}`
-    if (info.level === 'error' || info.level === 'warning') console.error(text)
-    else console.log(text)
-  })
+    const info = readConsoleMessage(args);
+    if (suppressElectronDevNoise(info.message)) return;
+    const text = `[renderer:${info.level}] ${info.message}${info.source ? ` (${info.source}:${info.line})` : ''}`;
+    if (info.level === 'error' || info.level === 'warning') console.error(text);
+    else console.log(text);
+  });
 
   win.webContents.on('did-fail-load', (_event, code, description, url) => {
-    console.error(`[renderer] 页面加载失败 ${code} ${description} ${url}`)
-  })
+    console.error(`[renderer] 页面加载失败 ${code} ${description} ${url}`);
+  });
 
   // 外链一律交给系统浏览器，不在应用内导航
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
-    return { action: 'deny' }
-  })
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
 
   // 系统全屏（macOS 绿灯 / ⌃⌘F，Windows 上是 F11 或 setFullScreen）：状态要告诉渲染层。
   // 为什么渲染层需要知道：macOS 全屏时红绿灯**平时是隐藏的**，只有鼠标移到屏幕顶端才出现，
   // 所以那时不该再为它留位置（留了就是一块说不清用途的空白，用户抓图指出过）。
   // 注意与「应用内全屏」区分：那个只是藏掉左栏与状态栏，不动系统窗口状态。
   win.on('enter-full-screen', () => {
-    dshManager.log('info', '窗口进入系统全屏')
-    sendToRenderer('app:fullscreen', true)
-  })
+    dshManager.log('info', '窗口进入系统全屏');
+    sendToRenderer('app:fullscreen', true);
+  });
   win.on('leave-full-screen', () => {
-    dshManager.log('info', '窗口退出系统全屏')
-    sendToRenderer('app:fullscreen', false)
-  })
+    dshManager.log('info', '窗口退出系统全屏');
+    sendToRenderer('app:fullscreen', false);
+  });
 
   // 内嵌页（DSH 界面 / DeepSeek 用量）：禁止它们自己弹原生窗口，弹窗一律交给系统浏览器
   win.webContents.on('did-attach-webview', (_event, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(url)
-      return { action: 'deny' }
-    })
+      void shell.openExternal(url);
+      return { action: 'deny' };
+    });
     // 内嵌页也要能单独开开发者工具：半渲染、空白这类问题都在它自己那一侧
-    wireDevTools(guest)
-    wireGuestShortcuts(guest)
-    wireGuestDiagnostics(guest)
-  })
+    wireDevTools(guest);
+    wireGuestShortcuts(guest);
+    wireGuestDiagnostics(guest);
+  });
 
   // 渲染层是 Vite 的产物：缺了它页面会白屏，所以在日志里说清楚，别让人猜
-  const entry = path.join(RENDERER_DIST, 'index.html')
+  const entry = path.join(RENDERER_DIST, 'index.html');
   if (!fs.existsSync(entry)) {
     dshManager.log(
       'error',
-      `渲染层产物缺失：${entry} —— 先跑 npm run build（npm start 会自动构建）`
-    )
+      `渲染层产物缺失：${entry} —— 先跑 npm run build（npm start 会自动构建）`,
+    );
   }
   win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-    if (code === -3) return
+    if (code === -3) return;
     dshManager.log(
       'error',
-      `界面加载失败 ${code} ${description} ${url}${isMainFrame === false ? '（子框架）' : ''}`
-    )
-  })
-  wireDevTools(win.webContents)
-  void win.loadFile(entry)
+      `界面加载失败 ${code} ${description} ${url}${isMainFrame === false ? '（子框架）' : ''}`,
+    );
+  });
+  wireDevTools(win.webContents);
+  void win.loadFile(entry);
 }
 
 /**
@@ -427,20 +427,20 @@ function createWindow(): void {
  * 用 detach 而不是贴边停靠：停靠会改变窗口布局，而我们要看的恰恰是布局。
  */
 function wireDevTools(contents: WebContents): void {
-  if (app.isPackaged) return
+  if (app.isPackaged) return;
   contents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return
-    const key = String(input.key || '').toLowerCase()
-    const isF12 = input.key === 'F12'
+    if (input.type !== 'keyDown') return;
+    const key = String(input.key || '').toLowerCase();
+    const isF12 = input.key === 'F12';
     // Windows/Linux 是 Ctrl+Shift+I，macOS 习惯是 Cmd+Alt+I
     const isInspect =
       (input.control && input.shift && key === 'i') ||
-      (isMac && input.meta && input.alt && key === 'i')
-    if (!isF12 && !isInspect) return
-    event.preventDefault()
-    if (contents.isDevToolsOpened()) contents.closeDevTools()
-    else contents.openDevTools({ mode: 'detach' })
-  })
+      (isMac && input.meta && input.alt && key === 'i');
+    if (!isF12 && !isInspect) return;
+    event.preventDefault();
+    if (contents.isDevToolsOpened()) contents.closeDevTools();
+    else contents.openDevTools({ mode: 'detach' });
+  });
 }
 
 /**
@@ -455,36 +455,36 @@ function wireDevTools(contents: WebContents): void {
  * （不在这里复制一份快捷键逻辑，免得两处慢慢走样）。
  */
 function wireGuestShortcuts(guest: WebContents): void {
-  const win = mainWindow
-  if (!win || win.isDestroyed()) return
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
   guest.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown' || input.isAutoRepeat) return
-    const key = String(input.key || '')
-    const lower = key.toLowerCase()
+    if (input.type !== 'keyDown' || input.isAutoRepeat) return;
+    const key = String(input.key || '');
+    const lower = key.toLowerCase();
     // 应用快捷键的修饰键按平台取：macOS 认 Cmd，其它平台认 Ctrl（与渲染层一致）
-    const primary = isMac ? Boolean(input.meta) : Boolean(input.control)
-    const plain = primary && !input.shift && !input.alt
+    const primary = isMac ? Boolean(input.meta) : Boolean(input.control);
+    const plain = primary && !input.shift && !input.alt;
     const isAppKey =
       (plain && /^[1-7]$/.test(key)) ||
       (plain && lower === 'r') ||
-      (primary && input.shift && !input.alt && lower === 'd')
-    const isEscape = key === 'Escape'
-    if (!isAppKey && !isEscape) return
+      (primary && input.shift && !input.alt && lower === 'd');
+    const isEscape = key === 'Escape';
+    if (!isAppKey && !isEscape) return;
 
-    const modifiers: NonNullable<Electron.InputEvent['modifiers']> = []
-    if (input.control) modifiers.push('control')
-    if (input.meta) modifiers.push('meta')
-    if (input.shift) modifiers.push('shift')
-    if (input.alt) modifiers.push('alt')
+    const modifiers: NonNullable<Electron.InputEvent['modifiers']> = [];
+    if (input.control) modifiers.push('control');
+    if (input.meta) modifiers.push('meta');
+    if (input.shift) modifiers.push('shift');
+    if (input.alt) modifiers.push('alt');
     win.webContents.sendInputEvent({
       type: 'keyDown',
       keyCode: key.length === 1 ? key.toUpperCase() : key,
-      modifiers
-    })
+      modifiers,
+    });
     // 应用快捷键由我们消费掉；Esc 不拦 —— 内嵌页自己也常用它关弹层，
     // 两边各做各的（我们的处理器只在全屏时才响应 Esc）。
-    if (isAppKey) event.preventDefault()
-  })
+    if (isAppKey) event.preventDefault();
+  });
 }
 
 /**
@@ -496,24 +496,24 @@ function wireGuestShortcuts(guest: WebContents): void {
  */
 function makeIcon(): NativeImage | undefined {
   try {
-    const file = path.join(__dirname, '..', '..', 'build', 'icon.png')
+    const file = path.join(__dirname, '..', '..', 'build', 'icon.png');
     if (fs.existsSync(file)) {
-      const image = nativeImage.createFromPath(file)
-      if (!image.isEmpty()) return image
+      const image = nativeImage.createFromPath(file);
+      if (!image.isEmpty()) return image;
     }
   } catch {
     // 读不到就用系统默认图标，不影响运行
   }
-  return undefined
+  return undefined;
 }
 
 /** macOS 开发态：Dock 图标取自同一张源图（打包后由 .icns 提供，不必覆盖） */
 function applyDockIcon(): void {
-  if (!isMac || app.isPackaged || !app.dock) return
-  const icon = makeIcon()
+  if (!isMac || app.isPackaged || !app.dock) return;
+  const icon = makeIcon();
   if (icon) {
     try {
-      app.dock.setIcon(icon)
+      app.dock.setIcon(icon);
     } catch {
       /* 设置失败不影响运行 */
     }
@@ -531,24 +531,24 @@ function applyDockIcon(): void {
  */
 function installApplicationMenu(): void {
   if (!isMac) {
-    Menu.setApplicationMenu(null)
-    return
+    Menu.setApplicationMenu(null);
+    return;
   }
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       { role: 'appMenu' },
       { role: 'editMenu' },
       { role: 'viewMenu' },
-      { role: 'windowMenu' }
-    ])
-  )
+      { role: 'windowMenu' },
+    ]),
+  );
 }
 
 function registerIpc(): void {
   ipcMain.handle('app:snapshot', (): AppSnapshot => {
     if (!rendererConnected) {
-      rendererConnected = true
-      console.log('[main] 渲染层已连接')
+      rendererConnected = true;
+      console.log('[main] 渲染层已连接');
     }
     const env: EnvInfo = {
       platform: process.platform,
@@ -567,14 +567,14 @@ function registerIpc(): void {
        * 渲染层据此决定要不要给红绿灯留位置 —— 全屏时它会自动隐藏。
        */
       nativeFullscreen: Boolean(
-        mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()
+        mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen(),
       ),
       versions: {
         electron: String(process.versions.electron ?? ''),
         node: String(process.versions.node ?? ''),
-        chrome: String(process.versions.chrome ?? '')
-      }
-    }
+        chrome: String(process.versions.chrome ?? ''),
+      },
+    };
     return {
       dsh: dshManager.snapshot(),
       settings: settings.all(),
@@ -582,40 +582,40 @@ function registerIpc(): void {
       launch: dshManager.describeLaunch(),
       env,
       userData: app.getPath('userData'),
-      theme: themeInfo()
-    }
-  })
+      theme: themeInfo(),
+    };
+  });
 
   ipcMain.handle('theme:set', (_event: IpcMainInvokeEvent, mode: unknown): ThemeInfo => {
-    const next = applyThemeSource(mode)
-    settings.patch({ themeMode: next })
+    const next = applyThemeSource(mode);
+    settings.patch({ themeMode: next });
     dshManager.log(
       'info',
-      `界面主题：${next}${next === 'system' ? `（当前为${nativeTheme.shouldUseDarkColors ? '深色' : '亮色'}）` : ''}`
-    )
-    return broadcastTheme()
-  })
+      `界面主题：${next}${next === 'system' ? `（当前为${nativeTheme.shouldUseDarkColors ? '深色' : '亮色'}）` : ''}`,
+    );
+    return broadcastTheme();
+  });
 
   ipcMain.handle(
     'settings:patch',
     (_event: IpcMainInvokeEvent, patch: SettingsPatch): SettingsValues => {
-      const next = settings.patch(patch)
+      const next = settings.patch(patch);
       // 设置页里也能改主题，保持与工具栏开关一致
-      if (patch && 'themeMode' in patch) applyThemeSource(next.themeMode)
-      dshManager.syncSettings()
-      dshManager.log('info', '设置已保存')
-      broadcastTheme()
-      return next
-    }
-  )
+      if (patch && 'themeMode' in patch) applyThemeSource(next.themeMode);
+      dshManager.syncSettings();
+      dshManager.log('info', '设置已保存');
+      broadcastTheme();
+      return next;
+    },
+  );
 
   ipcMain.handle('dsh:start', async (): Promise<DshActionResult> => {
     try {
-      return { ok: true, state: await dshManager.start({ allowAdopt: true }) }
+      return { ok: true, state: await dshManager.start({ allowAdopt: true }) };
     } catch (error) {
-      return { ok: false, error: messageOf(error), state: dshManager.snapshot() }
+      return { ok: false, error: messageOf(error), state: dshManager.snapshot() };
     }
-  })
+  });
 
   ipcMain.handle(
     'dsh:stop',
@@ -625,49 +625,49 @@ function registerIpc(): void {
           ok: true,
           state: await dshManager.stop({
             force: Boolean(options?.force),
-            killExternal: Boolean(options?.killExternal)
-          })
-        }
+            killExternal: Boolean(options?.killExternal),
+          }),
+        };
       } catch (error) {
-        return { ok: false, error: messageOf(error), state: dshManager.snapshot() }
+        return { ok: false, error: messageOf(error), state: dshManager.snapshot() };
       }
-    }
-  )
+    },
+  );
 
   ipcMain.handle('dsh:restart', async (): Promise<DshActionResult> => {
     try {
-      return { ok: true, state: await dshManager.restart() }
+      return { ok: true, state: await dshManager.restart() };
     } catch (error) {
-      return { ok: false, error: messageOf(error), state: dshManager.snapshot() }
+      return { ok: false, error: messageOf(error), state: dshManager.snapshot() };
     }
-  })
+  });
 
   ipcMain.handle('dsh:input', (_event: IpcMainInvokeEvent, data: unknown): boolean => {
-    dshManager.write(String(data ?? ''))
-    return true
-  })
+    dshManager.write(String(data ?? ''));
+    return true;
+  });
 
   ipcMain.handle(
     'dsh:resize',
     (_event: IpcMainInvokeEvent, size?: { cols?: number; rows?: number }): boolean => {
-      dshManager.resize(Number(size?.cols), Number(size?.rows))
-      return true
-    }
-  )
+      dshManager.resize(Number(size?.cols), Number(size?.rows));
+      return true;
+    },
+  );
 
-  ipcMain.handle('dsh:replay', (): string => dshManager.replay())
+  ipcMain.handle('dsh:replay', (): string => dshManager.replay());
 
   ipcMain.handle(
     'shell:create',
     (_event: IpcMainInvokeEvent, size?: { cols?: number; rows?: number }): CreateShellResult => {
-      const id = `shell-${++shellCounter}`
-      const target = processUtils.resolveShell(settings.all())
-      const cwd = String(settings.get('cwd') || '') || processUtils.homeDir()
+      const id = `shell-${++shellCounter}`;
+      const target = processUtils.resolveShell(settings.all());
+      const cwd = String(settings.get('cwd') || '') || processUtils.homeDir();
       // 标题由主进程持有（渲染层只显示），可以重命名；它只活在本次运行里 ——
       // 本地 Shell 不做任何持久化，下次启动就是全新的一页。
-      const label = `Shell ${shellCounter}`
-      const cols = Number(size?.cols) || 120
-      const rows = Number(size?.rows) || 30
+      const label = `Shell ${shellCounter}`;
+      const cols = Number(size?.cols) || 120;
+      const rows = Number(size?.rows) || 30;
       try {
         ptySessions.create({
           id,
@@ -678,65 +678,65 @@ function registerIpc(): void {
           rows,
           // 行列也带给渲染层：界面重载后重新接上时按同样尺寸建立，
           // 第一次 fit 就是空操作，不会白触发一次 PTY resize
-          meta: { kind: 'shell', label, command: target.display, cwd, cols, rows }
-        })
-        extraSessions.add(id)
-        return { ok: true, id, label, command: target.display }
+          meta: { kind: 'shell', label, command: target.display, cwd, cols, rows },
+        });
+        extraSessions.add(id);
+        return { ok: true, id, label, command: target.display };
       } catch (error) {
-        return { ok: false, error: messageOf(error) }
+        return { ok: false, error: messageOf(error) };
       }
-    }
-  )
+    },
+  );
 
   ipcMain.handle(
     'session:input',
     (_event: IpcMainInvokeEvent, payload?: { id?: string; data?: string }): boolean => {
-      ptySessions.write(String(payload?.id), String(payload?.data ?? ''))
-      return true
-    }
-  )
+      ptySessions.write(String(payload?.id), String(payload?.data ?? ''));
+      return true;
+    },
+  );
 
   ipcMain.handle(
     'session:resize',
     (
       _event: IpcMainInvokeEvent,
-      payload?: { id?: string; cols?: number; rows?: number }
+      payload?: { id?: string; cols?: number; rows?: number },
     ): boolean => {
-      ptySessions.resize(String(payload?.id), Number(payload?.cols), Number(payload?.rows))
-      return true
-    }
-  )
+      ptySessions.resize(String(payload?.id), Number(payload?.cols), Number(payload?.rows));
+      return true;
+    },
+  );
 
   ipcMain.handle('session:kill', (_event: IpcMainInvokeEvent, id: unknown): boolean => {
-    const killed = ptySessions.kill(String(id), true)
-    extraSessions.delete(String(id))
-    return killed
-  })
+    const killed = ptySessions.kill(String(id), true);
+    extraSessions.delete(String(id));
+    return killed;
+  });
 
   /** 重命名本地 Shell 的标题：只活在本次运行里（终端标题由主进程持有，渲染层只显示） */
   ipcMain.handle(
     'session:rename',
     (
       _event: IpcMainInvokeEvent,
-      payload?: { id?: string; label?: string }
+      payload?: { id?: string; label?: string },
     ): RenameSessionResult => {
-      const id = String(payload?.id || '')
+      const id = String(payload?.id || '');
       const label = String(payload?.label || '')
         .trim()
-        .slice(0, 40)
-      if (!id || !label) return { ok: false, error: '名字不能为空' }
-      ptySessions.rename(id, label)
-      return { ok: true, id, label }
-    }
-  )
+        .slice(0, 40);
+      if (!id || !label) return { ok: false, error: '名字不能为空' };
+      ptySessions.rename(id, label);
+      return { ok: true, id, label };
+    },
+  );
 
   ipcMain.handle('app:openExternal', async (_event: IpcMainInvokeEvent, url?: string) => {
-    const target = url || dshManager.uiUrl || dshManager.origin
-    await shell.openExternal(target)
-    return target
-  })
+    const target = url || dshManager.uiUrl || dshManager.origin;
+    await shell.openExternal(target);
+    return target;
+  });
 
-  ipcMain.handle('app:revealUserData', () => shell.openPath(app.getPath('userData')))
+  ipcMain.handle('app:revealUserData', () => shell.openPath(app.getPath('userData')));
 
   ipcMain.handle('app:confirm', async (_event: IpcMainInvokeEvent, payload?: ConfirmRequest) => {
     const options: MessageBoxOptions = {
@@ -746,15 +746,15 @@ function registerIpc(): void {
       cancelId: 0,
       title: payload?.title || '确认',
       message: payload?.message || '',
-      detail: payload?.detail || ''
-    }
+      detail: payload?.detail || '',
+    };
     // 窗口可能已经关了：那时退化成不带父窗口的对话框（原来的写法也是这么兜的）
     const result =
       mainWindow && !mainWindow.isDestroyed()
         ? await dialog.showMessageBox(mainWindow, options)
-        : await dialog.showMessageBox(options)
-    return result.response === 1
-  })
+        : await dialog.showMessageBox(options);
+    return result.response === 1;
+  });
 
   // ---------------------------------------------------------------- 归档会话
   // 这些操作直接读写 DSH 磁盘数据；正在运行的 dsh 会把 workspace.json 读进内存，
@@ -766,20 +766,20 @@ function registerIpc(): void {
         ok: true,
         ...archiveManager.homeInfo(),
         dshRunning: dshManager.sessionAlive,
-        sessions: archiveManager.list()
-      }
+        sessions: archiveManager.list(),
+      };
     } catch (error) {
-      return { ok: false, error: messageOf(error) }
+      return { ok: false, error: messageOf(error) };
     }
-  })
+  });
 
   ipcMain.handle('archive:read', (_event: IpcMainInvokeEvent, id: unknown): ArchiveReadResult => {
     try {
-      return { ok: true, session: archiveManager.read(String(id)) }
+      return { ok: true, session: archiveManager.read(String(id)) };
     } catch (error) {
-      return { ok: false, error: messageOf(error) }
+      return { ok: false, error: messageOf(error) };
     }
-  })
+  });
 
   ipcMain.handle(
     'archive:unarchive',
@@ -788,13 +788,13 @@ function registerIpc(): void {
         return {
           ok: true,
           dshRunning: dshManager.sessionAlive,
-          ...archiveManager.unarchive(String(id))
-        }
+          ...archiveManager.unarchive(String(id)),
+        };
       } catch (error) {
-        return { ok: false, error: messageOf(error) }
+        return { ok: false, error: messageOf(error) };
       }
-    }
-  )
+    },
+  );
 
   ipcMain.handle(
     'archive:remove',
@@ -803,35 +803,35 @@ function registerIpc(): void {
         return {
           ok: true,
           dshRunning: dshManager.sessionAlive,
-          ...archiveManager.remove(String(id))
-        }
+          ...archiveManager.remove(String(id)),
+        };
       } catch (error) {
-        return { ok: false, error: messageOf(error) }
+        return { ok: false, error: messageOf(error) };
       }
-    }
-  )
+    },
+  );
 }
 
 function wireManagerEvents(): void {
-  dshManager.on('state', (snapshot) => sendToRenderer('dsh:state', snapshot))
-  dshManager.on('output', (payload: DshOutputEvent) => sendToRenderer('dsh:output', payload))
-  dshManager.on('log', (entry: DshLogEntry) => sendToRenderer('dsh:log', entry))
-  dshManager.on('ui-url', (url: string) => sendToRenderer('dsh:ui-url', url))
+  dshManager.on('state', (snapshot) => sendToRenderer('dsh:state', snapshot));
+  dshManager.on('output', (payload: DshOutputEvent) => sendToRenderer('dsh:output', payload));
+  dshManager.on('log', (entry: DshLogEntry) => sendToRenderer('dsh:log', entry));
+  dshManager.on('ui-url', (url: string) => sendToRenderer('dsh:ui-url', url));
 
   ptySessions.on('data', (event: SessionOutputEvent) => {
-    if (event.id === dshManager.sessionId) return // dsh 输出走 dsh:output
-    sendToRenderer('session:output', event)
-  })
+    if (event.id === dshManager.sessionId) return; // dsh 输出走 dsh:output
+    sendToRenderer('session:output', event);
+  });
   ptySessions.on('exit', (event: SessionExitEvent) => {
     if (event.id === dshManager.sessionId) {
       // dsh 自己的退出也要告诉渲染层，否则终端里看不到任何收尾信息
-      const payload: DshExitEvent = { exitCode: event.exitCode, signal: event.signal }
-      sendToRenderer('dsh:exit', payload)
-      return
+      const payload: DshExitEvent = { exitCode: event.exitCode, signal: event.signal };
+      sendToRenderer('dsh:exit', payload);
+      return;
     }
-    extraSessions.delete(event.id)
-    sendToRenderer('session:exit', event)
-  })
+    extraSessions.delete(event.id);
+    sendToRenderer('session:exit', event);
+  });
 }
 
 /**
@@ -845,7 +845,7 @@ function wireManagerEvents(): void {
  */
 function dropLegacySessionFile(): void {
   try {
-    fs.rmSync(path.join(app.getPath('userData'), 'shell-sessions.json'), { force: true })
+    fs.rmSync(path.join(app.getPath('userData'), 'shell-sessions.json'), { force: true });
   } catch {
     // 删不掉也无所谓：没人再读它
   }
@@ -853,110 +853,110 @@ function dropLegacySessionFile(): void {
 
 /** 统一的"把 unknown 错误取成消息" */
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function bootstrap(): Promise<void> {
-  settings = new Settings(path.join(app.getPath('userData'), 'settings.json'))
+  settings = new Settings(path.join(app.getPath('userData'), 'settings.json'));
   // UA 要在任何请求发出之前定好：内嵌页首次导航也吃这个默认值
   // （以前是在 did-attach-webview 里改，可能晚于第一次请求）
-  app.userAgentFallback = cleanedUserAgent(app.userAgentFallback)
+  app.userAgentFallback = cleanedUserAgent(app.userAgentFallback);
   // 主题要在建窗口之前生效，否则会先按旧主题渲染一帧
-  applyThemeSource(settings.get('themeMode'))
+  applyThemeSource(settings.get('themeMode'));
   nativeTheme.on('updated', () => {
     // system 模式下系统切换明暗时，把新结果推给渲染层
-    const info = broadcastTheme()
+    const info = broadcastTheme();
     if (dshManager)
-      dshManager.log('info', `系统主题变化 → ${info.resolved === 'dark' ? '深色' : '亮色'}`)
-  })
+      dshManager.log('info', `系统主题变化 → ${info.resolved === 'dark' ? '深色' : '亮色'}`);
+  });
 
-  ptySessions = new PtySessions()
-  dshManager = new DshManager({ settings, ptySessions })
-  archiveManager = new SessionArchiveManager()
-  wireManagerEvents()
-  dropLegacySessionFile()
+  ptySessions = new PtySessions();
+  dshManager = new DshManager({ settings, ptySessions });
+  archiveManager = new SessionArchiveManager();
+  wireManagerEvents();
+  dropLegacySessionFile();
 
-  createWindow()
-  registerIpc()
-  wireEmbeddedRequestDiagnostics()
-  watchRendererForDevReload()
+  createWindow();
+  registerIpc();
+  wireEmbeddedRequestDiagnostics();
+  watchRendererForDevReload();
 
-  const theme = themeInfo()
-  dshManager.startPolling()
+  const theme = themeInfo();
+  dshManager.startPolling();
   dshManager.log(
     'info',
-    `DSH Console 已启动（Electron ${process.versions.electron} / Node ${process.versions.node}）`
-  )
-  dshManager.log('info', `内嵌页 UA：${app.userAgentFallback}`)
+    `DSH Console 已启动（Electron ${process.versions.electron} / Node ${process.versions.node}）`,
+  );
+  dshManager.log('info', `内嵌页 UA：${app.userAgentFallback}`);
   dshManager.log(
     'info',
-    `界面主题：${theme.mode}（当前为${theme.resolved === 'dark' ? '深色' : '亮色'}）`
-  )
+    `界面主题：${theme.mode}（当前为${theme.resolved === 'dark' ? '深色' : '亮色'}）`,
+  );
   if (settings.migration) {
     dshManager.log(
       'info',
-      `设置已从 v${settings.migration.from} 迁移到 v${settings.migration.to}：启动行为改为「自动拉起 dsh + 自动进 DeepSeek Harness + 自动全屏」`
-    )
+      `设置已从 v${settings.migration.from} 迁移到 v${settings.migration.to}：启动行为改为「自动拉起 dsh + 自动进 DeepSeek Harness + 自动全屏」`,
+    );
   }
 
-  const launch = dshManager.describeLaunch()
+  const launch = dshManager.describeLaunch();
   if (launch.kind === 'error') {
-    dshManager.log('error', `未找到可用的 dsh 命令：${launch.error}`)
+    dshManager.log('error', `未找到可用的 dsh 命令：${launch.error}`);
   } else {
-    dshManager.log('info', `dsh 启动命令: ${launch.display}`)
+    dshManager.log('info', `dsh 启动命令: ${launch.display}`);
   }
 
   if (settings.get('autoStart')) {
     try {
-      await dshManager.start({ allowAdopt: true })
+      await dshManager.start({ allowAdopt: true });
     } catch (error) {
-      dshManager.log('error', `自动启动失败：${messageOf(error)}`)
+      dshManager.log('error', `自动启动失败：${messageOf(error)}`);
     }
   }
 }
 
 // 单实例：第二次启动只聚焦已有窗口
-const gotLock = app.requestSingleInstanceLock()
+const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  app.quit()
+  app.quit();
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
     }
-  })
+  });
 
-  installApplicationMenu()
+  installApplicationMenu();
 
   app.whenReady().then(() => {
-    console.log(`[main] 日志文件: ${fileLog.file}`)
-    applyDockIcon()
-    void bootstrap()
+    console.log(`[main] 日志文件: ${fileLog.file}`);
+    applyDockIcon();
+    void bootstrap();
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    })
-  })
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
 
   app.on('window-all-closed', () => {
     // macOS 惯例：关掉窗口后应用留在 Dock 里，点图标由 activate 重建窗口；
     // 其它平台保持"窗口全关即退出"。
-    if (!isMac) app.quit()
-  })
+    if (!isMac) app.quit();
+  });
 
   // 退出前收尾：按设置决定是否连带停掉 dsh
   app.on('before-quit', () => {
-    if (!settings || !dshManager) return
-    const killOnExit = settings.get('killOnExit')
+    if (!settings || !dshManager) return;
+    const killOnExit = settings.get('killOnExit');
     if (killOnExit && dshManager.ownProcess) {
-      const pid = dshManager.ownedPid
-      dshManager.log('info', `应用退出：停止本应用启动的 dsh${pid ? ` (PID ${pid})` : ''}`)
+      const pid = dshManager.ownedPid;
+      dshManager.log('info', `应用退出：停止本应用启动的 dsh${pid ? ` (PID ${pid})` : ''}`);
       // PID 可能还没就绪（PTY 异步）：那时至少把 pty 子进程杀掉
-      if (pid) processUtils.killTreeSync(pid)
-      else if (ptySessions) ptySessions.kill(dshManager.sessionId, true)
+      if (pid) processUtils.killTreeSync(pid);
+      else if (ptySessions) ptySessions.kill(dshManager.sessionId, true);
     }
-    if (ptySessions) ptySessions.killAll()
-    dshManager.stopPolling()
-    fileLog.close()
-  })
+    if (ptySessions) ptySessions.killAll();
+    dshManager.stopPolling();
+    fileLog.close();
+  });
 }
