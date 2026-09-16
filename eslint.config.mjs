@@ -4,8 +4,6 @@ import prettier from 'eslint-config-prettier';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-/** 主进程 / preload / 自检：Node 的 CommonJS（迁移期 .js 与 .ts 并存） */
-const nodeCjsFiles = ['src/main/**/*.js', 'src/preload/**/*.js', 'test/**/*.js'];
 /** 主进程 / preload / 共享类型：Node，源码写 ESM 语法、由 tsc 编译成 CJS */
 const nodeTsFiles = [
   'src/main/**/*.ts',
@@ -13,7 +11,7 @@ const nodeTsFiles = [
   'src/shared/**/*.ts',
   'test/**/*.ts',
 ];
-/** 所有 TS 文件：TS 规则集只该作用在这些文件上（否则 .js 里的 require() 会被 no-require-imports 误报） */
+/** 所有 TS 文件：TS 规则集只作用于这些文件（.vue 的模板与脚本、.mjs 的配置文件各有自己的解析器） */
 const tsFiles = ['**/*.{ts,tsx,mts,cts}'];
 /** 构建脚本与工具：Node 的 ESM（.mjs 是纯 JS；.mts 由 tsx / Vite 直接执行） */
 const mjsFiles = [
@@ -44,18 +42,11 @@ export default [
   js.configs.recommended,
   // TS 规则集（只作用于 .ts/.tsx/.mts/.cts）。这里刻意先用**不带类型信息**的那套：
   // recommendedTypeChecked 需要 parserOptions.projectService 与全量类型信息，lint 会明显变慢，
-  // 而且会在迁移期一次性涌入大量 no-unsafe-* / no-floating-promises。等 TS 迁移收尾后
-  // 可以作为独立一步打开（那时改动面小、也容易 review）。
+  // 打开它会一次性涌入大量 no-unsafe-* / no-floating-promises。那应该是独立的一步
+  // （改动面大、需要单独 review），不要顺手一起开。
   ...tseslint.configs.recommended.map((config) => ({ ...config, files: tsFiles })),
   ...pluginVue.configs['flat/recommended'],
 
-  {
-    files: nodeCjsFiles,
-    languageOptions: {
-      sourceType: 'commonjs',
-      globals: { ...globals.node },
-    },
-  },
   {
     files: nodeTsFiles,
     languageOptions: {
