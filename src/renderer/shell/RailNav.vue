@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 左侧导航（外壳的一部分）。
  *
@@ -17,11 +17,18 @@ import {
   phaseInfo,
   settings,
   setThemeMode,
-  snapshot
+  snapshot,
+  type TabId
 } from '../lib/store.js'
 import { formatUptime } from '../lib/format.js'
 
-const TABS = [
+interface NavTab {
+  id: TabId
+  icon: string
+  label: string
+}
+
+const TABS: NavTab[] = [
   { id: 'dashboard', icon: 'i-gauge', label: '控制台' },
   { id: 'terminal', icon: 'i-terminal', label: 'dsh 终端' },
   { id: 'shell', icon: 'i-shell', label: '本地 Shell' },
@@ -38,7 +45,7 @@ const themeMode = computed(
 const owned = computed(() => Boolean(dsh.value?.owned))
 
 /** 切页：只改共享状态，"那几页自己的副作用"由各页与 app.js 的 watch 处理 */
-function selectTab(id) {
+function selectTab(id: TabId): void {
   currentTab.value = id
 }
 

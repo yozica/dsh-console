@@ -11,13 +11,21 @@
  * 终端永远停在默认的 80×24（踩过：容器 966×723，终端却一直只画 572×432）。
  */
 
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ITerminalOptions } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+
 import { isAppModifier, isMac } from './platform.js'
+import type { ResolvedTheme } from '../../shared/ipc'
+
+/** 一个终端实例 + 它的 fit addon（页面自己保管，卸载时 dispose） */
+export interface TerminalEntry {
+  term: Terminal
+  fit: FitAddon
+}
 
 /** 终端配色，与 styles.css 的两套主题对应 */
-export const TERM_THEMES = {
+export const TERM_THEMES: Record<ResolvedTheme, Record<string, string>> = {
   dark: {
     background: '#0b0e13',
     foreground: '#e6e9ef',
@@ -53,13 +61,13 @@ export const TERM_THEMES = {
  * 用系统自带等宽字体最稳（避免随包分发的 webfont 迟到导致列宽算错），
  * 中日韩文字另外挂一个系统的中文兜底，否则 dsh 的中文输出会退化成方框。
  */
-function monoStack() {
+function monoStack(): string {
   return isMac.value
     ? 'Menlo, Monaco, "SF Mono", "PingFang SC", "IBM Plex Mono", monospace'
     : 'Consolas, "Cascadia Mono", "Microsoft YaHei", "IBM Plex Mono", monospace'
 }
 
-export function terminalOptions(resolved) {
+export function terminalOptions(resolved: ResolvedTheme): ITerminalOptions {
   return {
     fontFamily: monoStack(),
     fontSize: 13,
@@ -78,7 +86,10 @@ export function terminalOptions(resolved) {
  * 底色一致，否则会看到"终端是一块、留白是另一块"。颜色只在 TERM_THEMES 里定义一次，
  * 这里把它交给 CSS（`var(--term-bg)` / `var(--term-fg)`），不在样式表里再抄一遍。
  */
-export function applyTerminalSurface(el, resolved) {
+export function applyTerminalSurface(
+  el: HTMLElement | null | undefined,
+  resolved: ResolvedTheme
+): void {
   if (!el) return
   const theme = TERM_THEMES[resolved] || TERM_THEMES.dark
   el.style.setProperty('--term-bg', theme.background)
@@ -86,7 +97,7 @@ export function applyTerminalSurface(el, resolved) {
 }
 
 /** 建一个终端实例并打开在 host 上，返回 { term, fit } */
-export function attachTerminal(host, resolved) {
+export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): TerminalEntry {
   applyTerminalSurface(host, resolved)
   const term = new Terminal(terminalOptions(resolved))
   const fit = new FitAddon()
@@ -104,12 +115,15 @@ export function attachTerminal(host, resolved) {
  * 症状是"在终端里只有 Ctrl+1 能切页，2~7 全都没反应"（Ctrl+1 恰好不在它的表里）。
  *
  * 用 xterm 的正式接口：处理函数返回 false = 终端不处理，事件继续冒泡给应用。
- * 修饰键按平台取（macOS 认 Cmd，其它平台认 Ctrl），与 app.js 的处理器保持一致。
+ * 修饰键按平台取（macOS 认 Cmd，其它平台认 Ctrl），与 app.ts 的处理器保持一致。
  * `includeReload` 用来决定 Ctrl+R / ⌘R 归谁：dsh 终端里输入本来就没用，交给应用重载；
  * 本地 Shell 里 Ctrl+R 是它自己的反向历史搜索，得留给 shell。
  */
-export function passAppShortcutsThrough(term, { includeReload = false } = {}) {
-  term.attachCustomKeyEventHandler((event) => {
+export function passAppShortcutsThrough(
+  term: Terminal,
+  { includeReload = false }: { includeReload?: boolean } = {}
+): void {
+  term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     if (event.type !== 'keydown') return true
     if (!isAppModifier(event) || event.shiftKey || event.altKey) return true
     if (/^[1-7]$/.test(event.key)) return false
@@ -122,7 +136,10 @@ export function passAppShortcutsThrough(term, { includeReload = false } = {}) {
  * 适应容器尺寸，并且只在行列数真的变了才通知主进程 ——
  * 拖动窗口时 ResizeObserver 会逐帧触发，不设这道闸就会刷爆 IPC。
  */
-export function fitAndSync(entry, send) {
+export function fitAndSync(
+  entry: TerminalEntry | null | undefined,
+  send: (cols: number, rows: number) => void
+): void {
   if (!entry?.fit) return
   const before = `${entry.term.cols}x${entry.term.rows}`
   try {

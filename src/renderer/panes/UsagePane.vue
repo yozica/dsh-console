@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * DeepSeek 用量页：一个浏览器视图，加载设置里的地址（默认开放平台用量页），
  * 用独立分区 `persist:deepseek` 保存登录态。本应用不读取页面内容。

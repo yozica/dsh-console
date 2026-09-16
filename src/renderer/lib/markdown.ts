@@ -11,12 +11,12 @@
  */
 
 /** 只允许 http / https / mailto 的链接目标，其余一律丢弃（保留文字，去掉链接） */
-function safeHref(url) {
+function safeHref(url: unknown): string {
   const value = String(url || '').trim()
   return /^(https?:\/\/|mailto:)/i.test(value) ? value : ''
 }
 
-function escapeHtml(text) {
+function escapeHtml(text: unknown): string {
   return String(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -29,31 +29,35 @@ function escapeHtml(text) {
  * 行内渲染：在已转义的文本上依次处理行内代码、链接/图片、删除线、粗体、斜体。
  * 行内代码与链接先用占位符取出，避免其内容被后面的粗斜体正则误伤。
  */
-function renderInline(text) {
-  const tokens = []
-  const stash = (html) => {
+function renderInline(input: string): string {
+  let text = input
+  const tokens: string[] = []
+  const stash = (html: string): string => {
     tokens.push(html)
     return `\u0000${tokens.length - 1}\u0000`
   }
 
   // 行内代码 `code`
-  text = text.replace(/`([^`]+)`/g, (_match, code) => stash(`<code>${code}</code>`))
+  text = text.replace(/`([^`]+)`/g, (_match, code: string) => stash(`<code>${code}</code>`))
 
   // 图片 ![alt](url)：这里只保留替代文字（应用是文本向的，且 CSP 不加载外链图片）
   // 注意：整段文本已经先转义过，URL 里的括号用平衡匹配，避免维基百科式 (x) 链接留下多余括号
   const LINK_URL = '((?:[^()\\s]+|\\([^()\\s]*\\))+)'
-  text = text.replace(new RegExp(`!\\[([^\\]]*)\\]\\(${LINK_URL}\\)`, 'g'), (_match, alt) =>
+  text = text.replace(new RegExp(`!\\[([^\\]]*)\\]\\(${LINK_URL}\\)`, 'g'), (_match, alt: string) =>
     stash(alt)
   )
 
   // 链接 [text](url)
-  text = text.replace(new RegExp(`\\[([^\\]]+)\\]\\(${LINK_URL}\\)`, 'g'), (_match, label, url) => {
-    const href = safeHref(url)
-    if (!href) return stash(label)
-    return stash(
-      `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
-    )
-  })
+  text = text.replace(
+    new RegExp(`\\[([^\\]]+)\\]\\(${LINK_URL}\\)`, 'g'),
+    (_match, label: string, url: string) => {
+      const href = safeHref(url)
+      if (!href) return stash(label)
+      return stash(
+        `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+      )
+    }
+  )
 
   // 删除线 ~~text~~
   text = text.replace(/~~([^~]+)~~/g, '<del>$1</del>')
@@ -65,24 +69,24 @@ function renderInline(text) {
   text = text.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*/g, '$1<em>$2</em>')
 
   // 恢复占位符
-  return text.replace(/\u0000(\d+)\u0000/g, (_match, index) => tokens[Number(index)] ?? '')
+  return text.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => tokens[Number(index)] ?? '')
 }
 
 /** 表格分隔行：每个单元格都是 --- / :--- / ---: 这类 */
-function isTableSeparator(line) {
+function isTableSeparator(line: string): boolean {
   if (!line.startsWith('|')) return false
   const cells = splitTableRow(line)
   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))
 }
 
-function splitTableRow(line) {
+function splitTableRow(line: string): string[] {
   let value = line.trim()
   if (value.startsWith('|')) value = value.slice(1)
   if (value.endsWith('|')) value = value.slice(0, -1)
   return value.split('|')
 }
 
-function renderTable(lines) {
+function renderTable(lines: string[]): string {
   const header = splitTableRow(lines[0]).map((cell) => cell.trim())
   const rows = lines.slice(1).map((line) => splitTableRow(line).map((cell) => cell.trim()))
   const head = header.map((cell) => `<th>${renderInline(cell)}</th>`).join('')
@@ -93,7 +97,7 @@ function renderTable(lines) {
 }
 
 /** 一个块级起点的判定：段落收集遇到这些就停下 */
-function isBlockStart(line) {
+function isBlockStart(line: string): boolean {
   if (/^\u0001\d+\u0001$/.test(line)) return true // 代码块占位符
   if (/^#{1,6}\s+/.test(line)) return true
   if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) return true
@@ -103,21 +107,24 @@ function isBlockStart(line) {
   return false
 }
 
-export function renderMarkdown(source) {
+export function renderMarkdown(source: unknown): string {
   if (source == null) return ''
   const text = escapeHtml(String(source).replace(/\r\n?/g, '\n'))
 
   // 先抽出围栏代码块，内容整体转义后原样放进 <pre><code>
-  const codeBlocks = []
-  const withoutCode = text.replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
-    const info = lang.trim()
-    const label = info ? ` data-lang="${info}"` : ''
-    codeBlocks.push(`<pre><code${label}>${code.trim()}</code></pre>`)
-    return `\u0001${codeBlocks.length - 1}\u0001`
-  })
+  const codeBlocks: string[] = []
+  const withoutCode = text.replace(
+    /```([^\n`]*)\n?([\s\S]*?)```/g,
+    (_match, lang: string, code: string) => {
+      const info = lang.trim()
+      const label = info ? ` data-lang="${info}"` : ''
+      codeBlocks.push(`<pre><code${label}>${code.trim()}</code></pre>`)
+      return `\u0001${codeBlocks.length - 1}\u0001`
+    }
+  )
 
   const lines = withoutCode.split('\n')
-  const blocks = []
+  const blocks: string[] = []
   let index = 0
 
   while (index < lines.length) {
@@ -154,7 +161,7 @@ export function renderMarkdown(source) {
 
     // 引用（> 已被转义成 &gt;）
     if (line.startsWith('&gt;')) {
-      const quote = []
+      const quote: string[] = []
       while (index < lines.length && lines[index].trim().startsWith('&gt;')) {
         quote.push(lines[index].trim().replace(/^&gt;\s?/, ''))
         index++
@@ -185,7 +192,7 @@ export function renderMarkdown(source) {
     const listMatch = /^([-*+]\s+|\d+\.\s+)/.exec(line)
     if (listMatch) {
       const ordered = /^\d+\.\s+/.test(line)
-      const items = []
+      const items: string[] = []
       while (index < lines.length) {
         const current = lines[index].trim()
         const itemMatch = ordered ? /^\d+\.\s+(.*)$/.exec(current) : /^[-*+]\s+(.*)$/.exec(current)
@@ -217,5 +224,5 @@ export function renderMarkdown(source) {
   // 恢复代码块占位符
   return blocks
     .join('\n')
-    .replace(/\u0001(\d+)\u0001/g, (_match, idx) => codeBlocks[Number(idx)] ?? '')
+    .replace(/\u0001(\d+)\u0001/g, (_match, idx: string) => codeBlocks[Number(idx)] ?? '')
 }

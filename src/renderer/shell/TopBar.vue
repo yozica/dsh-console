@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 顶栏（同时是窗口标题栏，见 README「关于应用内全屏与标题栏」）。
  *

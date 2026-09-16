@@ -6,10 +6,10 @@
  * 这条快捷键把整棵树打进 console，而渲染层的 console 会转发到主进程日志文件，
  * 于是**排查的一方（人或 agent）可以直接读那个文件**，不必反复要截图。
  *
- * 另外 F12 / Ctrl+Shift+I（macOS 上 ⌘⌥I）由主进程处理（见 main.js 的 wireDevTools），
+ * 另外 F12 / Ctrl+Shift+I（macOS 上 ⌘⌥I）由主进程处理（见 src/main/main.ts 的 wireDevTools），
  * 那是真正的开发者工具；这里只是"一键导出结构"的轻量版。
  *
- * 只在开发态安装：打包后 main.js 不会调 installDevDiagnostics()。
+ * 只在开发态安装：打包后 index 入口不会调 installDevDiagnostics()。
  */
 
 import { isAppModifier, shortcutLabel } from './lib/platform.js'
@@ -23,11 +23,11 @@ const MAX_LINES = 600
  *   - 列表项（事件日志最多 250 条、形状完全一样，会把 600 行的预算吃光，
  *     结果还没走到要看的那一页就截断了）
  */
-function skip(el) {
+function skip(el: Element): boolean {
   return el.classList?.contains('sprite') || el.tagName === 'LI'
 }
 
-function describe(el) {
+function describe(el: Element): string {
   const rect = el.getBoundingClientRect()
   const style = getComputedStyle(el)
   const id = el.id ? `#${el.id}` : ''
@@ -45,14 +45,14 @@ function describe(el) {
 }
 
 /** 当前可见的是哪一页：以 .pane.active 为准（body[data-page] 可能是陈旧值，会误导） */
-function activePage() {
+function activePage(): string {
   const active = document.querySelector('.pane.active')
   return active ? active.id.replace(/^pane-/, '') : '?'
 }
 
-function dumpDom() {
-  const lines = []
-  const walk = (el, depth) => {
+function dumpDom(): void {
+  const lines: string[] = []
+  const walk = (el: Element, depth: number): void => {
     if (lines.length >= MAX_LINES || depth > MAX_DEPTH || skip(el)) return
     lines.push(`${'  '.repeat(depth)}${describe(el)}`)
     for (const child of el.children) walk(child, depth + 1)
@@ -63,7 +63,7 @@ function dumpDom() {
 }
 
 /** 顺带把"当前状态"也打一行：界面不对时，往往先要确认状态对不对 */
-function dumpState() {
+function dumpState(): void {
   const panes = [...document.querySelectorAll('.pane')].map(
     (pane) => `${pane.id}${pane.classList.contains('active') ? '(active)' : ''}`
   )
@@ -74,7 +74,7 @@ function dumpState() {
   )
 }
 
-export function installDevDiagnostics() {
+export function installDevDiagnostics(): void {
   window.addEventListener('keydown', (event) => {
     if (!isAppModifier(event) || !event.shiftKey) return
     const key = String(event.key).toLowerCase()

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 底部状态栏。
  *
@@ -14,11 +14,12 @@ import { shortcutLabel } from '../lib/platform.js'
 const MESSAGE_MS = 6000
 
 const message = ref('')
-let timer = null
+let timer: ReturnType<typeof setTimeout> | null = null
 
-function onMessage(event) {
-  if (!event.detail) return
-  message.value = String(event.detail)
+function onMessage(event: Event): void {
+  const detail = (event as CustomEvent<string>).detail
+  if (!detail) return
+  message.value = String(detail)
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => (message.value = ''), MESSAGE_MS)
 }

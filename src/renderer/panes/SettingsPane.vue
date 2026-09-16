@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 设置页（第一个迁到 Vue 的页面）。
  *
@@ -12,6 +12,7 @@
  */
 import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { snapshot } from '../lib/store.js'
+import type { EnvInfo, SettingsValues } from '../../shared/ipc'
 
 const api = window.dshConsole
 
@@ -41,17 +42,21 @@ const busy = ref(false)
 const appVersion = ref('—')
 const packaged = ref(false)
 const runtime = reactive({ electron: '—', node: '—', chrome: '—' })
-let statusTimer = null
-let stopThemeWatch = null
+let statusTimer: ReturnType<typeof setTimeout> | null = null
+let stopThemeWatch: (() => void) | null = null
 
-function fill(settings) {
+function fill(values: Partial<SettingsValues>): void {
   for (const key of Object.keys(form)) {
-    if (settings[key] !== undefined) form[key] = settings[key]
+    const next = values[key as keyof SettingsValues]
+    if (next !== undefined) (form as Record<string, unknown>)[key] = next
   }
 }
 
 /** 数字输入留空会变成 ''/NaN，这时保留原值，别把配置写成 NaN */
-function normalize(patch, fallback) {
+function normalize(
+  patch: Record<string, unknown>,
+  fallback: Record<string, unknown>
+): Record<string, unknown> {
   for (const key of ['port', 'pollIntervalMs', 'startTimeoutMs', 'stopGraceMs']) {
     const value = Number(patch[key])
     patch[key] = Number.isFinite(value) ? value : fallback[key]
@@ -59,18 +64,18 @@ function normalize(patch, fallback) {
   return patch
 }
 
-function flash(message) {
+function flash(message: string): void {
   status.value = message
   if (statusTimer) clearTimeout(statusTimer)
   statusTimer = setTimeout(() => (status.value = ''), 4000)
 }
 
 /** 告诉还没迁移的 app.js：设置变了，请刷新快照并重绘 */
-function announce(settings) {
-  window.dispatchEvent(new CustomEvent('dsh:settings-changed', { detail: settings }))
+function announce(next: SettingsValues): void {
+  window.dispatchEvent(new CustomEvent('dsh:settings-changed', { detail: next }))
 }
 
-async function load() {
+async function load(): Promise<SettingsValues> {
   // 首屏读共享 store（外壳与其它页面读的是同一份）；「重新载入」按钮要的是最新值，
   // 所以这里照旧问主进程要一次完整快照。
   const fresh = await api.getSnapshot()
@@ -81,7 +86,7 @@ async function load() {
 }
 
 /** 版本信息：应用自身版本 + 运行时不变量 */
-function applyEnv(env) {
+function applyEnv(env?: EnvInfo): void {
   if (!env) return
   appVersion.value = env.app || '—'
   packaged.value = Boolean(env.packaged)

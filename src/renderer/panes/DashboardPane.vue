@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 控制台页（第二个迁到 Vue 的页面）。
  *

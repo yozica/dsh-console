@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * dsh 终端页。
  *

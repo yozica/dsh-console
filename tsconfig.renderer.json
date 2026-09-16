@@ -1,0 +1,24 @@
+{
+  "//": [
+    "渲染层：浏览器环境 + Vite 打包，所以解析方式与主进程那份（NodeNext/CJS）不同。",
+    "检查由 vue-tsc 负责（它才看得懂 .vue）；这里 noEmit，产物仍然由 Vite/esbuild 生成。",
+    "moduleResolution=bundler：允许不带扩展名的相对导入，也允许写 './x.js' 指向 './x.ts'。"
+  ],
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "noEmit": true,
+    "jsx": "preserve",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.d.ts",
+    "src/renderer/**/*.vue",
+    "src/shared/**/*.ts"
+  ]
+}

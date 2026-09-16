@@ -409,11 +409,11 @@ async function main() {
   const libSource = fs.existsSync(libDir)
     ? fs
         .readdirSync(libDir)
-        .filter((name) => name.endsWith('.js'))
+        .filter((name) => name.endsWith('.ts'))
         .map((name) => fs.readFileSync(path.join(libDir, name), 'utf8'))
         .join('\n')
     : ''
-  const rendererJs = `${fs.readFileSync(path.join(rendererDir, 'app.js'), 'utf8')}\n${libSource}`
+  const rendererJs = `${fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8')}\n${libSource}`
   const markup = `${html}\n${vueSource}` // 标记来源：静态 HTML + 已迁移的 .vue 模板
   const rendererAll = `${rendererJs}\n${vueSource}` // 渲染层脚本：app.js + lib/ + .vue
   // 只看代码，不看注释：注释里常拿 `getElementById('btn-xxx')` 这种示意写法举例，
@@ -466,7 +466,7 @@ async function main() {
   )
 
   // 每个组件都必须在 mount.js 的挂载清单里，否则界面上那块永远是空的
-  const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.js'), 'utf8')
+  const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8')
   const unmounted = vueFiles
     .filter(({ dir, name }) => {
       const stem = name.replace(/\.vue$/, '')
@@ -561,7 +561,7 @@ async function main() {
   //   2. 顶栏只在「应用内全屏（左栏被藏掉、顶栏变成最左列）」时才让白
   //   3. 顶栏在非全屏时**不能**有左内边距（否则页面标题被冤枉缩进 84px）
   //   4. 系统全屏（红绿灯自动隐藏）时把 1、2 都撤回
-  const platformJs = fs.readFileSync(path.join(rendererDir, 'lib', 'platform.js'), 'utf8')
+  const platformJs = fs.readFileSync(path.join(rendererDir, 'lib', 'platform.ts'), 'utf8')
   check(
     '渲染层：macOS 红绿灯留白给左栏（应用内全屏让白、系统全屏撤回、非全屏顶栏不缩进）',
     /html\[data-platform='darwin'\]\s*\.rail\s*\{[^}]*padding-top/.test(cssText) &&
@@ -584,7 +584,7 @@ async function main() {
 
   // macOS 适配的契约二：三处快捷键处理器都必须走平台修饰键
   // （mac 认 Cmd、其它平台认 Ctrl），不能各自写死 ctrlKey —— 写死的话 mac 上全部失灵。
-  const shortcutFiles = ['app.js', 'dev-diagnostics.js', path.join('lib', 'xterm.js')]
+  const shortcutFiles = ['app.ts', 'dev-diagnostics.ts', path.join('lib', 'xterm.ts')]
   const notPlatformAware = shortcutFiles.filter(
     (rel) => !fs.readFileSync(path.join(rendererDir, rel), 'utf8').includes('isAppModifier(')
   )
@@ -598,11 +598,11 @@ async function main() {
 
   // 依赖从"index.html 里的 script 标签"改成了模块导入（Vite 构建），
   // 所以要检查的是：入口被引入、入口导入了样式表、xterm 由 lib/xterm.js 直接用类导入。
-  const rendererEntry = fs.readFileSync(path.join(rendererDir, 'main.js'), 'utf8')
-  const xtermLib = fs.readFileSync(path.join(rendererDir, 'lib', 'xterm.js'), 'utf8')
+  const rendererEntry = fs.readFileSync(path.join(rendererDir, 'main.ts'), 'utf8')
+  const xtermLib = fs.readFileSync(path.join(rendererDir, 'lib', 'xterm.ts'), 'utf8')
   check(
     '渲染层：入口被引入，样式与 xterm 都有来源',
-    /<script type="module" src="\.\/main\.js"><\/script>/.test(html) &&
+    /<script type="module" src="\.\/main\.ts"><\/script>/.test(html) &&
       /import '\.\/styles\.css'/.test(rendererEntry) &&
       /from '@xterm\/xterm'/.test(xtermLib) &&
       /from '@xterm\/addon-fit'/.test(xtermLib)
@@ -785,7 +785,7 @@ async function main() {
 
   check(
     '主题：终端两套配色都在（xterm 不走 CSS）',
-    /TERM_THEMES\s*=\s*\{[\s\S]*?dark:\s*\{[\s\S]*?light:\s*\{/.test(rendererJs)
+    /TERM_THEMES[^=]*=\s*\{[\s\S]*?dark:\s*\{[\s\S]*?light:\s*\{/.test(rendererJs)
   )
   check('主题：设置里有 themeMode 默认值', DEFAULTS.themeMode === 'system')
   check(

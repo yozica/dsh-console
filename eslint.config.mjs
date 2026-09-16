@@ -85,9 +85,10 @@ export default [
     }
   },
 
-  // TS 文件用 TS 版的 no-unused-vars（基规则不认识类型标注，会误报）
+  // TS 文件用 TS 版的 no-unused-vars（基规则不认识类型标注，会把类型里的参数名
+  // 当成"未使用变量"误报 —— 渲染层的 lib/xterm.ts 就撞过这一条）
   {
-    files: nodeTsFiles,
+    files: tsFiles,
     rules: {
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [

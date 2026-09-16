@@ -3,14 +3,10 @@
  *
  * 顺序有讲究，别调换：
  *   1. xterm 自带的样式在前、我们的 styles.css 在后（同权重靠顺序决定谁生效）
- *   2. app.js 先求值（应用级胶水），再建立共享状态、挂载 Vue 组件
+ *   2. app.ts 先求值（应用级胶水），再建立共享状态、挂载 Vue 组件
  *
  * 入口刻意**不用动态 import**：那会切出第二个 chunk，跨 chunk 就必须用模块语法，
  * 而产物是给 file:// 用的普通脚本（见 vite.config.mjs 的 classicScriptPlugin）。
- *
- * 早先这里还有一个 `xterm-globals.js`（把 xterm 挂到 window 给老代码用）：
- * 全部迁到 Vue 之后它没了用途，而且那个写法本身有 bug（见 lib/xterm.js 的注释），
- * 已删除。
  */
 
 // 顺序要紧：xterm 自带的样式先加载，我们的 styles.css 最后 ——

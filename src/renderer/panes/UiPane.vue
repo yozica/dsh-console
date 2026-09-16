@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * DeepSeek Harness 页：把 DSH Web UI 用带令牌的地址内嵌进来。
  *

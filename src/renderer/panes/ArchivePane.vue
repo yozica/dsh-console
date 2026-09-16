@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 归档会话页：补上 DSH 官方缺的「查看 / 搜索 / 恢复 / 删除归档会话」。
  *

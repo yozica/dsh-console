@@ -3,7 +3,7 @@
  */
 
 /** 毫秒 → 「1 小时 2 分 3 秒」/「2 分 3 秒」/「3 秒」 */
-export function formatUptime(ms) {
+export function formatUptime(ms: number | null | undefined): string {
   if (!ms || ms < 0) return '—'
   const total = Math.floor(ms / 1000)
   const h = Math.floor(total / 3600)
@@ -15,7 +15,7 @@ export function formatUptime(ms) {
 }
 
 /** 把毫秒数说成人话：3000 → 「3 秒」（以前直接把 ms 当秒显示，成了「3000 秒」） */
-export function formatDurationMs(ms) {
+export function formatDurationMs(ms: unknown): string {
   const value = Number(ms)
   if (!Number.isFinite(value) || value <= 0) return '0 秒'
   if (value < 1000) return `${Math.round(value)} 毫秒`

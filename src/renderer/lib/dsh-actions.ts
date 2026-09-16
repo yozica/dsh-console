@@ -1,13 +1,18 @@
 /**
  * 需要"先确认再动手"的 dsh 操作。
  *
- * 这些流程有分支（外部实例要先征求同意、失败要报错），原先写在 app.js 里，
- * 现在控制台页（Vue）和 Harness 页（还没迁移）都要用，所以抽出来共用。
+ * 这些流程有分支（外部实例要先征求同意、失败要报错），原先写在 app.ts 里，
+ * 现在控制台页、Harness 页、归档页都要用，所以抽出来共用。
  * 依赖通过参数传入，模块本身不持有状态。
  */
 
+import type { DshConsoleApi, DshSnapshot } from '../../shared/ipc'
+
+/** 读取当前 dsh 状态的取值函数（各页传 `() => dsh.value` 这样进来） */
+type GetDsh = () => DshSnapshot | null
+
 /** 结束外部实例前先问一次：它会强制结束整棵进程树 */
-async function confirmKillExternal(api, dsh) {
+async function confirmKillExternal(api: DshConsoleApi, dsh: DshSnapshot): Promise<boolean> {
   return api.confirm({
     type: 'warning',
     title: '结束外部 dsh 实例',
@@ -17,7 +22,7 @@ async function confirmKillExternal(api, dsh) {
 }
 
 /** 「停止」：外部实例先确认再强杀；自家实例走优雅退出（Ctrl+C → 超时才强杀） */
-export async function stopFlow(api, getDsh) {
+export async function stopFlow(api: DshConsoleApi, getDsh: GetDsh): Promise<void> {
   const dsh = getDsh()
   if (!dsh?.owned && dsh?.externalPid) {
     if (!(await confirmKillExternal(api, dsh))) return
@@ -28,7 +33,7 @@ export async function stopFlow(api, getDsh) {
 }
 
 /** 「强制结束进程树」：跳过 Ctrl+C 的兜底手段，始终先确认 */
-export async function forceStopFlow(api) {
+export async function forceStopFlow(api: DshConsoleApi): Promise<void> {
   const ok = await api.confirm({
     type: 'warning',
     title: '强制结束',
@@ -43,7 +48,7 @@ export async function forceStopFlow(api) {
  * 重启。受管实例直接重启；外部实例要先征求同意再结束，然后由本应用拉起
  * —— 顺带把新的访问令牌捕获回来，内嵌界面才可用。
  */
-export async function restartFlow(api, getDsh) {
+export async function restartFlow(api: DshConsoleApi, getDsh: GetDsh): Promise<void> {
   const dsh = getDsh()
   if (!dsh?.owned && dsh?.externalPid) {
     const ok = await api.confirm({
@@ -66,7 +71,7 @@ export async function restartFlow(api, getDsh) {
  * 「在浏览器打开」。没有带令牌的地址时（外部实例）先说清后果再问一次：
  * 裸地址只在浏览器已存有登录 cookie 时可用。
  */
-export async function openUiExternally(api, getDsh) {
+export async function openUiExternally(api: DshConsoleApi, getDsh: GetDsh): Promise<void> {
   const dsh = getDsh()
   const url = dsh?.uiUrl
   if (!url) {
@@ -78,7 +83,7 @@ export async function openUiExternally(api, getDsh) {
         '裸地址在没登录过的浏览器里会返回 401。如果你之前已经在浏览器里打开过 dsh 打印的那条地址，浏览器已存有登录 cookie，直接打开裸地址通常也能进。要继续打开裸地址吗？'
     })
     if (!ok) return
-    await api.openExternal(`${dsh.origin}/`)
+    if (dsh) await api.openExternal(`${dsh.origin}/`)
     return
   }
   await api.openExternal(url)

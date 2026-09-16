@@ -1,20 +1,19 @@
-'use strict'
-
 /**
  * 渲染层剩下的"应用级胶水"：没有 DOM 归属、但需要一个地方待着的逻辑。
  *
- * 界面本身已经全部是 Vue 组件了（shell/ 是外壳，panes/ 是六个页面，lib/ 是共享状态与工具），
+ * 界面本身已经全部是 Vue 组件了（shell/ 是外壳，panes/ 是页面，lib/ 是共享状态与工具），
  * 这里只留四件事：
  *   1. 启动守卫（preload / xterm 没就绪时给一句能看懂的报错，而不是白屏）
  *   2. 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住界面，就绪后解锁
  *   3. 自动打开：dsh 就绪后按设置切到 Harness 页并进全屏
- *   4. 键盘快捷键：Ctrl+R / ⌘R 重载、Ctrl+1~6 / ⌘1~6 切页、Esc 退出全屏/跳过启动锁
+ *   4. 键盘快捷键：Ctrl+R / ⌘R 重载、Ctrl+1~7 / ⌘1~7 切页、Esc 退出全屏/跳过启动锁
  *
  * 它们都在"状态之上"而不是"界面之上"，所以不需要组件外壳；等启动锁也做成组件后，
  * 这里会只剩守卫与快捷键。
  */
 
 import { watch } from 'vue'
+
 import { phaseText } from './lib/phase-text.js'
 import { isAppModifier } from './lib/platform.js'
 import {
@@ -24,12 +23,14 @@ import {
   immersiveAutoEntered,
   settings,
   snapshot,
-  startStore
+  startStore,
+  type TabId
 } from './lib/store.js'
+import type { DshPhase } from '../shared/ipc'
 
 const api = window.dshConsole
 
-function showBootError(message) {
+function showBootError(message: string): void {
   const div = document.createElement('div')
   div.id = 'boot-error'
   div.textContent = `DSH Console 启动失败\n\n${message}`
@@ -37,12 +38,14 @@ function showBootError(message) {
 }
 
 if (!api) {
-  showBootError('preload 未注入：window.dshConsole 不存在。请检查 src/preload/preload.js 路径。')
+  showBootError(
+    'preload 未注入：window.dshConsole 不存在。请检查 src/preload/preload.ts 是否被编译到 dist/preload/。'
+  )
 } else {
   void main()
 }
 
-async function main() {
+async function main(): Promise<void> {
   await startStore()
   wireBootLock()
   wireAutoOpen()
@@ -60,7 +63,7 @@ async function main() {
  *
  * 之所以延迟一下：启动锁盖着整个界面（含状态栏），立刻说会被盖掉。
  */
-function announceUpdate() {
+function announceUpdate(): void {
   if (!snapshot.value?.env?.updated) return
   const version = snapshot.value.env.app || ''
   setTimeout(() => {
@@ -74,9 +77,9 @@ function announceUpdate() {
  * 全屏状态住在 store 里（顶栏的「退出全屏」、Harness 页的「全屏」按钮、Esc 都改它），
  * 但**真正让界面变全屏的是 CSS** —— 它认的是 body[data-immersive]。
  * 所以这里必须把这个属性同步出去，否则按钮改了状态、界面毫无反应
- * （踩过：重写 app.js 时漏了这一段，全屏整个失效）。
+ * （踩过：重写 app.ts 时漏了这一段，全屏整个失效）。
  */
-function wireImmersive() {
+function wireImmersive(): void {
   watch(
     immersive,
     (on) => {
@@ -92,10 +95,10 @@ function wireImmersive() {
  * 切页时把 active 类打到页面容器上（`.pane.active { visibility: visible }` 是
  * 这一页显示与否的唯一开关 —— 刻意不用 display:none，因为内嵌页需要常驻布局）。
  *
- * 页面容器目前还留在 index.html 里（六个 <section class="pane">），所以这段归属
+ * 页面容器目前还留在 index.html 里（七个 <section class="pane">），所以这段归属
  * "应用级胶水"。等它们也搬进一个根组件，这段就该由模板的 :class 直接表达。
  */
-function wirePaneVisibility() {
+function wirePaneVisibility(): void {
   watch(
     currentTab,
     (name) => {
@@ -119,30 +122,31 @@ function wirePaneVisibility() {
  * （例如用户手动退出全屏），锁就会重新扣上来 —— done 之后直接返回，杜绝这类回归。
  */
 const BOOT_LOCK_MAX_MS = 90000
-let bootLockState = 'idle'
+type BootLockState = 'idle' | 'waiting' | 'done'
+let bootLockState: BootLockState = 'idle'
 let bootLockDeadline = 0
 let bootLockStartedAt = 0
 
-function setBootLock(on) {
+function setBootLock(on: boolean): void {
   document.body.dataset.locked = on ? 'true' : 'false'
   document.getElementById('boot-lock')?.classList.toggle('hidden', !on)
 }
 
 /** 解锁是一次性的：走到 done 就再也不会重新上锁 */
-function releaseBootLock() {
+function releaseBootLock(): void {
   bootLockState = 'done'
   setBootLock(false)
 }
 
 /** 锁上的那几秒给个时间感：已等待几秒 + 接下来会自动发生什么 */
-function updateBootLockNote() {
+function updateBootLockNote(): void {
   if (bootLockState !== 'waiting') return
   const waited = Math.max(1, Math.round((Date.now() - bootLockStartedAt) / 1000))
   const note = document.getElementById('boot-note')
   if (note) note.textContent = `已等待 ${waited} 秒 · 就绪后自动打开 DeepSeek Harness 并进入全屏`
 }
 
-function updateBootLock(phase) {
+function updateBootLock(phase: DshPhase): void {
   if (bootLockState === 'done') return
 
   if (bootLockState === 'idle') {
@@ -161,7 +165,7 @@ function updateBootLock(phase) {
   // waiting：就绪 = dsh 跑起来了、该开的页面也开了
   // （自动全屏和"打开 Harness 页"是同一次流程里做的，所以不把全屏当解锁条件）
   const wantsUi = Boolean(settings.value.openUiOnStart)
-  const ready = phase === 'running' && (!wantsUi || uiAutoOpened)
+  const ready = phase === 'running' && (!wantsUi || harnessAutoOpened)
   const abnormal = ['stopped', 'degraded', 'conflict', 'external'].includes(phase)
   const timedOut = Date.now() > bootLockDeadline
 
@@ -173,7 +177,7 @@ function updateBootLock(phase) {
   if (desc) desc.textContent = phaseText(phase).desc || '正在拉起进程并等待健康检查'
 }
 
-function wireBootLock() {
+function wireBootLock(): void {
   document.getElementById('btn-boot-skip')?.addEventListener('click', () => releaseBootLock())
   setInterval(() => {
     updateBootLockNote()
@@ -189,19 +193,23 @@ function wireBootLock() {
 
 // ------------------------------------------------------------ 自动打开
 
-/** 启动时是否已经自动打开过 Harness 页 */
-let uiAutoOpened = false
+/**
+ * 启动时是否已经自动打开过 Harness 页。
+ * （注意：store 里也有一个同名的 ref，那是给组件读的"是否已自动打开"；这里是本模块内部
+ * 用来防重复触发的一次性开关，两者互不影响。）
+ */
+let harnessAutoOpened = false
 
 /**
  * dsh 就绪后按设置切到 Harness 页并进全屏 —— "打开应用直接开始用"。
  * 只在应用启动后发生一次（用户后来自己点「启动」不会把界面抢走）。
  */
-function wireAutoOpen() {
+function wireAutoOpen(): void {
   watch(
     () => dsh.value?.phase,
     (phase) => {
-      if (uiAutoOpened || phase !== 'running' || !settings.value.openUiOnStart) return
-      uiAutoOpened = true
+      if (harnessAutoOpened || phase !== 'running' || !settings.value.openUiOnStart) return
+      harnessAutoOpened = true
       if (currentTab.value !== 'ui') currentTab.value = 'ui'
       // 切页时 UiPane 已按设置进过一次全屏，这里只是兜住"本来就在该页"的情况
       if (!immersiveAutoEntered.value && settings.value.uiFullscreenOnStart) {
@@ -214,7 +222,10 @@ function wireAutoOpen() {
 
 // ------------------------------------------------------------ 快捷键
 
-function wireShortcuts() {
+/** 快捷键切页的顺序（1~7）——与左栏导航一致 */
+const TAB_ORDER: TabId[] = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'archive', 'settings']
+
+function wireShortcuts(): void {
   window.addEventListener('keydown', (event) => {
     // 启动锁期间键盘捷径也一并挡住 —— 锁的意义就是"别乱动"
     if (bootLockState === 'waiting') {
@@ -237,8 +248,7 @@ function wireShortcuts() {
       return
     }
     if (isAppModifier(event) && !event.shiftKey && /^[1-7]$/.test(event.key)) {
-      const order = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'archive', 'settings']
-      currentTab.value = order[Number(event.key) - 1]
+      currentTab.value = TAB_ORDER[Number(event.key) - 1]
       event.preventDefault()
     }
   })

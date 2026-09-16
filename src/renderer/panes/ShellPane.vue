@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 /**
  * 本地 Shell 页：另开 pwsh/powershell/cmd（macOS 上是 zsh/bash）会话用来手工排查，
  * 和 dsh 进程互不干扰。
