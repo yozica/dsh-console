@@ -29,7 +29,7 @@
 
 - **闸门**（PR 上跑，见 `.github/workflows/ci.yml`）：`npx changeset status --since=origin/main`
   —— 改了代码却没带片段就失败；
-- **汇总**（发版前跑）：`npm run release:prepare`
+- **汇总**（发版前跑）：`npm run release:prepare -- --topic "一句话主题"`（`--topic` 会成为 GitHub Release 标题里的 `v<版本>: <主题>`）
   —— 算出版本号、写进 `CHANGELOG.md`、改 `package.json` 的版本、删掉已汇总的片段；
   加 `--dry-run` 可以只看不改。
 

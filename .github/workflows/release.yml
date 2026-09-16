@@ -156,9 +156,12 @@ jobs:
       - name: 列出待发布文件
         run: ls -lh assets
 
-      # 正文 = CHANGELOG 里这一版的条目 + 一段固定的下载指引。
-      # 条目缺失或为空时提取脚本会非零退出，这一步直接失败 —— 宁可不发版，也不发一个空说明。
-      - name: 从 CHANGELOG 取出这一版的说明
+      # 标题与正文都由 tools/release-notes.mts 生成，模板不写在 CI 里：
+      #   标题 = `v<版本> —— <CHANGELOG 标题行里的主题>`
+      #   正文 = CHANGELOG 里这一版的条目 + 按**真实产物清单**生成的安装表
+      # 条目缺失、或四类核心产物（两个 exe、两个 dmg）不齐，都会非零退出 ——
+      # 宁可不发版，也不发一个空说明或"让用户去下、页面上却没有"的 Release。
+      - name: 生成 Release 的标题与正文
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -166,19 +169,12 @@ jobs:
           # 这个 job 没有 npm ci（只取产物 + 发 Release），所以用 npx --yes 现取一个 tsx：
           # --yes 是必须的，非 TTY 下没有它 npx 会拒绝安装。要让版本完全可控，就给本 job
           # 补 actions/setup-node + npm ci（代价是多下一次完整依赖，含 Electron 二进制）
-          npx --yes tsx tools/changelog-extract.mts "$TAG" > notes.md
-          cat >> notes.md <<'FOOTER'
-
-          ---
-
-          **下载**：Windows 用 `Setup` 安装包（推荐，装新版即原地覆盖，同目录同快捷方式、
-          设置与日志保留）或免安装的便携版；macOS 用 `arm64.dmg`（Apple 芯片）或 `.dmg`（Intel）。
-          每个安装包旁边还有对应的 `.zip` 免安装版。macOS 包是 **ad-hoc 签名**（没有开发者证书），
-          首次打开会被 Gatekeeper 拦下：**右键 →「打开」**，或到「系统设置 → 隐私与安全性」点「仍要打开」；
-          也可以直接去掉下载隔离属性：`xattr -dr com.apple.quarantine "/Applications/DSH Console.app"`。
-          FOOTER
+          ls -1 assets > assets.txt
+          npx --yes tsx tools/release-notes.mts "$TAG" --assets assets.txt --out .release
+          echo "---- 本次 Release 标题 ----"
+          cat .release/title.txt
           echo "---- 本次 Release 正文 ----"
-          cat notes.md
+          cat .release/notes.md
 
       # gh 是 runner 自带的；GH_REPO 显式指定，避免依赖"当前目录是个 git 仓库"
       - name: 创建草稿 Release 并上传产物
@@ -192,7 +188,7 @@ jobs:
             # 已存在（多半是重跑）：只补产物，正文不动 —— 免得覆盖掉人工改过的说明
             echo "Release $TAG 已存在：补传产物，正文保持不变"
           else
-            gh release create "$TAG" --draft --title "$TAG" --notes-file notes.md
+            gh release create "$TAG" --draft --title "$(cat .release/title.txt)" --notes-file .release/notes.md
           fi
           gh release upload "$TAG" assets/* --clobber
           echo "---- 传完后的资产清单 ----"

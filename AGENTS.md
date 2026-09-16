@@ -50,8 +50,8 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              七个页面组件
-test/selftest.ts        80 项自检（`npm test`），不需要 Electron
-tools/                  changelog-extract.mts / release-prepare.mts / make-icon.mts
+test/selftest.ts        86 项自检（`npm test`），不需要 Electron
+tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
 vite.config.mts         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
@@ -82,22 +82,22 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 
 ## 3. 命令一览
 
-| 命令                            | 作用                                                             |
-| ------------------------------- | ---------------------------------------------------------------- |
-| `npm run build`                 | `build:renderer` + `build:main`                                  |
-| `npm run build:renderer`        | `vite build`                                                     |
-| `npm run build:main`            | `tsc -p tsconfig.main.json`                                      |
-| `npm test`                      | `tsx test/selftest.ts`（80 项，不需要 Electron、不启停任何进程） |
-| `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                 |
-| `npm run lint:fix`              | 同上，顺带修可自动修的问题                                       |
-| `npm run format`                | Prettier 全量格式化                                              |
-| `npm run format:check`          | 只检查不改写                                                     |
-| `npm run typecheck`             | `typecheck:main` && `typecheck:renderer` && `typecheck:node`     |
-| `npm run changeset`             | = `changeset add`，加一个变更片段                                |
-| `npm run release:check`         | `changeset status --since=origin/main`，本地复现 PR 上的闸门     |
-| `npm run release:prepare`       | 汇总片段成 CHANGELOG 条目（见第 6 节），加 `--dry-run` 只看不改  |
-| `npm run pack:win` / `dist:win` | 只产出目录版 / 产出 NSIS + 便携版 exe                            |
-| `npm run pack:mac` / `dist:mac` | 只产出 .app / 产出 dmg + zip                                     |
+| 命令                            | 作用                                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------- |
+| `npm run build`                 | `build:renderer` + `build:main`                                                         |
+| `npm run build:renderer`        | `vite build`                                                                            |
+| `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
+| `npm test`                      | `tsx test/selftest.ts`（86 项，不需要 Electron、不启停任何进程）                        |
+| `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
+| `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
+| `npm run format`                | Prettier 全量格式化                                                                     |
+| `npm run format:check`          | 只检查不改写                                                                            |
+| `npm run typecheck`             | `typecheck:main` && `typecheck:renderer` && `typecheck:node`                            |
+| `npm run changeset`             | = `changeset add`，加一个变更片段                                                       |
+| `npm run release:check`         | `changeset status --since=origin/main`，本地复现 PR 上的闸门                            |
+| `npm run release:prepare`       | 汇总片段成 CHANGELOG 条目（见第 6 节）；`--topic` 写 Release 标题、`--dry-run` 只看不改 |
+| `npm run pack:win` / `dist:win` | 只产出目录版 / 产出 NSIS + 便携版 exe                                                   |
+| `npm run pack:mac` / `dist:mac` | 只产出 .app / 产出 dmg + zip                                                            |
 
 三份 tsconfig 各管什么：
 
@@ -142,7 +142,7 @@ npx changeset add                 # 交互式：选 patch/minor/major + 写说�
 #    纯 CI / 纯文档这类不需要进 CHANGELOG 的改动：npx changeset add --empty
 
 # 2. 发版：把片段汇总出来
-npm run release:prepare           # 加 --dry-run 只看不改
+npm run release:prepare -- --topic "一句话主题"   # --dry-run 只看不改；--topic 会成为 Release 标题
 #    ↑ 算出版本号 → 写 CHANGELOG.md 条目 → 改 package.json → 删掉已汇总的片段
 
 # 3. 提交 + 打标签 + 推（推标签即触发 CI 出包）
@@ -162,12 +162,16 @@ git tag v0.2.3 && git push origin main --tags
 
 **为什么不用现成的 `changeset version`**：它写出来的标题是 `## x.y.z`（既没方括号也没日期），而本仓库的契约是 `## [x.y.z] - YYYY-MM-DD` —— `tools/changelog-extract.mts` 按它取 Release 正文，自检里也有断言。所以只借 changesets 的两样东西：**片段约定**与 **`changeset status` 闸门**；汇总由 `tools/release-prepare.mts` 做，版本规则与 changesets 一致（取所有片段里最高的一级：0.2.2 + patch → 0.2.3、+ minor → 0.3.0、+ major → 1.0.0）。`.changeset/config.json` 里因此写着 `changelog: false`。
 
-**Release 正文就是 CHANGELOG 里这一版的条目**（`tools/changelog-extract.mts` 按版本号取出，末尾再附一段固定的下载指引）。忘了写条目会**直接失败**：提取脚本非零退出 → `publish` job 红，不会发出一个没有说明的 Release。自检「发布：CHANGELOG.md 有当前版本的条目」守着这件事。
+**Release 的标题与正文由 `tools/release-notes.mts` 生成**（模板不写在 CI 的 YAML 里，因为它要按版本号替换产物名）：
+
+- **标题** = `v<版本>: <主题>`（例如 `v0.3.0: TypeScript 迁移与工具链整理`），主题来自 CHANGELOG 标题行末尾的 `: …`（`release:prepare --topic "…"` 写进去；早期条目写的 `—— …` 也认）。没写主题就退化成 `v<版本>`，不算错。
+- **正文** = CHANGELOG 里这一版的条目（去掉标题行，H1 已经写了版本与主题）+ 一段按**真实产物清单**生成的「安装」表（publish job 把 `ls assets` 传给 `--assets`）—— 产物名不手写，改了 `productName` 或换 electron-builder 都不会让正文与实际文件对不上。
+- **两道失败闸门**：条目缺失、或四类核心产物（Windows 安装包 + 便携版、macOS 的 arm64 / x64 dmg）不齐 → 非零退出。后一条是 v0.2.0 的教训：那次 Release 的说明里让用户下 Windows 包，页面上却没有。自检「发布正文：…」六条钉住标题格式、产物分类与这道闸门，「发布：CHANGELOG.md 有当前版本的条目」钉住条目本身。
 
 ### `release.yml` 的两个 job 与产物
 
 - **`build-windows` / `build-macos`**：各在 `windows-latest` / `macos-latest` 上 `npm ci` → `npm test` → `lint && format:check && typecheck` → `npm run build` → `electron-builder --win|--mac --publish never`，产物挂成 Artifacts。**不加 `--config.npmRebuild=false`**：runner 上有 C++ 工具链，让 electron-builder 对着打包用的 Electron 版本重编 node-pty 才对（node-pty 是 N-API，跨 Electron 大版本不用改代码）。
-- **`publish`**（仅在标签构建时跑）：收齐两边产物 → 用 `tools/changelog-extract.mts` 生成 Release 正文 → `gh release create --draft`（已存在就只补产物、正文不动）→ `gh release upload --clobber`。产物是 Windows 的 NSIS 安装包 + 便携版 exe、macOS 的 arm64 / x64 dmg 与 zip，外加 `latest.yml` / `latest-mac.yml` 与 `*.blockmap`（差分下载索引与更新元数据，现在**没接自动更新**，先留着）。手动触发 `release` 工作流则**只构建、不发版**，产物在 Artifacts 里。
+- **`publish`**（仅在标签构建时跑）：收齐两边产物 → `tools/release-notes.mts` 生成标题与正文（`--assets` 吃 `ls assets` 的输出）→ `gh release create --draft --title "$(cat .release/title.txt)" --notes-file .release/notes.md`（已存在就只补产物、正文不动）→ `gh release upload --clobber`。产物是 Windows 的 NSIS 安装包 + 便携版 exe、macOS 的 arm64 / x64 dmg 与 zip，外加 `latest.yml` / `latest-mac.yml` 与 `*.blockmap`（差分下载索引与更新元数据，现在**没接自动更新**，先留着）。手动触发 `release` 工作流则**只构建、不发版**，产物在 Artifacts 里。
 - **为什么打包与发布拆成不同 job**：v0.2.0 时两个 runner 各自 `electron-builder --publish always`，并发调 `getOrCreateRelease()` 都发现「没有 release」就各建一个，Windows 的安装包与 `latest.yml` 因此没传上去；更麻烦的是 electron-builder 默认 `releaseType=draft`，release 一旦被人点成「已发布」，后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn）。现在草稿由 `gh release create` 自己建、产物用 `gh release upload --clobber` 传，重跑可以放心覆盖同名产物。**推论：不要改回 `--publish always`，也不要让两个平台各自建 Release。**
 
 **`ci.yml` 的闸门**：PR 与合入 `main` 时跑同一个 `check` job；PR 上额外跑 `npx changeset status --since=origin/<base>`，**改了代码却没带片段就失败**。这也是 `npx changeset add --empty` 的用途 —— 放一个空片段当「通行证」，它不产生版本、也不进 CHANGELOG，汇总时自动清掉。
@@ -321,10 +325,10 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，80 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，86 项，不需要 Electron、不启停任何进程
 ```
 
-`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值），以及发布流程（CHANGELOG 条目与片段汇总规则）。
+`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。
 
 **为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。凡是「界面必须长这样」「产物必须长这样」的**契约**，都尽量写成自检而不是靠人记。
 
