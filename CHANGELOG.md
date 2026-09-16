@@ -1,7 +1,7 @@
 # Changelog
 
 本文件是本项目**每一个发布版本的内容记录**，也是 GitHub Release 正文的**单一事实来源**：
-打 `v*` 标签时，CI 会用 `tools/changelog-extract.mjs` 取出对应版本的条目，直接当作 Release 正文
+打 `v*` 标签时，CI 会用 `tools/changelog-extract.mts` 取出对应版本的条目，直接当作 Release 正文
 （末尾再附一段固定的下载指引）。所以**发版前必须先在这里写条目** —— 没有条目时 CI 会直接失败，
 宁可不发，也不要发出一个空说明的 Release。
 

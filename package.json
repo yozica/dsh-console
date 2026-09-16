@@ -22,14 +22,15 @@
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:sandbox": "node scripts/build.mjs",
+    "build:sandbox": "tsx scripts/build.mts",
     "start": "npm run build && electron .",
     "watch": "vite build --watch",
     "watch:main": "tsc -p tsconfig.main.json --watch",
-    "test": "tsx test/selftest.js",
-    "typecheck": "npm run typecheck:main && npm run typecheck:renderer",
+    "test": "tsx test/selftest.ts",
+    "typecheck": "npm run typecheck:main && npm run typecheck:renderer && npm run typecheck:node",
     "typecheck:main": "tsc -p tsconfig.main.json --noEmit",
     "typecheck:renderer": "vue-tsc -p tsconfig.renderer.json --noEmit",
+    "typecheck:node": "tsc -p tsconfig.node.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -78,7 +79,7 @@
     "esbuild"
   ],
   "lint-staged": {
-    "*.{js,mjs,cjs,ts,tsx,vue}": [
+    "*.{js,mjs,cjs,ts,mts,cts,tsx,vue}": [
       "eslint --fix",
       "prettier --write"
     ],

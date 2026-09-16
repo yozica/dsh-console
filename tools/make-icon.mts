@@ -11,7 +11,7 @@
  * Node 自带的 zlib 足够。
  *
  * 依赖：`npm i -D @lobehub/icons-static-png @lobehub/icons-static-svg`
- * 用法：node tools/make-icon.mjs
+ * 用法：npx tsx tools/make-icon.mts
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -29,16 +29,23 @@ const MARK = path.join(ROOT, 'node_modules', '@lobehub', 'icons-static-png', 'da
 const TOP = [93, 118, 255]
 const BOTTOM = [61, 86, 232]
 
+/** 解码后的位图：统一展开成 RGBA */
+interface DecodedPng {
+  width: number
+  height: number
+  rgba: Uint8Array
+}
+
 // ---------------------------------------------------------------- PNG 解码
 
-function decodePng(buf) {
+function decodePng(buf: Buffer): DecodedPng {
   if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('不是 PNG')
   let offset = 8
   let width = 0
   let height = 0
   let colorType = 6
   let bitDepth = 8
-  const idat = []
+  const idat: Buffer[] = []
   while (offset < buf.length) {
     const length = buf.readUInt32BE(offset)
     const type = buf.toString('ascii', offset + 4, offset + 8)
@@ -57,7 +64,8 @@ function decodePng(buf) {
     offset += 12 + length
   }
   if (bitDepth !== 8) throw new Error(`只支持 8 位深，实际 ${bitDepth}`)
-  const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[colorType]
+  // 颜色类型 → 每像素通道数。表里没有的类型下面会以同一个错误信息拒绝
+  const channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 } as Record<number, number>)[colorType]
   if (!channels) throw new Error(`不支持的颜色类型 ${colorType}`)
 
   const raw = zlib.inflateSync(Buffer.concat(idat))
@@ -116,16 +124,16 @@ function decodePng(buf) {
 // ---------------------------------------------------------------- 绘制与合成
 
 /** 有符号距离场：圆角矩形（负值在内部） */
-function sdRoundRect(px, py, halfW, halfH, r) {
+function sdRoundRect(px: number, py: number, halfW: number, halfH: number, r: number): number {
   const qx = Math.abs(px) - (halfW - r)
   const qy = Math.abs(py) - (halfH - r)
   return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r
 }
 
 /** 距离场 → 覆盖率（一个像素宽的软边） */
-const cover = (d, soft = 1.2) => Math.min(1, Math.max(0, 0.5 - d / soft))
+const cover = (d: number, soft = 1.2): number => Math.min(1, Math.max(0, 0.5 - d / soft))
 
-function render() {
+function render(): Uint8Array {
   const mark = decodePng(fs.readFileSync(MARK))
   const out = new Uint8Array(SIZE * SIZE * 4)
   const c = SIZE / 2
@@ -177,7 +185,7 @@ function render() {
         }
       }
       const coverAlpha = weight > 0 ? alpha / weight : 0
-      const mix = (base, over, a) => base * (1 - a) + over * a
+      const mix = (base: number, over: number, a: number): number => base * (1 - a) + over * a
       const rgb = [0, 1, 2].map((i) => {
         const markColor = alpha > 0 ? acc[i] / alpha : 255
         return mix(bg[i], markColor, coverAlpha * tile)
@@ -205,19 +213,19 @@ const CRC_TABLE = (() => {
   return table
 })()
 
-function crc32(buf) {
+function crc32(buf: Uint8Array): number {
   let c = -1
   for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8)
   return c ^ -1
 }
 
-function encodePng(rgba, width, height) {
+function encodePng(rgba: Uint8Array, width: number, height: number): Buffer {
   const raw = Buffer.alloc((width * 4 + 1) * height)
   for (let y = 0; y < height; y++) {
     raw[y * (width * 4 + 1)] = 0 // 滤波类型 0（None）
     Buffer.from(rgba.buffer, y * width * 4, width * 4).copy(raw, y * (width * 4 + 1) + 1)
   }
-  const chunk = (type, data) => {
+  const chunk = (type: string, data: Buffer): Buffer => {
     const len = Buffer.alloc(4)
     len.writeUInt32BE(data.length)
     const body = Buffer.concat([Buffer.from(type, 'ascii'), data])

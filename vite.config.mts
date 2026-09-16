@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -10,11 +10,11 @@ import { fileURLToPath, URL } from 'node:url'
  *   - 关掉 modulePreload，避免注入 <link rel="modulepreload">
  * 顺手去掉 crossorigin —— file:// 下带它的样式表同样会走 CORS。
  */
-function classicScriptPlugin() {
+function classicScriptPlugin(): Plugin {
   return {
     name: 'dsh-classic-script',
     enforce: 'post',
-    transformIndexHtml(html) {
+    transformIndexHtml(html: string) {
       return html
         .replace(/<script type="module" crossorigin /g, '<script defer ')
         .replace(/<script type="module" /g, '<script defer ')

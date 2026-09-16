@@ -13,28 +13,39 @@
  *   6. 渲染层静态检查（含 macOS 的平台适配契约）
  */
 
-const path = require('node:path')
-const fs = require('node:fs')
-const { execFile } = require('node:child_process')
+import path from 'node:path'
+import fs from 'node:fs'
+import { execFile } from 'node:child_process'
 
-const processUtils = require('../src/main/process-utils')
-const { Settings, DEFAULTS } = require('../src/main/settings')
-const { PtySessions } = require('../src/main/pty-sessions')
-const { DshManager } = require('../src/main/dsh-manager')
+import * as processUtils from '../src/main/process-utils'
+import { Settings, DEFAULTS } from '../src/main/settings'
+import { PtySessions } from '../src/main/pty-sessions'
+import { DshManager } from '../src/main/dsh-manager'
 
 const IS_WINDOWS = process.platform === 'win32'
 
-const results = []
-function check(name, ok, extra) {
+/** package.json 里本文件真正读到的字段（用最小 interface 兜住 JSON.parse 的 any） */
+interface PackageJson {
+  version: string
+  build?: { mac?: { identity?: string } }
+}
+
+interface CheckResult {
+  name: string
+  ok: boolean
+}
+
+const results: CheckResult[] = []
+function check(name: string, ok: boolean, extra?: unknown) {
   results.push({ name, ok })
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? `  — ${extra}` : ''}`)
 }
-function skip(name, why) {
+function skip(name: string, why: string) {
   console.log(`SKIP  ${name}  — ${why}`)
 }
 
 /** 当前环境能否启动外部命令（受限沙箱里 netstat/lsof/ps 会被拒） */
-function canSpawnBinaries() {
+function canSpawnBinaries(): Promise<boolean> {
   return new Promise((resolve) => {
     const command = IS_WINDOWS ? 'netstat' : 'lsof'
     const args = IS_WINDOWS ? ['-ano', '-p', 'tcp'] : ['-nP', '-iTCP:1', '-sTCP:LISTEN']
@@ -50,7 +61,7 @@ function canSpawnBinaries() {
 }
 
 /** 进程名查询单独探测：macOS 上 lsof 可能可用而 ps 被沙箱禁掉 */
-function canQueryProcessName() {
+function canQueryProcessName(): Promise<boolean> {
   return new Promise((resolve) => {
     const command = IS_WINDOWS ? 'tasklist' : 'ps'
     const args = IS_WINDOWS ? ['/FI', 'PID eq 1', '/FO', 'CSV', '/NH'] : ['-o', 'comm=', '-p', '1']
@@ -64,7 +75,7 @@ function canQueryProcessName() {
   })
 }
 
-async function main() {
+async function main(): Promise<void> {
   const sandbox = path.join(__dirname, '..', '.verify')
   fs.mkdirSync(sandbox, { recursive: true })
 
@@ -97,7 +108,7 @@ async function main() {
     try {
       processUtils.resolveDshInvocation({ ...settings.all(), dshCommand: 'C:\\fake\\dsh.cmd' })
     } catch (error) {
-      rejected = /批处理/.test(error.message)
+      rejected = /批处理/.test(error instanceof Error ? error.message : String(error))
     }
     check('命令解析：POSIX 下 .cmd 明确报错而不是假装能跑', rejected)
   }
@@ -131,7 +142,7 @@ async function main() {
   } catch (error) {
     skip(
       '命令解析：PATH 里没有 dsh 也能从全局安装目录找到 bin.js',
-      `本机没有可用的 node/dsh：${error.message}`
+      `本机没有可用的 node/dsh：${error instanceof Error ? error.message : String(error)}`
     )
   } finally {
     process.env.PATH = savedPath
@@ -176,7 +187,8 @@ async function main() {
     // 顺带记一个坑：老的断言写的是 /(zsh|bash|sh)$/，而 "pwsh" 也以 sh 结尾，它其实放过了 pwsh，
     // 真正拦下来的是 args 里没有 -l —— 所以这里既查文件也查 -l，别只查其中一个。
     const envShell = String(process.env.SHELL || '').trim()
-    const expected = envShell && fs.existsSync(envShell) ? envShell : /(zsh|bash)$|\/sh$/
+    const expected: string | RegExp =
+      envShell && fs.existsSync(envShell) ? envShell : /(zsh|bash)$|\/sh$/
     const sameAsUserShell =
       typeof expected === 'string' ? shell.file === expected : expected.test(shell.file)
     check(
@@ -194,7 +206,7 @@ async function main() {
   const urlMatch = plain.match(/dsh web:\s+(https?:\/\/[^\s)]+)/)
   check(
     '横幅解析：提取到带令牌 URL',
-    Boolean(urlMatch) && urlMatch[1].includes('token=abc123DEF'),
+    Boolean(urlMatch && urlMatch[1].includes('token=abc123DEF')),
     urlMatch && urlMatch[1]
   )
 
@@ -245,7 +257,7 @@ async function main() {
   const parsed = processUtils.parseNetstatForPort(netstatFixture, 3080)
   check(
     'netstat 解析：挑出 LISTENING 行的 PID',
-    parsed && parsed.pid === 42112,
+    Boolean(parsed && parsed.pid === 42112),
     JSON.stringify(parsed)
   )
   check(
@@ -267,7 +279,7 @@ async function main() {
   const lsofParsed = processUtils.parseLsofForPort(lsofFixture, 3080)
   check(
     'lsof 解析：挑出 LISTEN 行的 PID',
-    lsofParsed && lsofParsed.pid === 42112,
+    Boolean(lsofParsed && lsofParsed.pid === 42112),
     JSON.stringify(lsofParsed)
   )
   check(
@@ -335,6 +347,8 @@ async function main() {
   // 曾经用 Boolean(pid) 判断归属，导致 pid=0 时"启动"可点、"停止"被禁用。
   // macOS 上 PID 是同步就绪的，但"就绪前按会话归属、不按 PID"这条判据仍然要成立。
   let fakePid = 0
+  // DshManager 只用到 on/has/pid 三个成员；PtySessions 带私有字段，结构类型天然对不上，
+  // 所以这里按"测试替身"断言一次（下面还会改 has 来模拟会话消失）。
   const stubPty = {
     on() {},
     has: () => true,
@@ -344,7 +358,10 @@ async function main() {
     kill: () => true,
     list: () => []
   }
-  const stubManager = new DshManager({ settings, ptySessions: stubPty })
+  const stubManager = new DshManager({
+    settings,
+    ptySessions: stubPty as unknown as PtySessions
+  })
   stubManager.log = () => {}
   const early = stubManager.snapshot()
   check(
@@ -391,7 +408,7 @@ async function main() {
   //    （panes/ 是页面，shell/ 是外壳），否则迁走的部分会悄悄脱离这些检查的覆盖。
   const rendererDir = path.join(__dirname, '..', 'src', 'renderer')
   const vueDirs = ['panes', 'shell']
-  const vueFiles = [] // 形如 { dir, name }
+  const vueFiles: { dir: string; name: string }[] = [] // 形如 { dir, name }
   for (const dir of vueDirs) {
     const full = path.join(rendererDir, dir)
     if (!fs.existsSync(full)) continue
@@ -404,7 +421,7 @@ async function main() {
     .join('\n')
 
   const html = fs.readFileSync(path.join(rendererDir, 'index.html'), 'utf8')
-  // 渲染层脚本的来源有三处：app.js（应用级胶水）、lib/（共享模块）、.vue 的 <script setup>
+  // 渲染层脚本的来源有三处：app.ts（应用级胶水）、lib/（共享模块）、.vue 的 <script setup>
   const libDir = path.join(rendererDir, 'lib')
   const libSource = fs.existsSync(libDir)
     ? fs
@@ -415,7 +432,7 @@ async function main() {
     : ''
   const rendererJs = `${fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8')}\n${libSource}`
   const markup = `${html}\n${vueSource}` // 标记来源：静态 HTML + 已迁移的 .vue 模板
-  const rendererAll = `${rendererJs}\n${vueSource}` // 渲染层脚本：app.js + lib/ + .vue
+  const rendererAll = `${rendererJs}\n${vueSource}` // 渲染层脚本：app.ts + lib/ + .vue
   // 只看代码，不看注释：注释里常拿 `getElementById('btn-xxx')` 这种示意写法举例，
   // 当真引用去查会误报（已经误报过一次）。
   const rendererCode = rendererAll.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
@@ -465,7 +482,7 @@ async function main() {
       : '没有会话功能'
   )
 
-  // 每个组件都必须在 mount.js 的挂载清单里，否则界面上那块永远是空的
+  // 每个组件都必须在 mount.ts 的挂载清单里，否则界面上那块永远是空的
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8')
   const unmounted = vueFiles
     .filter(({ dir, name }) => {
@@ -597,7 +614,7 @@ async function main() {
   )
 
   // 依赖从"index.html 里的 script 标签"改成了模块导入（Vite 构建），
-  // 所以要检查的是：入口被引入、入口导入了样式表、xterm 由 lib/xterm.js 直接用类导入。
+  // 所以要检查的是：入口被引入、入口导入了样式表、xterm 由 lib/xterm.ts 直接用类导入。
   const rendererEntry = fs.readFileSync(path.join(rendererDir, 'main.ts'), 'utf8')
   const xtermLib = fs.readFileSync(path.join(rendererDir, 'lib', 'xterm.ts'), 'utf8')
   check(
@@ -610,11 +627,11 @@ async function main() {
   // 产物必须是普通脚本：file:// 下 ES module 会走 CORS 检查而加载失败。
   // 这条检查看的是"有没有把 module 改回 classic"的构建插件，以及入口有没有动态 import
   // （动态 import 会切出第二个 chunk，跨 chunk 就必须用模块语法）。
-  const viteConfig = fs.readFileSync(path.join(__dirname, '..', 'vite.config.mjs'), 'utf8')
+  const viteConfig = fs.readFileSync(path.join(__dirname, '..', 'vite.config.mts'), 'utf8')
   check(
     '构建：产物走普通脚本（file:// 兼容）',
     /type="module" crossorigin /.test(viteConfig) && /classicScriptPlugin/.test(viteConfig),
-    'vite.config.mjs 里把 module 标签改回 defer'
+    'vite.config.mts 里把 module 标签改回 defer'
   )
   check(
     '构建：入口不用动态 import（否则产物跨 chunk 必须用模块语法）',
@@ -627,7 +644,9 @@ async function main() {
   // 而 Apple 芯片上签名无效的 app 会被系统直接拒绝。同一个坑还有第二个入口：
   // CI 里的 CSC_IDENTITY_AUTO_DISCOVERY=false 会让 app-builder-lib 的 isSignAllowed()
   // 提前返回 false，连 ad-hoc 签名都跳过 —— 所以这两处一起检查。
-  const pkgJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'))
+  const pkgJson = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
+  ) as PackageJson
   const releaseWorkflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'release.yml'),
     'utf8'
@@ -682,13 +701,13 @@ async function main() {
   )
 
   // 主题无关的尺度令牌（字号、圆角、字体）不需要亮色重复定义，只需要覆盖颜色令牌
-  const parseVars = (block) => {
-    const out = {}
+  const parseVars = (block: string | null | undefined): Record<string, string> => {
+    const out: Record<string, string> = {}
     for (const match of String(block || '').matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/gi))
       out[match[1]] = match[2].trim()
     return out
   }
-  const isColorValue = (value) => /#[0-9a-f]{3,8}\b|rgba?\(/i.test(value)
+  const isColorValue = (value: string): boolean => /#[0-9a-f]{3,8}\b|rgba?\(/i.test(value)
   const darkBlock = css.match(/:root\s*\{([\s\S]*?)\n\}/)
   const lightBlock = css.match(/:root\[data-theme='light'\]\s*\{([\s\S]*?)\n\}/)
   const darkVars = parseVars(darkBlock && darkBlock[1])
@@ -738,8 +757,8 @@ async function main() {
 
   // 每个 <webview> 都必须在样式里拿到明确高度。漏一个，它就会退化成浏览器默认的
   // 替换元素尺寸（约 300×150），内嵌页只剩顶部一小条 —— 这个坑真踩过一次。
-  const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const hasSizedRule = (selector) => {
+  const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const hasSizedRule = (selector: string): boolean => {
     const rule = css.match(new RegExp(`${escaped(selector)}\\s*\\{([\\s\\S]*?)\\n\\}`))
     return rule ? /(^|\s)(height|inset)\s*:/.test(rule[1]) : false
   }
@@ -820,7 +839,7 @@ async function main() {
 
   // 锁必须盖满窗口、且盖住顶栏：左栏是贯穿全高的整列、顶栏又在最上面，
   // 留任何一条缝都会露出"DSH Console"品牌或页面标题（两次被用户抓图指出）。
-  const cssBlock = (selector) =>
+  const cssBlock = (selector: string): string =>
     css.match(
       new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)
     )?.[0] || ''
@@ -834,15 +853,19 @@ async function main() {
   )
 
   // ---------------------------------------------------------- 8. 发布：CHANGELOG 与版本号对齐
-  //    发版时 Release 正文是按版本号从 CHANGELOG.md 里取的（tools/changelog-extract.mjs）。
+  //    发版时 Release 正文是按版本号从 CHANGELOG.md 里取的（tools/changelog-extract.mts）。
   //    忘了写条目的话，CI 会红在最后那个 publish job —— 这里提前到构建阶段就拦住，
   //    两个 build job 都会先失败，不会出现"包打好了才发现没说明"。
   const repoRoot = path.join(__dirname, '..')
-  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')
+  ) as PackageJson
   // 读不到就给空串：下面的断言会以"缺条目"的形式失败，比在这里抛异常更好读
   const changelogPath = path.join(repoRoot, 'CHANGELOG.md')
   const changelogText = fs.existsSync(changelogPath) ? fs.readFileSync(changelogPath, 'utf8') : ''
-  // 动态 import：提取逻辑只此一份，不在自检里再抄一遍正则
+  // 动态 import：提取逻辑只此一份，不在自检里再抄一遍正则。
+  // 这里写 .mjs（而不是 .mts）：NodeNext 与 tsx 都会把这个标识符解析到同名的 .mts 源码，
+  // 而 .mjs 才是"工具最终以 ESM 运行"时它真实的名字。
   const { extractChangelog } = await import('../tools/changelog-extract.mjs')
   const section = extractChangelog(changelogText, pkg.version)
   check(

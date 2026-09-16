@@ -9,7 +9,7 @@
 #   macOS：  DSH Console-x.y.z-arm64.dmg / -x64.dmg（安装镜像）+ 同名 .zip（免安装）
 #   latest.yml / latest-mac.yml + *.blockmap   更新元数据（差分下载用；现在没接自动更新，先留着）
 #
-# Release 正文来自 **CHANGELOG.md 里对应版本的条目**（`tools/changelog-extract.mjs` 提取，
+# Release 正文来自 **CHANGELOG.md 里对应版本的条目**（`tools/changelog-extract.mts` 提取，
 # 末尾附一段固定的下载指引）。所以**发版前必须先写 CHANGELOG**：缺条目时提取脚本会非零退出、
 # publish job 直接失败 —— 宁可不发，也不发一个没有说明的 Release。
 #
@@ -160,7 +160,10 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          node tools/changelog-extract.mjs "$TAG" > notes.md
+          # 这个 job 没有 npm ci（只取产物 + 发 Release），所以用 npx --yes 现取一个 tsx：
+          # --yes 是必须的，非 TTY 下没有它 npx 会拒绝安装。要让版本完全可控，就给本 job
+          # 补 actions/setup-node + npm ci（代价是多下一次完整依赖，含 Electron 二进制）
+          npx --yes tsx tools/changelog-extract.mts "$TAG" > notes.md
           cat >> notes.md <<'FOOTER'
 
           ---

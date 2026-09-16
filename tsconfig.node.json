@@ -1,0 +1,14 @@
+{
+  "//": [
+    "测试与工具脚本：自检（tsx 跑）、构建包装、图标与 CHANGELOG 工具、Vite 配置。",
+    "这些文件由 tsx / Vite 直接执行（不经过 tsc 产物），所以这里只做类型检查，noEmit。",
+    "module / moduleResolution 跟 base 保持一致（NodeNext + 本包没有 type:module ⇒ CJS），",
+    "与主进程看到的是同一套模块语义；.mts 仍按扩展名当 ESM 处理。"
+  ],
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["test/**/*.ts", "tools/**/*.mts", "scripts/**/*.mts", "vite.config.mts"]
+}

@@ -15,8 +15,15 @@ const nodeTsFiles = [
 ]
 /** 所有 TS 文件：TS 规则集只该作用在这些文件上（否则 .js 里的 require() 会被 no-require-imports 误报） */
 const tsFiles = ['**/*.{ts,tsx,mts,cts}']
-/** 构建脚本与工具：Node 的 ESM */
-const mjsFiles = ['*.mjs', 'tools/**/*.mjs', 'scripts/**/*.mjs']
+/** 构建脚本与工具：Node 的 ESM（.mjs 是纯 JS；.mts 由 tsx / Vite 直接执行） */
+const mjsFiles = [
+  '*.mjs',
+  '*.mts',
+  'tools/**/*.mjs',
+  'tools/**/*.mts',
+  'scripts/**/*.mjs',
+  'scripts/**/*.mts'
+]
 /** 渲染层：浏览器环境，含 Vue 单文件组件 */
 const rendererFiles = ['src/renderer/**/*.{js,ts,vue}']
 
@@ -85,7 +92,7 @@ export default [
       'no-empty': ['error', { allowEmptyCatch: true }],
 
       // 这个应用的领域就是终端控制序列：process-utils 要按 ANSI 转义序列切分输出，
-      // markdown.js 用 \x00 / \x01 当内部占位符。都是显式字面量，不是拼接出来的正则 ——
+      // markdown.ts 用 \x00 / \x01 当内部占位符。都是显式字面量，不是拼接出来的正则 ——
       // 这条规则真正要防的（外部输入混进控制字符）在这里不存在。
       'no-control-regex': 'off',
 
