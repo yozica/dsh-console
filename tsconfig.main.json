@@ -1,0 +1,15 @@
+{
+  "//": [
+    "主进程 + preload + 共享类型：tsc 直出 CJS 到 dist/。",
+    "rootDir=src / outDir=dist 让产物结构与源码一一对应（src/main/main.ts → dist/main/main.js），",
+    "于是 main.ts 里那些相对路径（preload、dist/renderer、build/icon.png）在编译后依然成立，",
+    "不需要为了打包工具去改写业务代码 —— 这也是选 tsc 而不是 bundler 的主要原因。"
+  ],
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "src/shared/**/*.ts"]
+}

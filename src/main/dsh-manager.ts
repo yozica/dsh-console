@@ -1,5 +1,3 @@
-'use strict'
-
 /**
  * dsh web 进程管理器：
  *  - 在 PTY 里启动 `dsh web --no-open`，于是"终端"看到的就是 dsh 本身
@@ -9,11 +7,10 @@
  *    （Windows 走 taskkill /T /F，macOS/Linux 走信号 —— 都在 process-utils 里）
  */
 
-const { EventEmitter } = require('node:events')
-const fs = require('node:fs')
-const processUtils = require('./process-utils')
+import { EventEmitter } from 'node:events'
+import fs from 'node:fs'
 
-const {
+import {
   homeDir,
   isAlive,
   killTree,
@@ -22,10 +19,25 @@ const {
   processNameSync,
   resolveDshInvocation,
   stripAnsi
-} = processUtils
+} from './process-utils'
+import type { Settings } from './settings'
+import type { PtySessions } from './pty-sessions'
+import type {
+  DshExitEvent,
+  DshLogEntry,
+  DshOutputEvent,
+  DshPhase,
+  DshProbeInfo,
+  DshSnapshot,
+  LaunchInfo,
+  LogLevel,
+  PortOwnerInfo,
+  SessionExitEvent,
+  SessionOutputEvent
+} from '../shared/ipc'
 
 /** 状态机取值 */
-const PHASE = {
+export const PHASE = {
   stopped: 'stopped',
   starting: 'starting',
   running: 'running',
@@ -33,61 +45,76 @@ const PHASE = {
   stopping: 'stopping',
   external: 'external',
   conflict: 'conflict'
-}
+} as const satisfies Record<DshPhase, DshPhase>
 
 const MAX_LOG_ENTRIES = 300
 const MAX_BUFFER_CHUNKS = 600
 const MAX_BUFFER_BYTES = 512 * 1024
 
-class DshManager extends EventEmitter {
-  /**
-   * @param {{settings: import('./settings').Settings, ptySessions: import('./pty-sessions').PtySessions, sessionId?: string}} options
-   */
-  constructor(options) {
+export interface DshManagerOptions {
+  settings: Settings
+  ptySessions: PtySessions
+  sessionId?: string
+}
+
+export interface StopOptions {
+  force?: boolean
+  killExternal?: boolean
+}
+
+export class DshManager extends EventEmitter {
+  private readonly settings: Settings
+  private readonly pty: PtySessions
+  readonly sessionId: string
+
+  phase: DshPhase = PHASE.stopped
+  // 注意：不要在这里缓存 PID。node-pty 在 Windows/ConPTY 下构造时 _pid 是 0，
+  // 要等 socket 的 ready_datapipe 之后才会在同一个 IPty 对象上原地更新成真实 PID。
+  // 因此"是否本应用启动"由 pty 会话是否存在决定，PID 一律按需读取（见 ownedPid getter）。
+  // （macOS/Linux 的 forkpty 下 PID 是同步就绪的，同一套写法照样成立。）
+  portPid: number | null = null
+  startedAt: number | null = null
+  stopping = false
+  lastExit: { code: number; signal: number | null; at: number } | null = null
+  lastError: string | null = null
+  probe: DshProbeInfo = {
+    reachable: false,
+    isDsh: false,
+    statusCode: null,
+    latencyMs: null,
+    checkedAt: null,
+    error: null
+  }
+  portOwner: PortOwnerInfo | null = null
+  externalPid: number | null = null
+  externalName = ''
+  uiUrl: string | null = null
+  effectivePort: number
+  effectiveHost: string
+  launch: LaunchInfo | null = null
+  logs: DshLogEntry[] = []
+  buffer: string[] = []
+  bufferBytes = 0
+  timer: NodeJS.Timeout | null = null
+  polling = false
+  latencyHistory: number[] = []
+
+  constructor(options: DshManagerOptions) {
     super()
     this.settings = options.settings
     this.pty = options.ptySessions
     this.sessionId = options.sessionId || 'dsh'
 
-    this.phase = PHASE.stopped
-    // 注意：不要在这里缓存 PID。node-pty 在 Windows/ConPTY 下构造时 _pid 是 0，
-    // 要等 socket 的 ready_datapipe 之后才会在同一个 IPty 对象上原地更新成真实 PID。
-    // 因此"是否本应用启动"由 pty 会话是否存在决定，PID 一律按需读取（见 ownedPid getter）。
-    // （macOS/Linux 的 forkpty 下 PID 是同步就绪的，同一套写法照样成立。）
-    this.portPid = null
-    this.startedAt = null
-    this.stopping = false
-    this.lastExit = null
-    this.lastError = null
-    this.probe = {
-      reachable: false,
-      isDsh: false,
-      statusCode: null,
-      latencyMs: null,
-      checkedAt: null,
-      error: null
-    }
-    this.portOwner = null
-    this.externalPid = null
-    this.externalName = ''
-    this.uiUrl = null
     this.effectivePort = Number(this.settings.get('port')) || 3080
     this.effectiveHost = String(this.settings.get('host') || '127.0.0.1')
-    this.launch = null
-    this.logs = []
-    this.buffer = []
-    this.bufferBytes = 0
-    this.timer = null
-    this.polling = false
-    this.latencyHistory = []
 
-    this.pty.on('data', (event) => {
+    this.pty.on('data', (event: SessionOutputEvent) => {
       if (event.id !== this.sessionId) return
       this.handleOutput(event.chunk)
     })
-    this.pty.on('exit', (event) => {
+    this.pty.on('exit', (event: SessionExitEvent) => {
       if (event.id !== this.sessionId) return
-      this.handleExit(event.exitCode, event.signal)
+      this.handleExit(event.exitCode, event.signal ?? null)
     })
 
     // 启动命令只在不启动进程时缓存一次，避免每次轮询都去遍历 PATH
@@ -96,33 +123,34 @@ class DshManager extends EventEmitter {
 
   // ---------------------------------------------------------------- 基础信息
 
-  get origin() {
+  get origin(): string {
     return `http://${this.effectiveHost}:${this.effectivePort}`
   }
 
   /** 本应用是否有自己拉起的 dsh 会话（唯一可信的归属判据） */
-  get ownProcess() {
+  get ownProcess(): boolean {
     if (this.pty.has(this.sessionId)) return true
     // pty 记录已丢但进程还在（例如异常路径）：退回到已知 PID 判断
-    return isAlive(this.ownedPid)
+    const pid = this.ownedPid
+    return pid !== null && isAlive(pid)
   }
 
   /**
    * 本应用启动的 dsh 的 PID。
    * 优先读 pty 对象上的实时值（PTY 就绪后才有值），读不到时用端口占用者兜底。
-   * @returns {number|null} 未知时为 null —— 调用方不要用真假值判断，要用 ownProcess
+   * 未知时为 null —— 调用方不要用真假值判断，要用 ownProcess。
    */
-  get ownedPid() {
+  get ownedPid(): number | null {
     const live = this.pty.pid(this.sessionId)
-    if (Number.isInteger(live) && live > 0) return live
+    if (Number.isInteger(live) && (live as number) > 0) return live
     return this.portPid && this.portPid > 0 ? this.portPid : null
   }
 
-  get sessionAlive() {
+  get sessionAlive(): boolean {
     return this.ownProcess
   }
 
-  isRunning() {
+  isRunning(): boolean {
     return (
       this.sessionAlive &&
       (this.phase === PHASE.running ||
@@ -132,28 +160,29 @@ class DshManager extends EventEmitter {
   }
 
   /** 启动时解析一次，界面里显示"将要执行的命令" */
-  describeLaunch() {
+  describeLaunch(): LaunchInfo {
     try {
       return resolveDshInvocation(this.settings.all())
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
       return {
         file: '',
         args: [],
-        display: `无法解析：${error.message}`,
+        display: `无法解析：${message}`,
         kind: 'error',
-        error: error.message
+        error: message
       }
     }
   }
 
-  log(level, text) {
-    const entry = { at: Date.now(), level, text }
+  log(level: LogLevel, text: string): void {
+    const entry: DshLogEntry = { at: Date.now(), level, text }
     this.logs.push(entry)
     if (this.logs.length > MAX_LOG_ENTRIES) this.logs.splice(0, this.logs.length - MAX_LOG_ENTRIES)
     this.emit('log', entry)
   }
 
-  snapshot() {
+  snapshot(): DshSnapshot {
     return {
       phase: this.phase,
       /** 本应用自己拉起的 dsh 是否在运行（界面一律用这个判断归属，别看 pid 的真假值） */
@@ -179,12 +208,12 @@ class DshManager extends EventEmitter {
     }
   }
 
-  emitState() {
+  emitState(): void {
     this.emit('state', this.snapshot())
   }
 
   /** 设置变化后重新计算端点与启动命令 */
-  syncSettings() {
+  syncSettings(): void {
     const host = String(this.settings.get('host') || '127.0.0.1')
     const port = Number(this.settings.get('port'))
     if (host !== this.effectiveHost || (Number.isInteger(port) && port !== this.effectivePort)) {
@@ -200,7 +229,7 @@ class DshManager extends EventEmitter {
 
   // ---------------------------------------------------------------- 输出处理
 
-  handleOutput(chunk) {
+  handleOutput(chunk: string): void {
     this.buffer.push(chunk)
     this.bufferBytes += chunk.length
     while (this.buffer.length > MAX_BUFFER_CHUNKS || this.bufferBytes > MAX_BUFFER_BYTES) {
@@ -219,11 +248,12 @@ class DshManager extends EventEmitter {
         this.emit('ui-url', this.uiUrl)
       }
     }
-    this.emit('output', { id: this.sessionId, chunk })
+    const output: DshOutputEvent = { id: this.sessionId, chunk }
+    this.emit('output', output)
   }
 
   /** 从打印的 URL 里同步真实端口（--port 0 时由系统分配） */
-  applyUrlPort(url) {
+  applyUrlPort(url: string): void {
     try {
       const parsed = new URL(url)
       const port = Number(parsed.port)
@@ -243,9 +273,8 @@ class DshManager extends EventEmitter {
    * 启动失败时 dsh 的原因只印在它自己的输出里（端口占用、npx/npm 报错、找不到配置……），
    * 而事件日志只有一句「退出码 1」—— 用户看到的就只是"启动不了"，得自己去终端页翻。
    * 这里在失败时把它带进事件日志：优先挑像报错的那一行，否则退回最后一行。
-   * @returns {string} 摘出来的原因（可能为空）
    */
-  lastOutputLine() {
+  lastOutputLine(): string {
     const text = stripAnsi(this.buffer.join(''))
     const lines = text
       .split(/\r?\n/)
@@ -261,7 +290,7 @@ class DshManager extends EventEmitter {
     return (errorish || lines[lines.length - 1]).slice(0, 300)
   }
 
-  handleExit(exitCode, signal) {
+  handleExit(exitCode: number, signal: number | null = null): void {
     const wasStopping = this.stopping
     const hadToken = Boolean(this.uiUrl)
     this.portPid = null
@@ -298,7 +327,7 @@ class DshManager extends EventEmitter {
   // ---------------------------------------------------------------- 启停
 
   /** 启动。端口上已有 dsh 时自动改为接管，不重复拉起。 */
-  async start({ allowAdopt = true } = {}) {
+  async start({ allowAdopt = true }: { allowAdopt?: boolean } = {}): Promise<DshSnapshot> {
     if (this.sessionAlive) {
       this.log('warn', 'dsh 已经在运行了')
       return this.snapshot()
@@ -321,12 +350,13 @@ class DshManager extends EventEmitter {
       )
     }
 
-    let launch
+    let launch: LaunchInfo
     try {
       launch = resolveDshInvocation(this.settings.all())
     } catch (error) {
-      this.lastError = error.message
-      this.log('error', error.message)
+      const message = error instanceof Error ? error.message : String(error)
+      this.lastError = message
+      this.log('error', message)
       this.emitState()
       throw error
     }
@@ -341,7 +371,10 @@ class DshManager extends EventEmitter {
       cwd = homeDir()
     }
 
-    const env = { ...process.env }
+    const env: Record<string, string> = {}
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[key] = value
+    }
     // 让 dsh 输出稳定的纯文本横幅，便于解析带令牌的 URL
     env.FORCE_COLOR = env.FORCE_COLOR || '1'
 
@@ -373,7 +406,8 @@ class DshManager extends EventEmitter {
         pidNow > 0 ? `dsh 已拉起，PID ${pidNow}` : 'dsh 已拉起，等待 PTY 就绪后确认 PID…'
       )
     } catch (error) {
-      this.lastError = `启动失败: ${error.message}`
+      const message = error instanceof Error ? error.message : String(error)
+      this.lastError = `启动失败: ${message}`
       this.phase = PHASE.stopped
       this.log('error', this.lastError)
       this.emitState()
@@ -385,11 +419,8 @@ class DshManager extends EventEmitter {
     return this.snapshot()
   }
 
-  /**
-   * 停止。
-   * @param {{force?: boolean, killExternal?: boolean}} options
-   */
-  async stop(options = {}) {
+  /** 停止。 */
+  async stop(options: StopOptions = {}): Promise<DshSnapshot> {
     const { force = false, killExternal = false } = options
     const grace = Number(this.settings.get('stopGraceMs')) || 3000
     this.stopping = true
@@ -439,7 +470,7 @@ class DshManager extends EventEmitter {
   }
 
   /** 端口上监听者的 PID 就是本应用拉起的 dsh（PTY 未就绪时用它兜底） */
-  async resolveOwnedPidFromPort() {
+  async resolveOwnedPidFromPort(): Promise<number | null> {
     const owner = await portOwnerSync(this.effectivePort)
     if (owner && owner.pid > 0) {
       this.portPid = owner.pid
@@ -448,7 +479,7 @@ class DshManager extends EventEmitter {
     return null
   }
 
-  async restart() {
+  async restart(): Promise<DshSnapshot> {
     await this.stop({})
     // 等端口真正释放
     const deadline = Date.now() + 10000
@@ -462,22 +493,22 @@ class DshManager extends EventEmitter {
 
   // ---------------------------------------------------------------- 终端交互
 
-  write(data) {
+  write(data: string): boolean {
     return this.pty.write(this.sessionId, data)
   }
 
-  resize(cols, rows) {
+  resize(cols: number, rows: number): boolean {
     return this.pty.resize(this.sessionId, cols, rows)
   }
 
   /** 重放缓冲区，用于终端标签重新挂载时恢复历史输出 */
-  replay() {
+  replay(): string {
     return this.buffer.join('')
   }
 
   // ---------------------------------------------------------------- 状态轮询
 
-  startPolling() {
+  startPolling(): void {
     const interval = Math.max(500, Number(this.settings.get('pollIntervalMs')) || 1500)
     if (this.timer) clearInterval(this.timer)
     this.timer = setInterval(() => {
@@ -487,14 +518,14 @@ class DshManager extends EventEmitter {
     void this.pollOnce()
   }
 
-  stopPolling() {
+  stopPolling(): void {
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
     }
   }
 
-  async pollOnce() {
+  async pollOnce(): Promise<void> {
     if (this.polling) return
     this.polling = true
     try {
@@ -515,7 +546,7 @@ class DshManager extends EventEmitter {
       const alive = this.sessionAlive
       const startTimeout = Number(this.settings.get('startTimeoutMs')) || 60000
 
-      let phase
+      let phase: DshPhase
       if (this.stopping) {
         phase = PHASE.stopping
       } else if (alive) {
@@ -579,13 +610,14 @@ class DshManager extends EventEmitter {
   }
 }
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** 日志里不打印真实的访问令牌 */
-function maskToken(url) {
+export function maskToken(url: string | null): string {
   return String(url || '').replace(/(token=)[^&\s]+/i, '$1***')
 }
 
-module.exports = { DshManager, PHASE, maskToken }
+// dsh:exit 事件用的载荷类型在 shared/ipc.ts 里（渲染层也读它）
+export type { DshExitEvent }

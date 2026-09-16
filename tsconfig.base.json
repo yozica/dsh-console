@@ -1,0 +1,28 @@
+{
+  "//": "主进程、preload 与共享类型共用的编译选项。渲染层走 Vite，不用这份（见 tsconfig.renderer.json）。",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    // nodenext：按 package.json 的 type 字段判定模块体系。本项目没有 "type": "module"，
+    // 所以源码里的 import/export 会被编译成 CommonJS（require / exports）——
+    // 既保留了 Electron 主进程需要的 CJS 运行形态，又让源码是标准 ESM 语法。
+    // （node10 已被 TS 6 弃用，不要再用。）
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": false,
+
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    "sourceMap": true,
+    "inlineSources": false,
+    "removeComments": false
+  }
+}

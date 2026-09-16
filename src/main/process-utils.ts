@@ -1,5 +1,3 @@
-'use strict'
-
 /**
  * 进程/网络相关工具：dsh 命令探测、端口占用查询、进程树终止、HTTP 健康探测。
  *
@@ -8,18 +6,66 @@
  * 除这两组系统命令外不需要任何额外组件。
  */
 
-const { execFile, execFileSync } = require('node:child_process')
-const fs = require('node:fs')
-const http = require('node:http')
-const os = require('node:os')
-const path = require('node:path')
+import { execFile, execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 
-const isWindows = process.platform === 'win32'
-const isMac = process.platform === 'darwin'
-const COMSPEC = process.env.ComSpec || 'cmd.exe'
+import type { SettingsValues } from './settings'
+
+export const isWindows = process.platform === 'win32'
+export const isMac = process.platform === 'darwin'
+export const COMSPEC = process.env.ComSpec || 'cmd.exe'
+
+/** 要执行的命令：file + args 交给 PTY，display 只用于界面与日志 */
+export interface InvocationSpec {
+  file: string
+  args: string[]
+  display: string
+  kind: string
+}
+
+/** 「解释器 + dsh 入口脚本」的一个候选组合 */
+export interface InterpreterCandidate {
+  node: string
+  binJs: string
+  source: string
+}
+
+/** HTTP 探测结果 */
+export interface ProbeResult {
+  reachable: boolean
+  isDsh: boolean
+  latencyMs: number
+  statusCode?: number
+  body?: string
+  location?: string
+  error?: string
+}
+
+/** 监听某个端口的进程 */
+export interface PortOwner {
+  pid: number
+  local: string
+  port: number
+}
+
+/** 本地 Shell 的启动描述 */
+export interface ShellSpec {
+  file: string
+  args: string[]
+  display: string
+}
+
+/** 一个 Node 版本的安装目录（bin 与全局 node_modules） */
+interface VersionManagerInstall {
+  bin: string
+  modules: string
+}
 
 /** 去掉 ANSI 转义序列，便于从终端输出里提取 URL。 */
-function stripAnsi(input) {
+export function stripAnsi(input: string): string {
   return String(input)
     .replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g, '')
     .replace(/\u001B[@-Z\\-_]/g, '')
@@ -27,7 +73,7 @@ function stripAnsi(input) {
 }
 
 /** 是普通文件（bin.js 这种交给 node 执行的脚本不需要可执行位） */
-function isFile(file) {
+function isFile(file: string): boolean {
   try {
     return fs.statSync(file).isFile()
   } catch {
@@ -35,11 +81,8 @@ function isFile(file) {
   }
 }
 
-/**
- * 是文件且（POSIX 下）有可执行位。Windows 只看是不是文件。
- * @param {string} file
- */
-function isExecutableFile(file) {
+/** 是文件且（POSIX 下）有可执行位。Windows 只看是不是文件。 */
+function isExecutableFile(file: string): boolean {
   try {
     if (!fs.statSync(file).isFile()) return false
     if (!isWindows) fs.accessSync(file, fs.constants.X_OK)
@@ -52,10 +95,9 @@ function isExecutableFile(file) {
 /**
  * 在 PATH 中查找可执行文件（Windows 下自动尝试 PATHEXT）。
  * POSIX 下额外确认可执行位 —— PATH 里躺着同名不可执行文件时不能当真。
- * @param {string} name 例如 dsh.cmd / dsh / node.exe
- * @returns {string | null} 绝对路径
+ * @param name 例如 dsh.cmd / dsh / node.exe
  */
-function whichSync(name) {
+export function whichSync(name: string): string | null {
   const exts = isWindows
     ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
     : ['']
@@ -78,18 +120,18 @@ function whichSync(name) {
  * `/usr/bin:/bin:/usr/sbin:/sbin`，homebrew、nvm、fnm 装的东西**都不在**里面 ——
  * 只靠 PATH 找 node/dsh 会直接失败，于是退到又慢又脆的 `npx -y`（要联网解析/安装包）。
  */
-function versionManagerInstalls() {
+function versionManagerInstalls(): VersionManagerInstall[] {
   const home = homeDir()
-  const installs = []
-  const scan = (base, toInstall) => {
-    let names
+  const installs: VersionManagerInstall[] = []
+  const scan = (base: string, toInstall: (dir: string) => VersionManagerInstall) => {
+    let names: string[]
     try {
       names = fs.readdirSync(base)
     } catch {
       return // 没装这个版本管理器
     }
     // 版本号倒序（数值比较，别让 v9 排到 v24 前面）：装多个 Node 时优先较新的那个
-    const key = (name) =>
+    const key = (name: string) =>
       name
         .replace(/^v/i, '')
         .split('.')
@@ -121,7 +163,7 @@ function versionManagerInstalls() {
 }
 
 /** 找 node 可执行文件：PATH 优先，其次常见安装位置（GUI 启动时 PATH 很窄） */
-function findNodeExe() {
+export function findNodeExe(): string | null {
   const fromPath = whichSync(isWindows ? 'node.exe' : 'node')
   if (fromPath) return fromPath
   if (isWindows) return null
@@ -141,10 +183,10 @@ function findNodeExe() {
 }
 
 /** 全局 node_modules 的候选目录（PATH 里没有 shim 时直接来这里找包） */
-function globalNodeModulesRoots() {
+function globalNodeModulesRoots(): string[] {
   const home = homeDir()
-  const roots = []
-  const push = (dir) => {
+  const roots: string[] = []
+  const push = (dir: string) => {
     if (dir && !roots.includes(dir)) roots.push(dir)
   }
   // 1. 从 node 自己所在的位置反推 npm 前缀，**排最前**：
@@ -172,7 +214,7 @@ function globalNodeModulesRoots() {
 }
 
 /** 从全局安装目录里找 @deepseek-ai/dsh 的 bin.js（不依赖 PATH 里的 shim） */
-function findGlobalDshBinJs() {
+export function findGlobalDshBinJs(): string | null {
   for (const root of globalNodeModulesRoots()) {
     const candidate = path.join(root, '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     if (isFile(candidate)) return candidate
@@ -189,13 +231,11 @@ function findGlobalDshBinJs() {
  * （这台机器 PATH 里是 vite-plus 包装的 v22，nvm 下另有 v24）。
  * 所以优先给出"同一个安装目录里的 node + dsh"这种天然匹配的组合，
  * 再由 canRunDsh 实测确认。
- *
- * @returns {Array<{ node: string, binJs: string, source: string }>}
  */
-function dshInterpreterCandidates() {
-  const out = []
-  const seen = new Set()
-  const push = (node, binJs, source) => {
+export function dshInterpreterCandidates(): InterpreterCandidate[] {
+  const out: InterpreterCandidate[] = []
+  const seen = new Set<string>()
+  const push = (node: string | null, binJs: string | null, source: string) => {
     if (!node || !binJs) return
     const key = `${node}\u0000${binJs}`
     if (seen.has(key)) return
@@ -206,7 +246,7 @@ function dshInterpreterCandidates() {
   // 1. PATH 里的 node + PATH shim 反推出的 bin.js（最贴近用户当前环境，Windows 常态）
   const pathNode = whichSync(isWindows ? 'node.exe' : 'node')
   const shim = findDshShim()
-  const shimBinJs = shim ? binJsCandidates(shim).find(isFile) : null
+  const shimBinJs = shim ? (binJsCandidates(shim).find(isFile) ?? null) : null
   push(pathNode, shimBinJs, 'PATH shim')
 
   // 2. 版本管理器里"配套"的 node + dsh（同一个版本目录，最新版本优先）
@@ -231,7 +271,7 @@ function dshInterpreterCandidates() {
 }
 
 /** 探针结果缓存：键是"解释器 + 入口脚本"，取值是否可用 */
-const dshProbeCache = new Map()
+const dshProbeCache = new Map<string, boolean>()
 
 /**
  * 实测「这个 node 能不能跑这份 dsh」——跑一次 `--version`，有输出才算能用。
@@ -239,14 +279,12 @@ const dshProbeCache = new Map()
  * 比硬编码"要求 Node ≥ x"稳：dsh 的版本要求会变，而且它不满足要求时**不报错**，
  * 只安静地退出（退出码 0、零输出），光看退出码根本发现不了。
  * 结果缓存，所以同一组合每个进程只测一次。
- * @param {string} nodeExe
- * @param {string} binJs
  */
-function canRunDsh(nodeExe, binJs) {
+export function canRunDsh(nodeExe: string, binJs: string): boolean {
   const key = `${nodeExe}\u0000${binJs}`
   const cached = dshProbeCache.get(key)
   if (cached !== undefined) return cached
-  let ok
+  let ok: boolean
   try {
     const stdout = execFileSync(nodeExe, [binJs, '--version'], {
       timeout: 8000,
@@ -266,9 +304,8 @@ function canRunDsh(nodeExe, binJs) {
  * 挑一个真能跑 dsh 的解释器组合。
  * 所有候选都测不过（例如受限环境不允许再起子进程）时，退回第一个候选 ——
  * 宁可把问题留给运行期，也不要在这里直接失败。
- * @returns {{ node: string, binJs: string, source: string } | null}
  */
-function pickDshInterpreter() {
+export function pickDshInterpreter(): InterpreterCandidate | null {
   const candidates = dshInterpreterCandidates()
   if (candidates.length === 0) return null
   for (const candidate of candidates) {
@@ -278,10 +315,10 @@ function pickDshInterpreter() {
 }
 
 /** 拆分带引号的参数串，例如 --flag "a b" -> ['--flag', 'a b'] */
-function splitArgs(text) {
-  const out = []
+export function splitArgs(text: string): string[] {
+  const out: string[] = []
   const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g
-  let match
+  let match: RegExpExecArray | null
   while ((match = pattern.exec(String(text || ''))) !== null) {
     out.push(match[1] ?? match[2] ?? match[3])
   }
@@ -289,12 +326,12 @@ function splitArgs(text) {
 }
 
 /** 把字符串参数包成 cmd.exe 可安全执行的形式（仅 Windows 用） */
-function quoteForCmd(value) {
+function quoteForCmd(value: string): string {
   return /[\s&|<>^]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
 }
 
 /** 平台感应的 dsh shim 文件（Windows 的 dsh.cmd / POSIX 的 dsh） */
-function findDshShim() {
+function findDshShim(): string | null {
   if (isWindows) return whichSync('dsh.cmd') || whichSync('dsh.exe')
   return whichSync('dsh')
 }
@@ -304,7 +341,7 @@ function findDshShim() {
  * 布局因平台而异：Windows 的 %APPDATA%\npm 把 shim 与 node_modules 放同一层，
  * POSIX 的全局 bin（如 /opt/homebrew/bin）的 shim 是指向 ../lib/node_modules 的符号链接。
  */
-function binJsCandidates(shimPath) {
+function binJsCandidates(shimPath: string): string[] {
   const prefix = path.dirname(shimPath)
   const candidates = [path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')]
   if (!isWindows) {
@@ -334,10 +371,8 @@ function binJsCandidates(shimPath) {
  *     （macOS 上 GUI 启动的 PATH 很窄，只有 /usr/bin:/bin:/usr/sbin:/sbin）。
  *  2. 解释器要实测：dsh 的 CLI 在旧 Node 上会**静默退出**（无输出、退出码 0），
  *     所以候选组合会跑一次 `--version` 验证，只挑真能跑的那个（见 pickDshInterpreter）。
- *
- * @returns {{ file: string, args: string[], display: string, kind: string }}
  */
-function resolveDshInvocation(settings) {
+export function resolveDshInvocation(settings: SettingsValues): InvocationSpec {
   const args = ['web', '--no-open']
   const host = String(settings.host || '127.0.0.1').trim()
   const port = Number(settings.port)
@@ -422,7 +457,7 @@ function resolveDshInvocation(settings) {
  * 选择本地 Shell（用于"新建本地 Shell"标签）。
  * Windows：pwsh > powershell > cmd；macOS/Linux：$SHELL > zsh > bash > sh。
  */
-function resolveShell(settings) {
+export function resolveShell(settings: SettingsValues): ShellSpec {
   const override = String(settings.shell || '').trim()
   if (override) return { file: override, args: [], display: override }
 
@@ -449,27 +484,24 @@ function resolveShell(settings) {
 }
 
 /** 判断 HTTP 响应是否来自 dsh web。 */
-function isDshResponse(statusCode, body) {
+export function isDshResponse(statusCode: number | undefined, body: unknown): boolean {
   const text = String(body || '')
   if (/dsh web authentication required/.test(text)) return true
   if (statusCode === 200 && /__DSH_BOOT__|DeepSeek Harness/i.test(text)) return true
   return false
 }
 
-/**
- * 探测一个 HTTP 地址。
- * @returns {Promise<{reachable:boolean,statusCode?:number,latencyMs:number,isDsh:boolean,body?:string,error?:string}>}
- */
-function probeHttp(url, timeoutMs = 1500) {
+/** 探测一个 HTTP 地址。 */
+export function probeHttp(url: string, timeoutMs = 1500): Promise<ProbeResult> {
   return new Promise((resolve) => {
     const started = Date.now()
     let settled = false
-    const finish = (value) => {
+    const finish = (value: Omit<ProbeResult, 'latencyMs'>) => {
       if (settled) return
       settled = true
       resolve({ latencyMs: Date.now() - started, ...value })
     }
-    let request
+    let request: http.ClientRequest
     try {
       request = http.get(
         url,
@@ -477,7 +509,7 @@ function probeHttp(url, timeoutMs = 1500) {
         (res) => {
           let body = ''
           res.setEncoding('utf8')
-          res.on('data', (chunk) => {
+          res.on('data', (chunk: string) => {
             if (body.length < 65536) body += chunk
           })
           res.on('end', () => {
@@ -489,30 +521,33 @@ function probeHttp(url, timeoutMs = 1500) {
               location: res.headers.location
             })
           })
-          res.on('error', (error) =>
+          res.on('error', (error: Error) =>
             finish({ reachable: false, error: error.message, isDsh: false })
           )
         }
       )
     } catch (error) {
-      finish({ reachable: false, error: error.message, isDsh: false })
+      finish({
+        reachable: false,
+        error: error instanceof Error ? error.message : String(error),
+        isDsh: false
+      })
       return
     }
     request.on('timeout', () => {
       request.destroy()
       finish({ reachable: false, error: 'timeout', isDsh: false })
     })
-    request.on('error', (error) => finish({ reachable: false, error: error.message, isDsh: false }))
+    request.on('error', (error: Error) =>
+      finish({ reachable: false, error: error.message, isDsh: false })
+    )
   })
 }
 
 /**
  * 从 netstat -ano 输出里解析监听指定端口的 PID（纯函数，便于单测）。
- * @param {string} stdout
- * @param {number} port
- * @returns {{pid:number, local:string, port:number}|null}
  */
-function parseNetstatForPort(stdout, port) {
+export function parseNetstatForPort(stdout: string, port: number): PortOwner | null {
   const wanted = `:${port}`
   for (const line of String(stdout || '').split(/\r?\n/)) {
     const cols = line.trim().split(/\s+/)
@@ -533,11 +568,8 @@ function parseNetstatForPort(stdout, port) {
  * 行形如：COMMAND   PID USER   FD  TYPE DEVICE SIZE/OFF NODE NAME
  *          node   42112  abc   20u IPv4 0x...      0t0  TCP 127.0.0.1:3080 (LISTEN)
  * NAME 列在协议名（TCP）之后：可能是 *:3080、127.0.0.1:3080 或 [::1]:3080。
- * @param {string} stdout
- * @param {number} port
- * @returns {{pid:number, local:string, port:number}|null}
  */
-function parseLsofForPort(stdout, port) {
+export function parseLsofForPort(stdout: string, port: number): PortOwner | null {
   const wanted = `:${Number(port)}`
   for (const line of String(stdout || '').split(/\r?\n/)) {
     if (!/\(LISTEN\)/i.test(line)) continue
@@ -555,13 +587,13 @@ function parseLsofForPort(stdout, port) {
 }
 
 /** 用平台自带命令找出监听指定端口的进程 PID。 */
-function portOwnerSync(port) {
+export function portOwnerSync(port: number): Promise<PortOwner | null> {
   return new Promise((resolve) => {
     if (!Number.isInteger(port) || port <= 0) {
       resolve(null)
       return
     }
-    const finish = (stdout) => {
+    const finish = (stdout: string | undefined) => {
       if (!stdout) {
         resolve(null)
         return
@@ -606,7 +638,7 @@ function portOwnerSync(port) {
 }
 
 /** 查询 PID 对应的进程名（尽力而为）。 */
-function processNameSync(pid) {
+export function processNameSync(pid: number): Promise<string> {
   return new Promise((resolve) => {
     if (!Number.isInteger(pid) || pid <= 0) {
       resolve('')
@@ -644,14 +676,14 @@ function processNameSync(pid) {
 }
 
 /** POSIX：递归收集 pid 的所有后代（pgrep -P 一层层展开，子先父后） */
-function collectDescendants(pid, exec) {
-  const out = []
-  const queue = [pid]
+function collectDescendants(pid: number, exec: typeof execFileSync): number[] {
+  const out: number[] = []
+  const queue: number[] = [pid]
   let guard = 0
   while (queue.length > 0 && guard < 64) {
     guard += 1
-    const parent = queue.shift()
-    let children
+    const parent = queue.shift() as number
+    let children: number[]
     try {
       const stdout = exec('pgrep', ['-P', String(parent)])
       children = String(stdout || '')
@@ -668,7 +700,7 @@ function collectDescendants(pid, exec) {
 }
 
 /** POSIX：优先杀"自己的进程组"（pgid==pid 时整组一起清），否则按后代顺序逐个终止。 */
-function killPosixTree(pid, signal) {
+function killPosixTree(pid: number, signal: NodeJS.Signals): void {
   try {
     const pgid = Number(
       String(
@@ -703,7 +735,7 @@ function killPosixTree(pid, signal) {
 }
 
 /** 终止进程树（Windows 用 taskkill /T /F，POSIX 用信号按组/按后代清）。 */
-function killTree(pid, force = true) {
+export function killTree(pid: number, force = true): Promise<boolean> {
   return new Promise((resolve) => {
     if (!Number.isInteger(pid) || pid <= 0) {
       resolve(false)
@@ -729,7 +761,7 @@ function killTree(pid, force = true) {
 }
 
 /** 同步终止，用于退出应用前的兜底清理。 */
-function killTreeSync(pid) {
+export function killTreeSync(pid: number): void {
   if (!Number.isInteger(pid) || pid <= 0) return
   try {
     if (isWindows) {
@@ -747,46 +779,20 @@ function killTreeSync(pid) {
 }
 
 /** 判断 PID 是否存活。 */
-function isAlive(pid) {
+export function isAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false
   try {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    return error.code === 'EPERM'
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 
-function homeDir() {
+export function homeDir(): string {
   try {
     return os.homedir()
   } catch {
     return process.cwd()
   }
-}
-
-module.exports = {
-  COMSPEC,
-  canRunDsh,
-  dshInterpreterCandidates,
-  findGlobalDshBinJs,
-  findNodeExe,
-  homeDir,
-  isAlive,
-  isDshResponse,
-  isMac,
-  isWindows,
-  killTree,
-  killTreeSync,
-  parseLsofForPort,
-  parseNetstatForPort,
-  pickDshInterpreter,
-  portOwnerSync,
-  probeHttp,
-  processNameSync,
-  resolveDshInvocation,
-  resolveShell,
-  splitArgs,
-  stripAnsi,
-  whichSync
 }
