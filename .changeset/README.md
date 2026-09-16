@@ -37,3 +37,16 @@
 > 与本仓库 `tools/changelog-extract.mts` 的契约（`## [x.y.z] - YYYY-MM-DD`）不一致 ——
 > `.changeset/config.json` 里因此设了 `changelog: false`，汇总这一步由
 > `tools/release-prepare.mts` 自己做。
+
+## 汇总之后片段就没了（这是有意为之）
+
+汇总会把已消费的片段**删掉** —— 仓库里不留"历史片段"目录，**存档就是 git 历史本身**：
+
+```bash
+git log --diff-filter=A --name-only -- .changeset/   # 每个片段是哪个提交加进来的
+git show <那次发布的提交>:.changeset/xxx.md          # 片段原文，一行不差
+```
+
+PR 的 diff 里也留着一份（片段本来就是随着那次改动一起提交的）。这么选是因为
+`CHANGELOG.md` 已经是对外的那份记录 —— 再在仓库里养一份目录，只会让"哪份才是事实来源"变模糊；
+真要翻原始描述，git 与 PR 都能翻到。
