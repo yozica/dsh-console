@@ -18,16 +18,17 @@ import {
   TERM_THEMES
 } from '../lib/xterm.js'
 import { currentTab, dsh, phaseInfo, snapshot } from '../lib/store.js'
+import type { TerminalEntry } from '../lib/xterm.js'
 
 const api = window.dshConsole
 
-const host = ref(null)
+const host = ref<HTMLElement | null>(null)
 const hasContent = ref(false)
 const busyStart = ref(false)
-let entry = null
-let observer = null
-let offOutput = null
-let offExit = null
+let entry: TerminalEntry | null = null
+let observer: ResizeObserver | null = null
+let offOutput: (() => void) | null = null
+let offExit: (() => void) | null = null
 
 const own = computed(() => Boolean(dsh.value?.owned))
 const note = computed(() => {

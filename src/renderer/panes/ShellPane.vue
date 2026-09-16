@@ -18,22 +18,34 @@ import {
 } from '../lib/xterm.js'
 import { currentTab, snapshot, startStore } from '../lib/store.js'
 import { isMac } from '../lib/platform.js'
+import type { TerminalEntry } from '../lib/xterm.js'
 
 const api = window.dshConsole
 
-/** @type {import('vue').Ref<Array<{id:string, label:string}>>} */
-const sessions = ref([])
-const activeId = ref(null)
+/** 本页展示的一个本地 Shell 会话：模板按它渲染标签（chips）与终端面板 */
+interface ShellSession {
+  id: string
+  label: string
+  /** 启动命令，只用于终端首行的提示与标签的 title */
+  command?: string
+  /** 接回已有会话时带上尺寸，避免第一次 fit 白白触发一次 PTY resize */
+  cols?: number
+  rows?: number
+}
+
+const sessions = ref<ShellSession[]>([])
+const activeId = ref<string | null>(null)
 const busy = ref(false)
 
 /** id → 终端实例（响应式引用会包装实例，所以放普通 Map） */
-const terminals = new Map()
+const terminals = new Map<string, TerminalEntry>()
 /** id → 面板元素（模板 ref 收集） */
-const paneEls = new Map()
-const host = ref(null)
-let observer = null
-let offOutput = null
-let offExit = null
+const paneEls = new Map<string, HTMLElement>()
+const host = ref<HTMLElement | null>(null)
+let observer: ResizeObserver | null = null
+/** 事件退订函数（onUnmounted 里调用） */
+let offOutput: (() => void) | null = null
+let offExit: (() => void) | null = null
 
 const activeSession = computed(
   () => sessions.value.find((item) => item.id === activeId.value) || null
@@ -50,8 +62,8 @@ function resolvedTheme() {
   return snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark'
 }
 
-function setPaneEl(id, el) {
-  if (el) paneEls.set(id, el)
+function setPaneEl(id: string, el: Element | { $el?: unknown } | null): void {
+  if (el instanceof HTMLElement) paneEls.set(id, el)
   else paneEls.delete(id)
 }
 
@@ -60,9 +72,9 @@ function setPaneEl(id, el) {
  * 时序：createShell 返回 → nextTick → 建终端，这中间 PTY 可能已经吐了提示符；
  * 没有这个缓冲，最先那一屏（往往就是提示符）会丢。
  */
-const pendingOutput = new Map()
+const pendingOutput = new Map<string, string>()
 
-function writeToSession(id, chunk) {
+function writeToSession(id: string, chunk: string): void {
   const entry = terminals.get(id)
   if (entry) {
     entry.term.write(chunk)
@@ -71,20 +83,21 @@ function writeToSession(id, chunk) {
   pendingOutput.set(id, (pendingOutput.get(id) || '') + chunk)
 }
 
-function flushPending(id) {
+function flushPending(id: string): void {
   const buffered = pendingOutput.get(id)
   if (!buffered) return
   pendingOutput.delete(id)
   terminals.get(id)?.term.write(buffered)
 }
 
-function syncFit(id) {
+function syncFit(id: string | null | undefined): void {
+  if (!id) return
   const entry = terminals.get(id)
   if (!entry) return
   fitAndSync(entry, (cols, rows) => api.sessionResize(id, cols, rows))
 }
 
-function activate(id) {
+function activate(id: string): void {
   activeId.value = id
   requestAnimationFrame(() => {
     syncFit(id)
@@ -94,16 +107,15 @@ function activate(id) {
 
 /**
  * 把一个会话挂上终端。新建与"界面重载后接回"共用这一条路径。
- *
- * @param {{id:string,label:string,command?:string,cols?:number,rows?:number}} session
  */
-async function attachSession(session) {
+async function attachSession(session: ShellSession): Promise<void> {
   await nextTick()
   const el = paneEls.get(session.id)
   if (!el) return
   const entry = attachTerminal(el, resolvedTheme())
   // 按存下的行列建终端：尺寸一致时第一次 fit 就是空操作，不会白白触发一次 PTY resize
-  if (session.cols > 0 && session.rows > 0) entry.term.resize(session.cols, session.rows)
+  const { cols, rows } = session
+  if (cols && cols > 0 && rows && rows > 0) entry.term.resize(cols, rows)
   // Ctrl+1~6 / ⌘1~6 交给应用；Ctrl+R 留给 shell —— 那是它的反向历史搜索
   passAppShortcutsThrough(entry.term)
   entry.term.onData((data) => api.sessionInput(session.id, data))
@@ -113,26 +125,27 @@ async function attachSession(session) {
   flushPending(session.id)
 }
 
-async function createSession() {
+async function createSession(): Promise<void> {
   if (busy.value) return
   busy.value = true
   try {
     // 新会话的尺寸参考已有终端；都没有就用一个常见默认值
     const anyTerm = [...terminals.values()][0]?.term
     const result = await api.createShell(anyTerm?.cols || 110, anyTerm?.rows || 30)
-    if (!result?.ok) {
+    const id = result?.id
+    if (!result?.ok || !id) {
       alert(`创建本地 Shell 失败：${result?.error || '未知错误'}`)
       return
     }
     // 标题由主进程给（它得跟着会话一起被持久化）
-    const session = {
-      id: result.id,
-      label: result.label || `Shell ${result.id.replace('shell-', '')}`,
+    const session: ShellSession = {
+      id,
+      label: result.label || `Shell ${id.replace('shell-', '')}`,
       command: result.command
     }
     sessions.value.push(session)
     await attachSession(session)
-    activate(session.id)
+    activate(id)
   } finally {
     busy.value = false
   }
@@ -147,13 +160,13 @@ async function createSession() {
  * 应用重启不在此列：本地 Shell **不做任何持久化**（用户的决定），
  * 每次启动都是全新的一页，个数、目录、标题、终端内容都不保留。
  */
-async function restoreSessions() {
+async function restoreSessions(): Promise<void> {
   await startStore()
   const listed = (snapshot.value?.sessions || []).filter((item) => item.meta?.kind === 'shell')
   if (listed.length === 0) return
   for (const item of listed) {
     sessions.value.push({
-      id: item.id,
+      id: String(item.id),
       label: item.meta?.label || `Shell ${String(item.id).replace('shell-', '')}`,
       command: item.meta?.command || '',
       // 尺寸带上：终端按同样的行列建立，第一次 fit 就不会白白触发一次 PTY resize
@@ -162,31 +175,32 @@ async function restoreSessions() {
     })
   }
   for (const session of sessions.value) await attachSession(session)
-  activate(sessions.value[sessions.value.length - 1].id)
+  const last = sessions.value[sessions.value.length - 1]
+  if (last) activate(last.id)
 }
 
 // ------------------------------------------------------------ 重命名
 
-const editingId = ref(null)
+const editingId = ref<string | null>(null)
 const renameDraft = ref('')
 /**
  * 重命名输入框的元素。用**函数式 ref**收集，不能在模板里给 ref 变量本身赋值：
  * `:ref="(el) => (renameInput = el)"` 会编译成给 const 赋值，运行时抛
  * "Assignment to constant variable"，补丁中断、输入框根本出不来（踩过）。
  */
-const renameInput = ref(null)
+const renameInput = ref<HTMLInputElement | null>(null)
 
-function setRenameInput(el) {
-  renameInput.value = el
+function setRenameInput(el: Element | { $el?: unknown } | null): void {
+  renameInput.value = el instanceof HTMLInputElement ? el : null
 }
 
 /** 点已选中的标签就是改名（和文件管理器一致），双击任意标签也可以 */
-function onChipClick(item) {
+function onChipClick(item: ShellSession): void {
   if (item.id === activeId.value) startRename(item)
   else activate(item.id)
 }
 
-async function startRename(item) {
+async function startRename(item: ShellSession): Promise<void> {
   editingId.value = item.id
   renameDraft.value = item.label
   await nextTick()
@@ -194,11 +208,11 @@ async function startRename(item) {
   renameInput.value?.select()
 }
 
-function cancelRename() {
+function cancelRename(): void {
   editingId.value = null
 }
 
-async function commitRename() {
+async function commitRename(): Promise<void> {
   const id = editingId.value
   if (!id) return
   const label = renameDraft.value.trim()
@@ -219,7 +233,7 @@ async function commitRename() {
   }
 }
 
-function killActive() {
+function killActive(): void {
   const id = activeId.value
   if (!id) return
   // 「关闭当前」是彻底的：主进程会同时把它从持久化文件里删掉，下次启动不再重开

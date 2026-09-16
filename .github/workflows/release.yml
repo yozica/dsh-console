@@ -63,9 +63,9 @@ jobs:
       - name: 自检
         run: npm test
 
-      # 代码规范与格式：任一条不过就不继续打包（也就不可能发出不合规的版本）
+      # 代码规范、格式与类型：任一条不过就不继续打包（也就不可能发出不合规的版本）
       - name: 代码规范
-        run: npm run lint && npm run format:check
+        run: npm run lint && npm run format:check && npm run typecheck
 
       - name: 打包
         shell: pwsh
@@ -108,9 +108,9 @@ jobs:
       - name: 自检
         run: npm test
 
-      # 代码规范与格式：任一条不过就不继续打包（也就不可能发出不合规的版本）
+      # 代码规范、格式与类型：任一条不过就不继续打包（也就不可能发出不合规的版本）
       - name: 代码规范
-        run: npm run lint && npm run format:check
+        run: npm run lint && npm run format:check && npm run typecheck
 
       # ad-hoc 签名（package.json 里 mac.identity = "-"）：没有开发者证书时，**也必须签**。
       # 不签名的 .app 在 Apple 芯片上根本起不来 —— 系统弹的是「已损坏，无法打开」（0.2.1 就是这样），

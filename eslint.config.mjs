@@ -22,7 +22,17 @@ const rendererFiles = ['src/renderer/**/*.{js,ts,vue}']
 
 export default [
   // 构建产物与生成物不检查
-  { ignores: ['dist/**', 'release/**', 'build/**', '.verify/**', 'node_modules/**'] },
+  // .build-home 是本地打包/冒烟用的临时 HOME（见 .gitignore），里面的脚本不进 lint
+  {
+    ignores: [
+      'dist/**',
+      'release/**',
+      'build/**',
+      '.verify/**',
+      'node_modules/**',
+      '.build-home/**'
+    ]
+  },
 
   js.configs.recommended,
   // TS 规则集（只作用于 .ts/.tsx/.mts/.cts）。这里刻意先用**不带类型信息**的那套：

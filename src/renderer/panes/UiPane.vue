@@ -15,10 +15,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { restartFlow } from '../lib/dsh-actions.js'
 import { currentTab, dsh, immersive, immersiveAutoEntered, settings } from '../lib/store.js'
+import type { WebviewElement, WebviewFailLoadEvent } from '../lib/webview.js'
 
 const api = window.dshConsole
 
-const view = ref(null)
+const view = ref<WebviewElement | null>(null)
 const note = ref('还没有拿到带令牌的地址')
 const urlInput = ref('')
 const busy = ref(false)
@@ -42,11 +43,11 @@ const tokenWarning = computed(() => {
     : '还没拿到访问令牌，内嵌界面暂不可用。等本应用启动的 dsh 打印出带令牌地址后会自动可用。'
 })
 
-function maskUrl(url) {
+function maskUrl(url: unknown): string {
   return String(url || '').replace(/(token=)[^&\s]+/i, '$1***')
 }
 
-function escapeHtml(text) {
+function escapeHtml(text: unknown): string {
   return String(text || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -59,7 +60,7 @@ const hintBody = ref('')
 const hintVisible = ref(true)
 let hintPinned = false
 
-function showHint(title, bodyHtml, pinned) {
+function showHint(title: string, bodyHtml: string, pinned?: boolean): void {
   hintTitle.value = title
   hintBody.value = bodyHtml
   hintVisible.value = true
@@ -98,7 +99,7 @@ function updateHint() {
   )
 }
 
-function loadUrl(url) {
+function loadUrl(url?: string | null): void {
   const el = view.value
   if (!el || !url) return
   hideHint()
@@ -118,7 +119,7 @@ function loadUrl(url) {
   el.src = url
 }
 
-function maybeLoad(force) {
+function maybeLoad(force?: boolean): void {
   if (!dsh.value) return
   const url = resolvedUrl.value
   if (!url) {
@@ -212,11 +213,12 @@ onMounted(() => {
     note.value = `已载入 ${url}`
   })
   el.addEventListener('did-fail-load', (event) => {
-    if (event.errorCode === -3) return // 被新导航取代/主动取消，不算失败
-    note.value = `载入失败 (${event.errorCode}) ${event.errorDescription}`
+    const detail = event as WebviewFailLoadEvent
+    if (detail.errorCode === -3) return // 被新导航取代/主动取消，不算失败
+    note.value = `载入失败 (${detail.errorCode}) ${detail.errorDescription}`
     showHint(
       '载入失败',
-      `错误码 <code>${event.errorCode}</code>：${escapeHtml(event.errorDescription)}<br>地址：<code>${escapeHtml(maskUrl(event.validatedURL))}</code>`,
+      `错误码 <code>${detail.errorCode}</code>：${escapeHtml(detail.errorDescription)}<br>地址：<code>${escapeHtml(maskUrl(detail.validatedURL))}</code>`,
       true
     )
   })
@@ -267,7 +269,7 @@ onMounted(() => {
       id="btn-ui-managed"
       class="btn small"
       :disabled="busy"
-      :aria-busy="busy ? 'true' : null"
+      :aria-busy="busy ? 'true' : undefined"
       @click="restartManaged"
     >
       <svg class="i"><use href="#i-restart" /></svg><span>重启为受管实例</span>

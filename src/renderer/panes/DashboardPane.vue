@@ -17,18 +17,19 @@ import { phaseText } from '../lib/phase-text.js'
 import { formatDurationMs, formatUptime } from '../lib/format.js'
 import { forceStopFlow, openUiExternally, restartFlow, stopFlow } from '../lib/dsh-actions.js'
 import { dsh, snapshot, startStore } from '../lib/store.js'
+import type { DshLogEntry } from '../../shared/ipc.js'
 
 const api = window.dshConsole
 
-const logs = ref([])
-const logList = ref(null)
+const logs = ref<DshLogEntry[]>([])
+const logList = ref<HTMLElement | null>(null)
 /** 正在进行的操作名（按钮的 aria-busy / 互斥用） */
 const busy = ref('')
 /** 每秒自增，让「已运行」自己走字（其余字段等状态轮询刷新） */
 const tick = ref(0)
 
-let offLog = null
-let timer = null
+let offLog: (() => void) | null = null
+let timer: ReturnType<typeof setInterval> | null = null
 
 const phase = computed(() => dsh.value?.phase || 'stopped')
 const info = computed(() => phaseText(phase.value))
@@ -100,11 +101,11 @@ const spark = computed(() => {
 })
 
 /** 操作结果交给外壳的底栏显示（底栏是外壳的一部分） */
-function say(message) {
+function say(message: string): void {
   window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: message }))
 }
 
-async function run(name, task) {
+async function run(name: string, task: () => Promise<void> | void): Promise<void> {
   if (busy.value) return
   busy.value = name
   try {
@@ -135,7 +136,7 @@ async function copyUrl() {
   say('地址已复制到剪贴板（含访问令牌，请勿外传）')
 }
 
-function appendLog(entry) {
+function appendLog(entry: DshLogEntry): void {
   logs.value.push(entry)
   if (logs.value.length > 250) logs.value.splice(0, logs.value.length - 250)
   void nextTick(() => {
@@ -173,7 +174,7 @@ onUnmounted(() => {
             id="btn-start"
             class="btn primary"
             :disabled="Boolean(busy) || switching || own || phase === 'external'"
-            :aria-busy="busy === 'start' ? 'true' : null"
+            :aria-busy="busy === 'start' ? 'true' : undefined"
             :title="
               own
                 ? 'dsh 正在运行，无需重复启动'
@@ -191,7 +192,7 @@ onUnmounted(() => {
             id="btn-stop"
             class="btn"
             :disabled="Boolean(busy) || switching || (!own && !dsh?.externalPid)"
-            :aria-busy="busy === 'stop' ? 'true' : null"
+            :aria-busy="busy === 'stop' ? 'true' : undefined"
             :title="
               switching
                 ? '正在切换状态，稍候'
@@ -209,7 +210,7 @@ onUnmounted(() => {
             id="btn-restart"
             class="btn ghost"
             :disabled="Boolean(busy) || switching"
-            :aria-busy="busy === 'restart' ? 'true' : null"
+            :aria-busy="busy === 'restart' ? 'true' : undefined"
             @click="restart"
           >
             <svg class="i"><use href="#i-restart" /></svg><span>重启</span>
@@ -296,7 +297,7 @@ onUnmounted(() => {
               id="btn-ctrl-c"
               class="btn small"
               :disabled="!own"
-              :aria-busy="busy === 'ctrlc' ? 'true' : null"
+              :aria-busy="busy === 'ctrlc' ? 'true' : undefined"
               @click="sendCtrlC"
             >
               <svg class="i"><use href="#i-terminal" /></svg><span>发送 Ctrl+C</span>
@@ -305,7 +306,7 @@ onUnmounted(() => {
               id="btn-force-stop"
               class="btn small danger"
               :disabled="(!own && !dsh?.externalPid) || Boolean(busy)"
-              :aria-busy="busy === 'force' ? 'true' : null"
+              :aria-busy="busy === 'force' ? 'true' : undefined"
               @click="forceStop"
             >
               <svg class="i"><use href="#i-warn" /></svg><span>强制结束进程树</span>

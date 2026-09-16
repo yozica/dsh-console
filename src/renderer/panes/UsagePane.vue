@@ -11,12 +11,13 @@
  */
 import { onMounted, ref, watch } from 'vue'
 import { currentTab, settings } from '../lib/store.js'
+import type { WebviewElement, WebviewFailLoadEvent } from '../lib/webview.js'
 
 const api = window.dshConsole
 
 const USAGE_FALLBACK_URL = 'https://platform.deepseek.com/usage'
 
-const view = ref(null)
+const view = ref<WebviewElement | null>(null)
 const note = ref('还没有打开')
 const hintTitle = ref('还没打开用量页')
 /** 仅出错时替换为空状态正文；正常时用模板里的默认说明 */
@@ -31,14 +32,14 @@ function targetUrl() {
   return /^https?:\/\//i.test(raw) ? raw : USAGE_FALLBACK_URL
 }
 
-function escapeHtml(text) {
+function escapeHtml(text: unknown): string {
   return String(text || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
 }
 
-function showEmpty(title, bodyHtml) {
+function showEmpty(title: string, bodyHtml?: string): void {
   hintTitle.value = title
   if (bodyHtml !== undefined) hintBody.value = bodyHtml
   hintVisible.value = true
@@ -100,11 +101,12 @@ onMounted(() => {
     note.value = `已载入 ${el.getURL()}`
   })
   el.addEventListener('did-fail-load', (event) => {
-    if (event.errorCode === -3) return // 被新导航取代/主动取消，不算失败
-    note.value = `载入失败 (${event.errorCode})`
+    const detail = event as WebviewFailLoadEvent
+    if (detail.errorCode === -3) return // 被新导航取代/主动取消，不算失败
+    note.value = `载入失败 (${detail.errorCode})`
     showEmpty(
       '用量页没能载入',
-      `<p>错误码 <code>${event.errorCode}</code>：${escapeHtml(event.errorDescription)}</p>` +
+      `<p>错误码 <code>${detail.errorCode}</code>：${escapeHtml(detail.errorDescription)}</p>` +
         `<p>地址：<code>${escapeHtml(loadedUrl)}</code></p>` +
         '<p>先检查网络；也可以点右上角「在浏览器打开」。地址能在「设置 → DeepSeek 用量页」里改。</p>'
     )

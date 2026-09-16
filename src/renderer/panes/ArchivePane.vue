@@ -12,22 +12,23 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { renderMarkdown } from '../lib/markdown.js'
+import type { ArchivedSessionSummary, ConversationReadResult } from '../../shared/ipc.js'
 
 const api = window.dshConsole
 
-const sessions = ref([])
+const sessions = ref<ArchivedSessionSummary[]>([])
 const query = ref('')
 const dshRunning = ref(false)
 const home = ref('')
 const loading = ref(false)
 const error = ref('')
 
-const selectedId = ref(null)
-const conversation = ref(null)
+const selectedId = ref<string | null>(null)
+const conversation = ref<ConversationReadResult | null>(null)
 const reading = ref(false)
 const readError = ref('')
 
-const busy = ref('') // 'restore' | 'remove'
+const busy = ref<'' | 'restore' | 'remove'>('')
 
 /** 搜索：标题 / 首句 / 每轮问答摘要，不区分大小写 */
 const filtered = computed(() => {
@@ -38,16 +39,16 @@ const filtered = computed(() => {
 
 const selected = computed(() => sessions.value.find((s) => s.id === selectedId.value) || null)
 
-function say(message) {
+function say(message: string): void {
   window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: message }))
 }
 
-function pad(n) {
+function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
 /** 索引里的时间：今年省掉年份，给标题让地方 */
-function fmtListTime(ms) {
+function fmtListTime(ms: number | null | undefined): string {
   if (!ms) return ''
   const d = new Date(ms)
   const md = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -56,13 +57,13 @@ function fmtListTime(ms) {
 }
 
 /** 详情里的时间：完整日期时间 */
-function fmtFullTime(ms) {
+function fmtFullTime(ms: number | null | undefined): string {
   if (!ms) return ''
   const d = new Date(ms)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function fmtSize(bytes) {
+function fmtSize(bytes: number | null | undefined): string {
   if (bytes == null) return ''
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -73,15 +74,15 @@ function fmtSize(bytes) {
  * 角色栏文字：只在角色切换时给一次。同角色的连续消息（一次回答被工具调用
  * 拆成多个 step）不再重复写「助手」，靠留白连成一段。
  */
-function roleLabel(index) {
+function roleLabel(index: number): string {
   const list = conversation.value?.messages || []
   const message = list[index]
   if (!message) return ''
-  if (index > 0 && list[index - 1].role === message.role) return ''
+  if (index > 0 && list[index - 1]?.role === message.role) return ''
   return message.role === 'user' ? '你' : '助手'
 }
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
@@ -103,13 +104,13 @@ async function load() {
   }
 }
 
-function select(session) {
+function select(session: ArchivedSessionSummary): void {
   if (selectedId.value === session.id) return
   selectedId.value = session.id
   void readConversation(session.id)
 }
 
-async function readConversation(id) {
+async function readConversation(id: string): Promise<void> {
   reading.value = true
   readError.value = ''
   conversation.value = null
@@ -125,7 +126,7 @@ async function readConversation(id) {
   }
 }
 
-async function restore() {
+async function restore(): Promise<void> {
   const s = selected.value
   if (!s || busy.value) return
   const ok = await api.confirm({
@@ -154,7 +155,7 @@ async function restore() {
   }
 }
 
-async function remove() {
+async function remove(): Promise<void> {
   const s = selected.value
   if (!s || busy.value) return
   const ok = await api.confirm({
@@ -193,7 +194,7 @@ onMounted(() => {
       <button
         class="btn small primary"
         :disabled="loading"
-        :aria-busy="loading ? 'true' : null"
+        :aria-busy="loading ? 'true' : undefined"
         @click="load"
       >
         <svg class="i"><use href="#i-replay" /></svg><span>刷新</span>
@@ -264,7 +265,7 @@ onMounted(() => {
           <button
             class="btn small"
             :disabled="!selected || busy === 'remove'"
-            :aria-busy="busy === 'restore' ? 'true' : null"
+            :aria-busy="busy === 'restore' ? 'true' : undefined"
             title="从归档列表移回侧边栏（不改动任何数据）"
             @click="restore"
           >
@@ -273,7 +274,7 @@ onMounted(() => {
           <button
             class="btn small danger"
             :disabled="!selected || busy === 'restore'"
-            :aria-busy="busy === 'remove' ? 'true' : null"
+            :aria-busy="busy === 'remove' ? 'true' : undefined"
             title="删除该会话的日志与缓存，不可撤销"
             @click="remove"
           >
