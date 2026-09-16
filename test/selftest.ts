@@ -11,6 +11,7 @@
  *   4. 端口占用解析（Windows 的 netstat / macOS·Linux 的 lsof 夹具 + 可选的真实查询）
  *   5. DshManager 状态机（外部实例接管判定）
  *   6. 渲染层静态检查（含 macOS 的平台适配契约）
+ *   7. 主题取值、发布：CHANGELOG 条目与 changeset 片段的汇总规则
  */
 
 import path from 'node:path';
@@ -877,6 +878,72 @@ async function main(): Promise<void> {
     `发布：CHANGELOG.md 有当前版本 ${pkg.version} 的条目`,
     Boolean(section && section.trim()),
     section ? section.split('\n')[0] : '缺条目 —— 发版前先在 CHANGELOG.md 里写这一版',
+  );
+
+  // ---------------------------------------------------------- 9. 发布片段（changesets）
+  //    CHANGELOG 不再手写：每条改动写一个 .changeset/*.md 片段，发版前由 tools/release-prepare.mts
+  //    汇总成 `## [x.y.z] - YYYY-MM-DD` 的条目。汇总脚本万一算错版本号或写歪标题，
+  //    坏掉的是 Release 正文 —— 所以这里把它的纯函数逐个钉住。
+  const releaseTools = await import('../tools/release-prepare.mjs');
+
+  check(
+    '发布片段：版本号规则与 changesets 一致（0.2.2 + patch / minor / major）',
+    releaseTools.incrementVersion('0.2.2', 'patch') === '0.2.3' &&
+      releaseTools.incrementVersion('0.2.2', 'minor') === '0.3.0' &&
+      releaseTools.incrementVersion('0.2.2', 'major') === '1.0.0',
+  );
+  check(
+    '发布片段：多个片段时取最高一级',
+    releaseTools.pickBump(['patch', 'major', 'minor']) === 'major' &&
+      releaseTools.pickBump(['patch', 'patch']) === 'patch',
+  );
+  const parsedFragment = releaseTools.parseFragment(
+    "---\n'dsh-console': minor\n---\n\n### 小节\n\n正文\n",
+    'dsh-console',
+  );
+  check(
+    '发布片段：能解析 front matter 与正文（小节结构原样保留）',
+    parsedFragment?.type === 'minor' && parsedFragment.body === '### 小节\n\n正文',
+  );
+  check(
+    '发布片段：空片段（changeset add --empty）不算本包的改动',
+    releaseTools.parseFragment('---\n---\n', 'dsh-console') === null,
+  );
+  const releaseEntry = releaseTools.buildEntry('0.2.3', '2026-09-17', [
+    { file: 'a.md', type: 'patch', body: '一条改动' },
+  ]);
+  check(
+    '发布片段：条目是 `## [x.y.z] - 日期`（提取脚本认的形状）',
+    releaseEntry === '## [0.2.3] - 2026-09-17\n\n一条改动',
+    releaseEntry.split('\n')[0],
+  );
+  const insertedEntry = releaseTools.insertEntry(
+    '# Changelog\n\n## [Unreleased]\n\n## [0.2.2] - 2026-09-16\n\n旧条目\n',
+    releaseEntry,
+  );
+  check(
+    '发布片段：新条目插在 Unreleased 之后、上一个版本之前',
+    insertedEntry.indexOf('## [Unreleased]') < insertedEntry.indexOf('一条改动') &&
+      insertedEntry.indexOf('一条改动') < insertedEntry.indexOf('## [0.2.2]'),
+  );
+  check(
+    '发布片段：改版本号只动 "version" 那一行，package.json 其余部分逐字节不变',
+    releaseTools.replaceVersion('{\n  "name": "x",\n  "version": "0.2.2"\n}\n', '0.3.0') ===
+      '{\n  "name": "x",\n  "version": "0.3.0"\n}\n',
+  );
+  // 配置里必须留着 changelog: false —— 打开它 changesets 就会自己写 `## x.y.z` 这种
+  // 没有方括号与日期的标题，与提取脚本的契约不符（见 tools/release-prepare.mts 顶部说明）。
+  const changesetConfig = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, '.changeset/config.json'), 'utf8'),
+  ) as { changelog?: unknown; privatePackages?: { version?: unknown } };
+  check(
+    '发布片段：.changeset/config.json 关掉了 changesets 自带的 CHANGELOG 生成',
+    changesetConfig.changelog === false,
+    `changelog=${JSON.stringify(changesetConfig.changelog)}`,
+  );
+  check(
+    '发布片段：私有包也要能被改版本号（privatePackages.version）',
+    changesetConfig.privatePackages?.version === true,
   );
 
   // ---------------------------------------------------------- 汇总

@@ -103,8 +103,9 @@ npm start
   都是显式字面量）、`vue/attributes-order`（模板里 `class` 写在最前是既定写法，Prettier 也不重排属性）。
 
 `husky` 的 `pre-commit` 只跑 **`lint-staged`**：仅处理**这次改到的文件**（先 `eslint --fix` 再
-`prettier --write`），不碰没动过的文件。全量检查是上面那几条命令与 CI 的事 —— CI 的两个打包 job 都会跑
-`npm test` 与 `npm run lint && npm run format:check && npm run typecheck`，任一不过就不会发版。
+`prettier --write`），不碰没动过的文件。全量检查是上面那几条命令与 CI 的事：**PR 与合入 main** 由
+`.github/workflows/ci.yml` 跑这一整套（外加"改动要带 changeset 片段"的闸门），**打标签**出包时
+`release.yml` 的两个 job 会再跑一遍（要发出去的东西自己证明合规），任一不过就不会发版。
 
 > 临时要跳过钩子：`git commit --no-verify`。偶尔用可以，别形成习惯 —— 它跳过的只是"本地这次检查"，
 > CI 那一关照样在。
@@ -291,14 +292,37 @@ zlib + CRC，解码 = inflate + 反滤波），仓库因此不引图像库。
 
 ### 发布新版本（GitHub Actions）
 
-发版的**内容**写在 `CHANGELOG.md` 里，**打标签**之后 CI 自动打包并建一个 Release 草稿：
+`CHANGELOG.md` **不再手写**：每条改动在 `.changeset/` 里放一个**片段**，发版前汇总成它的新条目。
 
-```powershell
-# 1. 先在 CHANGELOG.md 里写好这一版的条目（格式见该文件顶部）
-# 2. 改版本号 + 提交 + 打标签 + 推
-npm version patch        # → v0.1.1
-git push --follow-tags
+```bash
+# 1. 开发过程中：每处要发版的改动都带一个片段（PR 上的闸门会检查）
+npx changeset add          # 交互式：选 patch/minor/major + 写说明（= npm run changeset）
+#    纯 CI / 纯文档这类不需要进 CHANGELOG 的改动：npx changeset add --empty
+
+# 2. 发版：把片段汇总出来
+npm run release:prepare    # 加 --dry-run 只看不改
+#    ↑ 算出版本号 → 写 CHANGELOG.md 条目 → 改 package.json → 删掉已汇总的片段
+
+# 3. 提交 + 打标签 + 推（推标签即触发 CI 出包）
+git add -A && git commit -m "chore: 发布 0.2.3"
+git tag v0.2.3 && git push origin main --tags
 ```
+
+片段就是 changesets 的标准形状（正文会**原样**成为 CHANGELOG 里那一条，所以可以自带 `### 小节`）：
+
+```md
+---
+'dsh-console': patch
+---
+
+状态栏的快捷键提示还停在 1~6，实际已经有 7 个页面
+```
+
+**为什么不用现成的 `changeset version`**：它写出来的标题是 `## x.y.z`（既没有方括号也没有日期），
+而本仓库的契约是 `## [x.y.z] - YYYY-MM-DD` —— `tools/changelog-extract.mts` 按它取 Release 正文，
+自检里也有断言。所以只借 changesets 的两样东西：**片段约定**与 **`changeset status` 闸门**；
+汇总由 `tools/release-prepare.mts` 做，版本规则与 changesets 一致（取所有片段里最高的一级：
+0.2.2 + patch → 0.2.3、+ minor → 0.3.0、+ major → 1.0.0）。
 
 **Release 正文就是 CHANGELOG 里这一版的条目**（`tools/changelog-extract.mts` 按版本号取出来，
 末尾再附一段固定的下载指引）。所以忘了写条目会**直接失败**：提取脚本非零退出 → `publish` job 红，
@@ -670,10 +694,12 @@ src/
       UsagePane.vue     DeepSeek 用量页
       ArchivePane.vue   归档会话页
       SettingsPane.vue  设置页
-test/selftest.ts        71 项自检，不需要 Electron
+test/selftest.ts        80 项自检，不需要 Electron
 tools/
   changelog-extract.mts 从 CHANGELOG.md 按版本号取出 Release 正文
+  release-prepare.mts   把 .changeset/ 里的片段汇总成 CHANGELOG 条目（见「发布新版本」）
   make-icon.mts         生成 build/icon.png（手写 PNG 编解码）
+.changeset/             每条改动一个片段；config.json 里 changelog: false（汇总自己做）
 ```
 
 ### 迁移状态（原生 → Vue：已完成）
@@ -913,7 +939,7 @@ powershell -File ..\.dsh\click-app.ps1 -Keys '^+d'     # Ctrl+Shift+D
 
 已在本机（macOS，Apple 芯片）跑通的部分：
 
-- `npm test`（`test/selftest.ts`，71/71）：
+- `npm test`（`test/selftest.ts`，80/80）：
   - 命令解析三级回退、ANSI/横幅令牌提取、dsh 健康判据（真实探测到本机 3080 上运行的 dsh 返回 `401 dsh web authentication required`）
   - **解释器实测**：解析出的 `node + bin.js` 组合会跑一次 `--version` 验证真的能跑 dsh —— 本机候选里
     只有 nvm 的 v24.14.1 通过，PATH 里的 v22（vite-plus 包装）与 v22 安装都被判定为不可用，
