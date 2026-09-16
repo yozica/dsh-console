@@ -192,7 +192,9 @@ onMounted(() => {
     const url = el.getURL()
     let body = ''
     try {
-      body = await el.executeJavaScript('document.body ? document.body.innerText.slice(0, 500) : ""')
+      body = await el.executeJavaScript(
+        'document.body ? document.body.innerText.slice(0, 500) : ""'
+      )
     } catch {
       /* 拿不到页面文本就跳过鉴权判定 */
     }
@@ -270,7 +272,9 @@ onMounted(() => {
     >
       <svg class="i"><use href="#i-restart" /></svg><span>重启为受管实例</span>
     </button>
-    <button id="btn-ui-reload" class="btn small ghost" @click="reload"><span>重新载入</span></button>
+    <button id="btn-ui-reload" class="btn small ghost" @click="reload">
+      <span>重新载入</span>
+    </button>
     <button id="btn-ui-back" class="btn small ghost" @click="goBack">
       <svg class="i"><use href="#i-back" /></svg><span>后退</span>
     </button>
@@ -292,11 +296,19 @@ onMounted(() => {
       placeholder="可选：粘贴 dsh 打印的带令牌地址"
       @keydown.enter="applyPastedUrl"
     />
-    <button id="btn-ui-load-pasted" class="btn small" @click="applyPastedUrl">用这个地址载入</button>
+    <button id="btn-ui-load-pasted" class="btn small" @click="applyPastedUrl">
+      用这个地址载入
+    </button>
   </div>
 
   <div class="webview-wrap">
-    <webview class="embedded-view" id="ui-view" ref="view" partition="persist:dsh-ui" allowpopups></webview>
+    <webview
+      class="embedded-view"
+      id="ui-view"
+      ref="view"
+      partition="persist:dsh-ui"
+      allowpopups
+    ></webview>
     <div id="ui-empty" class="empty empty-fill" :class="{ hidden: !hintVisible }">
       <svg class="i empty-i"><use href="#i-browser" /></svg>
       <h2 id="ui-hint-title">{{ hintTitle }}</h2>

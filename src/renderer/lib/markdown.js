@@ -42,13 +42,17 @@ function renderInline(text) {
   // 图片 ![alt](url)：这里只保留替代文字（应用是文本向的，且 CSP 不加载外链图片）
   // 注意：整段文本已经先转义过，URL 里的括号用平衡匹配，避免维基百科式 (x) 链接留下多余括号
   const LINK_URL = '((?:[^()\\s]+|\\([^()\\s]*\\))+)'
-  text = text.replace(new RegExp(`!\\[([^\\]]*)\\]\\(${LINK_URL}\\)`, 'g'), (_match, alt) => stash(alt))
+  text = text.replace(new RegExp(`!\\[([^\\]]*)\\]\\(${LINK_URL}\\)`, 'g'), (_match, alt) =>
+    stash(alt)
+  )
 
   // 链接 [text](url)
   text = text.replace(new RegExp(`\\[([^\\]]+)\\]\\(${LINK_URL}\\)`, 'g'), (_match, label, url) => {
     const href = safeHref(url)
     if (!href) return stash(label)
-    return stash(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`)
+    return stash(
+      `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+    )
   })
 
   // 删除线 ~~text~~
@@ -155,12 +159,18 @@ export function renderMarkdown(source) {
         quote.push(lines[index].trim().replace(/^&gt;\s?/, ''))
         index++
       }
-      blocks.push(`<blockquote>${quote.map((item) => `<p>${renderInline(item)}</p>`).join('')}</blockquote>`)
+      blocks.push(
+        `<blockquote>${quote.map((item) => `<p>${renderInline(item)}</p>`).join('')}</blockquote>`
+      )
       continue
     }
 
     // 表格：当前行是表头，下一行是分隔行
-    if (line.startsWith('|') && index + 1 < lines.length && isTableSeparator(lines[index + 1].trim())) {
+    if (
+      line.startsWith('|') &&
+      index + 1 < lines.length &&
+      isTableSeparator(lines[index + 1].trim())
+    ) {
       const tableLines = [line]
       index += 2 // 跳过表头与分隔行
       while (index < lines.length && lines[index].trim().startsWith('|')) {
@@ -184,14 +194,20 @@ export function renderMarkdown(source) {
         index++
       }
       const tag = ordered ? 'ol' : 'ul'
-      blocks.push(`<${tag}>${items.map((item) => `<li>${renderInline(item)}</li>`).join('')}</${tag}>`)
+      blocks.push(
+        `<${tag}>${items.map((item) => `<li>${renderInline(item)}</li>`).join('')}</${tag}>`
+      )
       continue
     }
 
     // 段落：收集到空行或下一个块级起点
     const paragraph = [line]
     index++
-    while (index < lines.length && lines[index].trim() !== '' && !isBlockStart(lines[index].trim())) {
+    while (
+      index < lines.length &&
+      lines[index].trim() !== '' &&
+      !isBlockStart(lines[index].trim())
+    ) {
       paragraph.push(lines[index].trim())
       index++
     }
@@ -199,5 +215,7 @@ export function renderMarkdown(source) {
   }
 
   // 恢复代码块占位符
-  return blocks.join('\n').replace(/\u0001(\d+)\u0001/g, (_match, idx) => codeBlocks[Number(idx)] ?? '')
+  return blocks
+    .join('\n')
+    .replace(/\u0001(\d+)\u0001/g, (_match, idx) => codeBlocks[Number(idx)] ?? '')
 }

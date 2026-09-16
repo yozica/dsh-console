@@ -6,7 +6,17 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { app, BrowserWindow, Menu, ipcMain, shell, dialog, nativeImage, nativeTheme, session } = require('electron')
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  ipcMain,
+  shell,
+  dialog,
+  nativeImage,
+  nativeTheme,
+  session
+} = require('electron')
 
 const { Settings } = require('./settings')
 const { PtySessions } = require('./pty-sessions')
@@ -184,12 +194,16 @@ function wireGuestDiagnostics(guest) {
     const info = readConsoleMessage(args)
     if (suppressElectronDevNoise(info.message)) return
     if (info.level === 'error') dshManager.log('error', `${label} 控制台报错：${info.message}`)
-    else if (info.level === 'warning') dshManager.log('warn', `${label} 控制台警告：${info.message}`)
+    else if (info.level === 'warning')
+      dshManager.log('warn', `${label} 控制台警告：${info.message}`)
   })
 
   guest.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
     if (code === -3) return // 被新导航取代，属正常
-    dshManager.log('error', `${label} ${isMainFrame === false ? '子框架' : '页面'}加载失败 ${code} ${description} ${url}`)
+    dshManager.log(
+      'error',
+      `${label} ${isMainFrame === false ? '子框架' : '页面'}加载失败 ${code} ${description} ${url}`
+    )
   })
 
   guest.on('render-process-gone', (_event, details) => {
@@ -197,14 +211,16 @@ function wireGuestDiagnostics(guest) {
   })
 }
 
-/** 内嵌页发出的请求失败时也记一笔（CSP 拦截、DNS、连接被重置都会走这里） */function wireEmbeddedRequestDiagnostics() {
+/** 内嵌页发出的请求失败时也记一笔（CSP 拦截、DNS、连接被重置都会走这里） */ function wireEmbeddedRequestDiagnostics() {
   for (const partition of Object.keys(EMBEDDED_LABELS)) {
     try {
-      session.fromPartition(partition).webRequest.onErrorOccurred({ urls: ['*://*/*'] }, (details) => {
-        if (/ERR_ABORTED/.test(details.error)) return // 导航被取代 / 主动取消
-        const short = details.url.length > 120 ? `${details.url.slice(0, 117)}…` : details.url
-        dshManager.log('warn', `${embeddedLabel(partition)} 请求失败 ${details.error} ${short}`)
-      })
+      session
+        .fromPartition(partition)
+        .webRequest.onErrorOccurred({ urls: ['*://*/*'] }, (details) => {
+          if (/ERR_ABORTED/.test(details.error)) return // 导航被取代 / 主动取消
+          const short = details.url.length > 120 ? `${details.url.slice(0, 117)}…` : details.url
+          dshManager.log('warn', `${embeddedLabel(partition)} 请求失败 ${details.error} ${short}`)
+        })
     } catch (error) {
       console.error(`[main] 无法为 ${partition} 安装请求诊断:`, error.message)
     }
@@ -332,7 +348,10 @@ function createWindow() {
   // 渲染层是 Vite 的产物：缺了它页面会白屏，所以在日志里说清楚，别让人猜
   const entry = path.join(RENDERER_DIST, 'index.html')
   if (!fs.existsSync(entry)) {
-    dshManager.log('error', `渲染层产物缺失：${entry} —— 先跑 npm run build（npm start 会自动构建）`)
+    dshManager.log(
+      'error',
+      `渲染层产物缺失：${entry} —— 先跑 npm run build（npm start 会自动构建）`
+    )
   }
   mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
     if (code === -3) return
@@ -360,7 +379,8 @@ function wireDevTools(contents) {
     const isF12 = input.key === 'F12'
     // Windows/Linux 是 Ctrl+Shift+I，macOS 习惯是 Cmd+Alt+I
     const isInspect =
-      (input.control && input.shift && key === 'i') || (isMac && input.meta && input.alt && key === 'i')
+      (input.control && input.shift && key === 'i') ||
+      (isMac && input.meta && input.alt && key === 'i')
     if (!isF12 && !isInspect) return
     event.preventDefault()
     if (contents.isDevToolsOpened()) contents.closeDevTools()
@@ -495,8 +515,14 @@ function registerIpc() {
          * 系统窗口是否处于全屏（macOS 绿灯 / Windows F11）。
          * 渲染层据此决定要不要给红绿灯留位置 —— 全屏时它会自动隐藏。
          */
-        nativeFullscreen: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()),
-        versions: { electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome }
+        nativeFullscreen: Boolean(
+          mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()
+        ),
+        versions: {
+          electron: process.versions.electron,
+          node: process.versions.node,
+          chrome: process.versions.chrome
+        }
       },
       userData: app.getPath('userData'),
       theme: themeInfo()
@@ -506,7 +532,10 @@ function registerIpc() {
   ipcMain.handle('theme:set', (_event, mode) => {
     const next = applyThemeSource(mode)
     settings.patch({ themeMode: next })
-    dshManager.log('info', `界面主题：${next}${next === 'system' ? `（当前为${nativeTheme.shouldUseDarkColors ? '深色' : '亮色'}）` : ''}`)
+    dshManager.log(
+      'info',
+      `界面主题：${next}${next === 'system' ? `（当前为${nativeTheme.shouldUseDarkColors ? '深色' : '亮色'}）` : ''}`
+    )
     return broadcastTheme()
   })
 
@@ -530,7 +559,13 @@ function registerIpc() {
 
   ipcMain.handle('dsh:stop', async (_event, options) => {
     try {
-      return { ok: true, state: await dshManager.stop({ force: Boolean(options?.force), killExternal: Boolean(options?.killExternal) }) }
+      return {
+        ok: true,
+        state: await dshManager.stop({
+          force: Boolean(options?.force),
+          killExternal: Boolean(options?.killExternal)
+        })
+      }
     } catch (error) {
       return { ok: false, error: error.message, state: dshManager.snapshot() }
     }
@@ -603,7 +638,9 @@ function registerIpc() {
   /** 重命名本地 Shell 的标题：只活在本次运行里（终端标题由主进程持有，渲染层只显示） */
   ipcMain.handle('session:rename', (_event, payload) => {
     const id = String(payload?.id || '')
-    const label = String(payload?.label || '').trim().slice(0, 40)
+    const label = String(payload?.label || '')
+      .trim()
+      .slice(0, 40)
     if (!id || !label) return { ok: false, error: '名字不能为空' }
     ptySessions.rename(id, label)
     return { ok: true, id, label }
@@ -657,7 +694,11 @@ function registerIpc() {
 
   ipcMain.handle('archive:unarchive', (_event, id) => {
     try {
-      return { ok: true, dshRunning: dshManager.sessionAlive, ...archiveManager.unarchive(String(id)) }
+      return {
+        ok: true,
+        dshRunning: dshManager.sessionAlive,
+        ...archiveManager.unarchive(String(id))
+      }
     } catch (error) {
       return { ok: false, error: error.message }
     }
@@ -720,7 +761,8 @@ async function bootstrap() {
   nativeTheme.on('updated', () => {
     // system 模式下系统切换明暗时，把新结果推给渲染层
     const info = broadcastTheme()
-    if (dshManager) dshManager.log('info', `系统主题变化 → ${info.resolved === 'dark' ? '深色' : '亮色'}`)
+    if (dshManager)
+      dshManager.log('info', `系统主题变化 → ${info.resolved === 'dark' ? '深色' : '亮色'}`)
   })
 
   ptySessions = new PtySessions()
@@ -736,9 +778,15 @@ async function bootstrap() {
 
   const theme = themeInfo()
   dshManager.startPolling()
-  dshManager.log('info', `DSH Console 已启动（Electron ${process.versions.electron} / Node ${process.versions.node}）`)
+  dshManager.log(
+    'info',
+    `DSH Console 已启动（Electron ${process.versions.electron} / Node ${process.versions.node}）`
+  )
   dshManager.log('info', `内嵌页 UA：${app.userAgentFallback}`)
-  dshManager.log('info', `界面主题：${theme.mode}（当前为${theme.resolved === 'dark' ? '深色' : '亮色'}）`)
+  dshManager.log(
+    'info',
+    `界面主题：${theme.mode}（当前为${theme.resolved === 'dark' ? '深色' : '亮色'}）`
+  )
   if (settings.migration) {
     dshManager.log(
       'info',

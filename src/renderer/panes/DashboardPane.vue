@@ -91,7 +91,10 @@ const spark = computed(() => {
   const span = Math.max(1, max - min)
   const step = 100 / (samples.length - 1)
   const line = samples
-    .map((value, index) => `${(index * step).toFixed(2)},${(26 - ((value - min) / span) * 22).toFixed(2)}`)
+    .map(
+      (value, index) =>
+        `${(index * step).toFixed(2)},${(26 - ((value - min) / span) * 22).toFixed(2)}`
+    )
     .join(' ')
   return { area: `0, 28 ${line} 100, 28`, line, stats: `平均 ${avg} ms，峰值 ${max} ms` }
 })
@@ -273,7 +276,9 @@ onUnmounted(() => {
         </header>
         <ul id="event-log" ref="logList" class="event-log">
           <li v-for="(entry, index) in logs" :key="index" :data-level="entry.level">
-            <span class="ts">{{ new Date(entry.at).toLocaleTimeString('zh-CN', { hour12: false }) }}</span
+            <span class="ts">{{
+              new Date(entry.at).toLocaleTimeString('zh-CN', { hour12: false })
+            }}</span
             ><span class="lv">{{ entry.level }}</span
             ><span class="msg">{{ entry.text }}</span>
           </li>
@@ -307,7 +312,8 @@ onUnmounted(() => {
             </button>
           </div>
           <p class="hint">
-            「停止」先发 Ctrl+C 让 dsh 自己退出，超过 <span id="hint-grace">{{ graceText }}</span> 才强杀。
+            「停止」先发 Ctrl+C 让 dsh 自己退出，超过
+            <span id="hint-grace">{{ graceText }}</span> 才强杀。
             当前实例不是本应用启动时，停止前会先问一次。
           </p>
         </div>
@@ -334,7 +340,9 @@ onUnmounted(() => {
         <div class="panel-block">
           <div class="block-head">
             <span>启动命令</span>
-            <span class="block-note">工作目录 <span id="launch-cwd">{{ launchCwd }}</span></span>
+            <span class="block-note"
+              >工作目录 <span id="launch-cwd">{{ launchCwd }}</span></span
+            >
           </div>
           <code id="launch-command" class="command">{{ launchCommand }}</code>
         </div>

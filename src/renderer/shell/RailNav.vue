@@ -10,7 +10,15 @@
  * 由 app.js 监听 currentTab 自己处理 —— 那几页还没迁移。
  */
 import { computed } from 'vue'
-import { currentTab, dsh, phase, phaseInfo, settings, setThemeMode, snapshot } from '../lib/store.js'
+import {
+  currentTab,
+  dsh,
+  phase,
+  phaseInfo,
+  settings,
+  setThemeMode,
+  snapshot
+} from '../lib/store.js'
 import { formatUptime } from '../lib/format.js'
 
 const TABS = [
@@ -23,7 +31,9 @@ const TABS = [
   { id: 'settings', icon: 'i-sliders', label: '设置' }
 ]
 
-const themeMode = computed(() => snapshot.value?.theme?.mode || settings.value.themeMode || 'system')
+const themeMode = computed(
+  () => snapshot.value?.theme?.mode || settings.value.themeMode || 'system'
+)
 
 const owned = computed(() => Boolean(dsh.value?.owned))
 

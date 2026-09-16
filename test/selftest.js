@@ -77,11 +77,20 @@ async function main() {
     Boolean(launch.file) && Array.isArray(launch.args) && launch.args.includes('web'),
     `${launch.kind}: ${launch.display}`
   )
-  check('命令解析：带上了 --no-open 与 --port', launch.args.includes('--no-open') && launch.args.includes('--port'))
+  check(
+    '命令解析：带上了 --no-open 与 --port',
+    launch.args.includes('--no-open') && launch.args.includes('--port')
+  )
 
   if (IS_WINDOWS) {
-    const shimLaunch = processUtils.resolveDshInvocation({ ...settings.all(), dshCommand: 'C:\\fake\\dsh.cmd' })
-    check('命令解析：自定义 .cmd 走 cmd.exe', shimLaunch.file.toLowerCase().includes('cmd') && shimLaunch.kind === 'custom-shim')
+    const shimLaunch = processUtils.resolveDshInvocation({
+      ...settings.all(),
+      dshCommand: 'C:\\fake\\dsh.cmd'
+    })
+    check(
+      '命令解析：自定义 .cmd 走 cmd.exe',
+      shimLaunch.file.toLowerCase().includes('cmd') && shimLaunch.kind === 'custom-shim'
+    )
   } else {
     // macOS/Linux 上 .cmd 是 Windows 批处理：必须明确报错，而不是假装能跑
     let rejected = false
@@ -93,7 +102,10 @@ async function main() {
     check('命令解析：POSIX 下 .cmd 明确报错而不是假装能跑', rejected)
   }
 
-  const directLaunch = processUtils.resolveDshInvocation({ ...settings.all(), dshCommand: '/usr/local/bin/dsh' })
+  const directLaunch = processUtils.resolveDshInvocation({
+    ...settings.all(),
+    dshCommand: '/usr/local/bin/dsh'
+  })
   check(
     '命令解析：自定义命令直接执行（不带 shim）',
     directLaunch.kind === 'custom' && directLaunch.file === '/usr/local/bin/dsh',
@@ -117,7 +129,10 @@ async function main() {
       )
     }
   } catch (error) {
-    skip('命令解析：PATH 里没有 dsh 也能从全局安装目录找到 bin.js', `本机没有可用的 node/dsh：${error.message}`)
+    skip(
+      '命令解析：PATH 里没有 dsh 也能从全局安装目录找到 bin.js',
+      `本机没有可用的 node/dsh：${error.message}`
+    )
   } finally {
     process.env.PATH = savedPath
   }
@@ -162,7 +177,8 @@ async function main() {
     // 真正拦下来的是 args 里没有 -l —— 所以这里既查文件也查 -l，别只查其中一个。
     const envShell = String(process.env.SHELL || '').trim()
     const expected = envShell && fs.existsSync(envShell) ? envShell : /(zsh|bash)$|\/sh$/
-    const sameAsUserShell = typeof expected === 'string' ? shell.file === expected : expected.test(shell.file)
+    const sameAsUserShell =
+      typeof expected === 'string' ? shell.file === expected : expected.test(shell.file)
     check(
       '本地 Shell 解析：POSIX 用用户自己的登录 shell（$SHELL 优先，不会是 pwsh）',
       sameAsUserShell && shell.args.includes('-l'),
@@ -176,19 +192,36 @@ async function main() {
   const plain = processUtils.stripAnsi(banner)
   check('ANSI 清理：不残留转义序列', !/\u001b/.test(plain), JSON.stringify(plain.slice(0, 40)))
   const urlMatch = plain.match(/dsh web:\s+(https?:\/\/[^\s)]+)/)
-  check('横幅解析：提取到带令牌 URL', Boolean(urlMatch) && urlMatch[1].includes('token=abc123DEF'), urlMatch && urlMatch[1])
+  check(
+    '横幅解析：提取到带令牌 URL',
+    Boolean(urlMatch) && urlMatch[1].includes('token=abc123DEF'),
+    urlMatch && urlMatch[1]
+  )
 
   // ---------------------------------------------------------- 3. 健康探测判据
   check(
     'dsh 判据：401 + 鉴权提示算 dsh',
-    processUtils.isDshResponse(401, 'dsh web authentication required; reopen the URL printed by dsh web.\n') === true
+    processUtils.isDshResponse(
+      401,
+      'dsh web authentication required; reopen the URL printed by dsh web.\n'
+    ) === true
   )
-  check('dsh 判据：带 __DSH_BOOT__ 的 200 算 dsh', processUtils.isDshResponse(200, '<script>window.__DSH_BOOT__={}</script>') === true)
-  check('dsh 判据：别的 200 页面不算 dsh', processUtils.isDshResponse(200, '<html>hello nginx</html>') === false)
+  check(
+    'dsh 判据：带 __DSH_BOOT__ 的 200 算 dsh',
+    processUtils.isDshResponse(200, '<script>window.__DSH_BOOT__={}</script>') === true
+  )
+  check(
+    'dsh 判据：别的 200 页面不算 dsh',
+    processUtils.isDshResponse(200, '<html>hello nginx</html>') === false
+  )
 
   const probe = await processUtils.probeHttp('http://127.0.0.1:3080', 1500)
   if (probe.reachable) {
-    check('健康探测（真实）：判定为 dsh', probe.isDsh === true, `HTTP ${probe.statusCode}, ${probe.latencyMs}ms`)
+    check(
+      '健康探测（真实）：判定为 dsh',
+      probe.isDsh === true,
+      `HTTP ${probe.statusCode}, ${probe.latencyMs}ms`
+    )
   } else {
     skip('健康探测（真实）', `本机 3080 无服务：${probe.error}`)
   }
@@ -210,9 +243,19 @@ async function main() {
     ''
   ].join('\r\n')
   const parsed = processUtils.parseNetstatForPort(netstatFixture, 3080)
-  check('netstat 解析：挑出 LISTENING 行的 PID', parsed && parsed.pid === 42112, JSON.stringify(parsed))
-  check('netstat 解析：不会误取其它端口', processUtils.parseNetstatForPort(netstatFixture, 4242) === null)
-  check('netstat 解析：ESTABLISHED 行不会被当成监听', processUtils.parseNetstatForPort(netstatFixture, 54321) === null)
+  check(
+    'netstat 解析：挑出 LISTENING 行的 PID',
+    parsed && parsed.pid === 42112,
+    JSON.stringify(parsed)
+  )
+  check(
+    'netstat 解析：不会误取其它端口',
+    processUtils.parseNetstatForPort(netstatFixture, 4242) === null
+  )
+  check(
+    'netstat 解析：ESTABLISHED 行不会被当成监听',
+    processUtils.parseNetstatForPort(netstatFixture, 54321) === null
+  )
 
   const lsofFixture = [
     'COMMAND   PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME',
@@ -222,10 +265,20 @@ async function main() {
     ''
   ].join('\n')
   const lsofParsed = processUtils.parseLsofForPort(lsofFixture, 3080)
-  check('lsof 解析：挑出 LISTEN 行的 PID', lsofParsed && lsofParsed.pid === 42112, JSON.stringify(lsofParsed))
-  check('lsof 解析：通配监听 *:3081 也能命中', processUtils.parseLsofForPort(lsofFixture, 3081)?.pid === 42113)
+  check(
+    'lsof 解析：挑出 LISTEN 行的 PID',
+    lsofParsed && lsofParsed.pid === 42112,
+    JSON.stringify(lsofParsed)
+  )
+  check(
+    'lsof 解析：通配监听 *:3081 也能命中',
+    processUtils.parseLsofForPort(lsofFixture, 3081)?.pid === 42113
+  )
   check('lsof 解析：不会误取其它端口', processUtils.parseLsofForPort(lsofFixture, 4242) === null)
-  check('lsof 解析：ESTABLISHED 行不会被当成监听', processUtils.parseLsofForPort(lsofFixture, 54321) === null)
+  check(
+    'lsof 解析：ESTABLISHED 行不会被当成监听',
+    processUtils.parseLsofForPort(lsofFixture, 54321) === null
+  )
 
   const spawnOk = await canSpawnBinaries()
   const nameQueryOk = await canQueryProcessName()
@@ -235,7 +288,11 @@ async function main() {
     skip('端口占用查询（真实系统命令）', '3080 无监听')
   } else {
     const owner = await processUtils.portOwnerSync(3080)
-    check('端口占用查询：拿到 PID', Boolean(owner && Number.isInteger(owner.pid)), owner ? `PID ${owner.pid}` : 'null')
+    check(
+      '端口占用查询：拿到 PID',
+      Boolean(owner && Number.isInteger(owner.pid)),
+      owner ? `PID ${owner.pid}` : 'null'
+    )
     if (owner && nameQueryOk) {
       const name = await processUtils.processNameSync(owner.pid)
       check('端口占用查询：拿到进程名', name.length > 0, name)
@@ -251,7 +308,11 @@ async function main() {
   await manager.pollOnce()
   const snapshot = manager.snapshot()
   if (probe.reachable && probe.isDsh) {
-    check('状态机：识别为外部实例（接管模式）', snapshot.phase === 'external', `phase=${snapshot.phase}`)
+    check(
+      '状态机：识别为外部实例（接管模式）',
+      snapshot.phase === 'external',
+      `phase=${snapshot.phase}`
+    )
     if (spawnOk) {
       check('状态机：记录了外部 PID', Boolean(snapshot.externalPid), `PID ${snapshot.externalPid}`)
     } else {
@@ -292,10 +353,18 @@ async function main() {
     `owned=${early.owned} pid=${early.pid}`
   )
   fakePid = 42148
-  check('状态机：PTY 就绪后能读到真实 PID', stubManager.ownedPid === 42148, `pid=${stubManager.ownedPid}`)
+  check(
+    '状态机：PTY 就绪后能读到真实 PID',
+    stubManager.ownedPid === 42148,
+    `pid=${stubManager.ownedPid}`
+  )
   fakePid = 0
   stubManager.portPid = 999
-  check('状态机：PID 未知时用端口占用者兜底', stubManager.ownedPid === 999, `pid=${stubManager.ownedPid}`)
+  check(
+    '状态机：PID 未知时用端口占用者兜底',
+    stubManager.ownedPid === 999,
+    `pid=${stubManager.ownedPid}`
+  )
 
   // 会话消失 + 没有兜底 PID => 不再算自己的进程（界面据此把"停止"置灰）
   stubPty.has = () => false
@@ -352,17 +421,26 @@ async function main() {
   const rendererCode = rendererAll.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
 
   const htmlIds = new Set([...markup.matchAll(/id="([^"]+)"/g)].map((match) => match[1]))
-  const jsIds = [...new Set([...rendererCode.matchAll(/getElementById\('([^']+)'\)/g)].map((match) => match[1]))]
+  const jsIds = [
+    ...new Set([...rendererCode.matchAll(/getElementById\('([^']+)'\)/g)].map((match) => match[1]))
+  ]
   const missingIds = jsIds.filter((id) => !htmlIds.has(id))
   check(
     '渲染层：JS 引用的元素 id 都存在于标记里（HTML + .vue）',
     missingIds.length === 0,
-    missingIds.length ? `缺少 ${missingIds.join(', ')}` : `${jsIds.length} 个 id（覆盖 ${vueFiles.length} 个 .vue）`
+    missingIds.length
+      ? `缺少 ${missingIds.join(', ')}`
+      : `${jsIds.length} 个 id（覆盖 ${vueFiles.length} 个 .vue）`
   )
 
-  const preloadJs = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8')
+  const preloadJs = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'preload', 'preload.js'),
+    'utf8'
+  )
   const exposed = new Set([...preloadJs.matchAll(/^\s{2}([A-Za-z]+):/gm)].map((match) => match[1]))
-  const apiCalls = [...new Set([...rendererCode.matchAll(/\bapi\.([A-Za-z]+)\(/g)].map((match) => match[1]))]
+  const apiCalls = [
+    ...new Set([...rendererCode.matchAll(/\bapi\.([A-Za-z]+)\(/g)].map((match) => match[1]))
+  ]
   const missingApi = apiCalls.filter((name) => !exposed.has(name))
   check(
     '渲染层：调用的 api.* 都在 preload 里暴露',
@@ -374,11 +452,16 @@ async function main() {
   // 输入会送进 PTY，但 PTY 返回的提示符与回显没人接 —— 界面上就是"打字没反应"。
   // 迁移时正好漏了这条订阅（本地 Shell 全程没有回显），所以用检查盯住。
   const createsShell = /api\.createShell\(/.test(rendererCode)
-  const wiresSession = /api\.sessionInput\(/.test(rendererCode) && /api\.onSessionOutput\(/.test(rendererCode)
+  const wiresSession =
+    /api\.sessionInput\(/.test(rendererCode) && /api\.onSessionOutput\(/.test(rendererCode)
   check(
     '渲染层：发起会话的页面同时接了输入与输出',
     !createsShell || wiresSession,
-    createsShell ? (wiresSession ? '输入/输出成对' : '有 createShell 但没有 onSessionOutput') : '没有会话功能'
+    createsShell
+      ? wiresSession
+        ? '输入/输出成对'
+        : '有 createShell 但没有 onSessionOutput'
+      : '没有会话功能'
   )
 
   // 每个组件都必须在 mount.js 的挂载清单里，否则界面上那块永远是空的
@@ -410,7 +493,9 @@ async function main() {
   check(
     '渲染层：用终端的页面都订阅了容器尺寸变化',
     terminalUsers.length > 0 && noObserver.length === 0,
-    noObserver.length ? `缺 ResizeObserver：${noObserver.join(', ')}` : `${terminalUsers.length} 个页面`
+    noObserver.length
+      ? `缺 ResizeObserver：${noObserver.join(', ')}`
+      : `${terminalUsers.length} 个页面`
   )
   // 挂了终端的页面还要让应用快捷键穿过去：xterm 会把 Ctrl+2~6 当控制字符吃掉并停止冒泡，
   // 不调 attachCustomKeyEventHandler 的话，人在终端里按这些键切不动页面
@@ -456,7 +541,9 @@ async function main() {
   // CSS 与 JS 的契约：样式用 body[data-xxx] 当开关，就必须有人去设置这个属性。
   // 漏掉的话按钮改了状态、界面毫无反应 —— 应用内全屏就这么整个失效过一次
   // （CSS 里 8 条规则全挂在 body[data-immersive] 上，而没人写它）。
-  const bodyFlags = [...new Set([...cssText.matchAll(/body\[data-([\w-]+)/g)].map((match) => match[1]))]
+  const bodyFlags = [
+    ...new Set([...cssText.matchAll(/body\[data-([\w-]+)/g)].map((match) => match[1]))
+  ]
   const unwiredFlags = bodyFlags.filter((flag) => {
     const camel = flag.replace(/-([a-z])/g, (_all, letter) => letter.toUpperCase())
     return !new RegExp(`dataset\\.(?:${flag}|${camel})\\s*=`).test(rendererCode)
@@ -477,12 +564,20 @@ async function main() {
   check(
     '渲染层：macOS 红绿灯留白给左栏（应用内全屏让白、系统全屏撤回、非全屏顶栏不缩进）',
     /html\[data-platform='darwin'\]\s*\.rail\s*\{[^}]*padding-top/.test(cssText) &&
-      /html\[data-platform='darwin'\]\s*body\[data-immersive='true'\]\s*\.topbar\s*\{[^}]*padding-left/.test(cssText) &&
+      /html\[data-platform='darwin'\]\s*body\[data-immersive='true'\]\s*\.topbar\s*\{[^}]*padding-left/.test(
+        cssText
+      ) &&
       !/html\[data-platform='darwin'\]\s*\.topbar\s*\{[^}]*padding-left/.test(cssText) &&
-      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.rail\s*\{[^}]*padding-top/.test(cssText) &&
-      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.topbar[^{]*\{[^}]*padding-left/.test(cssText) &&
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.rail\s*\{[^}]*padding-top/.test(
+        cssText
+      ) &&
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.topbar[^{]*\{[^}]*padding-left/.test(
+        cssText
+      ) &&
       /api\.onFullscreen\(/.test(rendererCode) &&
-      /onFullscreen:/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8')) &&
+      /onFullscreen:/.test(
+        fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8')
+      ) &&
       /documentElement\.dataset\.platform\s*=/.test(platformJs) &&
       /setPlatform\(snapshot\.value\?\.env\?\.platform\)/.test(rendererCode),
     '左栏让位 + 应用内全屏顶栏让位 + 系统全屏撤回 + 非全屏不缩进 + platform/全屏状态都有来源'
@@ -497,7 +592,9 @@ async function main() {
   check(
     '渲染层：三处快捷键处理器都按平台取修饰键',
     notPlatformAware.length === 0,
-    notPlatformAware.length ? `未适配：${notPlatformAware.join(', ')}` : `${shortcutFiles.length} 处都走 isAppModifier`
+    notPlatformAware.length
+      ? `未适配：${notPlatformAware.join(', ')}`
+      : `${shortcutFiles.length} 处都走 isAppModifier`
   )
 
   // 依赖从"index.html 里的 script 标签"改成了模块导入（Vite 构建），
@@ -553,7 +650,8 @@ async function main() {
   const partitions = [
     ...markup.replace(/<!--[\s\S]*?-->/g, '').matchAll(/<webview[^>]*partition="([^"]+)"/g)
   ].map((match) => match[1])
-  const allPersistent = partitions.length === 2 && partitions.every((name) => name.startsWith('persist:'))
+  const allPersistent =
+    partitions.length === 2 && partitions.every((name) => name.startsWith('persist:'))
   check(
     '渲染层：两个内嵌页各有独立的持久分区',
     allPersistent && new Set(partitions).size === partitions.length,
@@ -571,7 +669,9 @@ async function main() {
   const withoutVarBlocks = cssCode
     .replace(/:root\s*\{[\s\S]*?\n\}/, '')
     .replace(/:root\[data-theme='light'\]\s*\{[\s\S]*?\n\}/, '')
-  const strayColors = [...withoutVarBlocks.matchAll(/#[0-9a-fA-F]{3,6}\b|rgba?\(/g)].map((match) => match[0])
+  const strayColors = [...withoutVarBlocks.matchAll(/#[0-9a-fA-F]{3,6}\b|rgba?\(/g)].map(
+    (match) => match[0]
+  )
   check(
     '主题：样式表除变量块外没有硬编码颜色',
     strayColors.length === 0,
@@ -581,7 +681,8 @@ async function main() {
   // 主题无关的尺度令牌（字号、圆角、字体）不需要亮色重复定义，只需要覆盖颜色令牌
   const parseVars = (block) => {
     const out = {}
-    for (const match of String(block || '').matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/gi)) out[match[1]] = match[2].trim()
+    for (const match of String(block || '').matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/gi))
+      out[match[1]] = match[2].trim()
     return out
   }
   const isColorValue = (value) => /#[0-9a-f]{3,8}\b|rgba?\(/i.test(value)
@@ -627,7 +728,9 @@ async function main() {
   check(
     '样式：页面容器靠 visibility 隐藏，不用 display:none',
     !paneUsesDisplayNone && /visibility:\s*hidden/.test(paneBody),
-    paneUsesDisplayNone ? '又用回 display:none 了（webview 会拿到错误视口）' : 'visibility: hidden + absolute'
+    paneUsesDisplayNone
+      ? '又用回 display:none 了（webview 会拿到错误视口）'
+      : 'visibility: hidden + absolute'
   )
 
   // 每个 <webview> 都必须在样式里拿到明确高度。漏一个，它就会退化成浏览器默认的
@@ -650,7 +753,9 @@ async function main() {
   check(
     '样式：每个 webview 都有明确高度的样式',
     webviews.length === 2 && unsizedViews.length === 0,
-    unsizedViews.length ? `没尺寸规则：${unsizedViews.length} 个` : `${webviews.length} 个 webview 都有`
+    unsizedViews.length
+      ? `没尺寸规则：${unsizedViews.length} 个`
+      : `${webviews.length} 个 webview 都有`
   )
 
   // 标记里写了但样式表里没有的 class，通常意味着"这块还没做完"。
@@ -662,7 +767,9 @@ async function main() {
     .flatMap((match) => match[1].split(/\s+/))
     .filter((name) => name && !/[{}():]/.test(name))
   const dynamicClasses = [...markup.matchAll(/:class="\{([^}]*)\}"/g)]
-    .flatMap((match) => match[1].split(',').map((pair) => pair.split(':')[0].trim().replace(/^'|'$/g, '')))
+    .flatMap((match) =>
+      match[1].split(',').map((pair) => pair.split(':')[0].trim().replace(/^'|'$/g, ''))
+    )
     .filter((name) => /^[a-zA-Z][\w-]*$/.test(name))
   const htmlClasses = new Set([...staticClasses, ...dynamicClasses])
   const cssClasses = new Set([...css.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((match) => match[1]))
@@ -688,13 +795,20 @@ async function main() {
   // 早期版本用布尔量 + 每次状态变化重新判定，结果解锁后只要条件又变回不满足
   // （用户手动退出全屏就会），锁会重新扣上来。这几条检查就是防它回归。
   const armCalls = (rendererJs.match(/setBootLock\(true\)/g) || []).length
-  check('启动锁：只在一处上锁（idle → waiting）', armCalls === 1, `${armCalls} 处 setBootLock(true)`)
+  check(
+    '启动锁：只在一处上锁（idle → waiting）',
+    armCalls === 1,
+    `${armCalls} 处 setBootLock(true)`
+  )
   check('启动锁：解锁写入 done，不可逆', /bootLockState = 'done'/.test(rendererJs))
   check('启动锁：done 之后直接返回', /if \(bootLockState === 'done'\) return/.test(rendererJs))
   // 解锁条件里一旦掺进"当前是否全屏"，用户一退全屏就会重新满足上锁条件。
   // 只看代码，不看注释（注释里提到 immersive 是为了解释这个坑）。
-  const updateBootLockBody = rendererJs.match(/function updateBootLock\([\s\S]*?\n {2}\}/)?.[0] || ''
-  const updateBootLockCode = updateBootLockBody.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+  const updateBootLockBody =
+    rendererJs.match(/function updateBootLock\([\s\S]*?\n {2}\}/)?.[0] || ''
+  const updateBootLockCode = updateBootLockBody
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
   check(
     '启动锁：解锁判定不看当前是否全屏',
     updateBootLockBody.length > 0 && !/immersive/.test(updateBootLockCode),
@@ -704,7 +818,9 @@ async function main() {
   // 锁必须盖满窗口、且盖住顶栏：左栏是贯穿全高的整列、顶栏又在最上面，
   // 留任何一条缝都会露出"DSH Console"品牌或页面标题（两次被用户抓图指出）。
   const cssBlock = (selector) =>
-    css.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`))?.[0] || ''
+    css.match(
+      new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`)
+    )?.[0] || ''
   const lockZ = Number(cssBlock('.boot-lock').match(/z-index:\s*(\d+)/)?.[1] || 0)
   const topbarZ = Number(cssBlock('.topbar').match(/z-index:\s*(\d+)/)?.[1] || 0)
   check('启动锁：盖满窗口（inset: 0）', /inset:\s*0;/.test(cssBlock('.boot-lock')))

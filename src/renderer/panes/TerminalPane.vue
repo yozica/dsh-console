@@ -70,7 +70,9 @@ async function replay() {
 
 function sendCtrlC() {
   api.dshInput('\u0003')
-  window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: '已发送 Ctrl+C，等 dsh 自己退出' }))
+  window.dispatchEvent(
+    new CustomEvent('dsh:status-message', { detail: '已发送 Ctrl+C，等 dsh 自己退出' })
+  )
 }
 
 async function startDsh() {
@@ -117,7 +119,9 @@ function ensureTerminal() {
     const reason = signal ? `信号 ${signal}` : `退出码 ${exitCode}`
     entry?.term.write(`\r\n\u001b[2m── dsh 已退出（${reason}）──\u001b[0m\r\n`)
     hasContent.value = true
-    window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: `dsh 已退出（${reason}）` }))
+    window.dispatchEvent(
+      new CustomEvent('dsh:status-message', { detail: `dsh 已退出（${reason}）` })
+    )
   })
 
   // 尺寸跟着容器走。不按"当前是否在本页"过滤：页面用 visibility 隐藏、布局一直有效，

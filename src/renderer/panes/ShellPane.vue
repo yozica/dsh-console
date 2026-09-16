@@ -35,7 +35,9 @@ let observer = null
 let offOutput = null
 let offExit = null
 
-const activeSession = computed(() => sessions.value.find((item) => item.id === activeId.value) || null)
+const activeSession = computed(
+  () => sessions.value.find((item) => item.id === activeId.value) || null
+)
 const emptyVisible = computed(() => sessions.value.length === 0)
 /** 空状态里给的人话要跟平台一致：macOS 上默认 shell 是 zsh，没有 cmd */
 const emptyHint = computed(() =>
@@ -210,7 +212,9 @@ async function commitRename() {
   if (result && !result.ok) {
     item.label = previous
     window.dispatchEvent(
-      new CustomEvent('dsh:status-message', { detail: `重命名失败：${result?.error || '未知错误'}` })
+      new CustomEvent('dsh:status-message', {
+        detail: `重命名失败：${result?.error || '未知错误'}`
+      })
     )
   }
 }
@@ -311,7 +315,12 @@ onUnmounted(() => {
       </template>
     </div>
     <div class="spacer"></div>
-    <button id="btn-shell-kill" class="btn small danger" :disabled="!activeSession" @click="killActive">
+    <button
+      id="btn-shell-kill"
+      class="btn small danger"
+      :disabled="!activeSession"
+      @click="killActive"
+    >
       <svg class="i"><use href="#i-x" /></svg><span>关闭当前</span>
     </button>
   </div>

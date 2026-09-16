@@ -23,14 +23,7 @@ const OUT = path.join(ROOT, 'build', 'icon.png')
 const SIZE = 512
 
 /** 白鲸（深色背景用的那版）：深底浅标记 */
-const MARK = path.join(
-  ROOT,
-  'node_modules',
-  '@lobehub',
-  'icons-static-png',
-  'dark',
-  'deepseek.png'
-)
+const MARK = path.join(ROOT, 'node_modules', '@lobehub', 'icons-static-png', 'dark', 'deepseek.png')
 
 // DeepSeek 的品牌蓝，顶亮底深一点（平面色显廉价）
 const TOP = [93, 118, 255]

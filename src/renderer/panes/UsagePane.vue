@@ -137,10 +137,17 @@ onMounted(() => {
 
 <template>
   <div class="bar">
-    <button id="btn-usage-open" class="btn small primary" title="重新加载配置里的地址" @click="open">
+    <button
+      id="btn-usage-open"
+      class="btn small primary"
+      title="重新加载配置里的地址"
+      @click="open"
+    >
       <svg class="i"><use href="#i-usage" /></svg><span>打开用量页</span>
     </button>
-    <button id="btn-usage-reload" class="btn small ghost" @click="reload"><span>重新载入</span></button>
+    <button id="btn-usage-reload" class="btn small ghost" @click="reload">
+      <span>重新载入</span>
+    </button>
     <button id="btn-usage-back" class="btn small ghost" @click="goBack">
       <svg class="i"><use href="#i-back" /></svg><span>后退</span>
     </button>
@@ -157,7 +164,13 @@ onMounted(() => {
   </div>
 
   <div class="webview-wrap">
-    <webview class="embedded-view" id="usage-view" ref="view" partition="persist:deepseek" allowpopups></webview>
+    <webview
+      class="embedded-view"
+      id="usage-view"
+      ref="view"
+      partition="persist:deepseek"
+      allowpopups
+    ></webview>
     <div id="usage-empty" class="empty empty-fill" :class="{ hidden: !hintVisible }">
       <svg class="i empty-i"><use href="#i-usage" /></svg>
       <h2 id="usage-hint-title">{{ hintTitle }}</h2>
@@ -171,7 +184,8 @@ onMounted(() => {
           本应用不读取页面内容，也不会拿到你的账号数据。
         </p>
         <p>
-          想换成别的页面（例如官网主页 <code>https://www.deepseek.com</code>），到「设置 → DeepSeek 用量页」改地址即可。
+          想换成别的页面（例如官网主页 <code>https://www.deepseek.com</code>），到「设置 → DeepSeek
+          用量页」改地址即可。
         </p>
       </div>
     </div>

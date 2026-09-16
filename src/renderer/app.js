@@ -64,9 +64,7 @@ function announceUpdate() {
   if (!snapshot.value?.env?.updated) return
   const version = snapshot.value.env.app || ''
   setTimeout(() => {
-    window.dispatchEvent(
-      new CustomEvent('dsh:status-message', { detail: `已更新到 ${version}` })
-    )
+    window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: `已更新到 ${version}` }))
   }, 2000)
 }
 

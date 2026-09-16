@@ -143,7 +143,9 @@ onUnmounted(() => {
             <option value="dark">深色</option>
           </select>
         </div>
-        <p class="hint">左下角「自动 / 亮 / 深」是同一个设置。内嵌的 DSH 界面有自己的主题，不跟着改。</p>
+        <p class="hint">
+          左下角「自动 / 亮 / 深」是同一个设置。内嵌的 DSH 界面有自己的主题，不跟着改。
+        </p>
       </div>
     </section>
 
@@ -189,7 +191,12 @@ onUnmounted(() => {
       <div class="panel-block">
         <div class="form-row">
           <label for="s-dshCommand">dsh 命令</label>
-          <input id="s-dshCommand" type="text" placeholder="留空则自动探测" v-model.trim="form.dshCommand" />
+          <input
+            id="s-dshCommand"
+            type="text"
+            placeholder="留空则自动探测"
+            v-model.trim="form.dshCommand"
+          />
         </div>
         <div class="form-row">
           <label for="s-extraArgs">附加参数</label>
@@ -217,21 +224,39 @@ onUnmounted(() => {
         <div class="form-row">
           <label for="s-pollIntervalMs">状态轮询间隔</label>
           <div class="input-suffix">
-            <input id="s-pollIntervalMs" type="number" min="500" step="100" v-model.number="form.pollIntervalMs" />
+            <input
+              id="s-pollIntervalMs"
+              type="number"
+              min="500"
+              step="100"
+              v-model.number="form.pollIntervalMs"
+            />
             <span>毫秒</span>
           </div>
         </div>
         <div class="form-row">
           <label for="s-startTimeoutMs">启动超时</label>
           <div class="input-suffix">
-            <input id="s-startTimeoutMs" type="number" min="5000" step="1000" v-model.number="form.startTimeoutMs" />
+            <input
+              id="s-startTimeoutMs"
+              type="number"
+              min="5000"
+              step="1000"
+              v-model.number="form.startTimeoutMs"
+            />
             <span>毫秒</span>
           </div>
         </div>
         <div class="form-row">
           <label for="s-stopGraceMs">优雅停机等待</label>
           <div class="input-suffix">
-            <input id="s-stopGraceMs" type="number" min="500" step="500" v-model.number="form.stopGraceMs" />
+            <input
+              id="s-stopGraceMs"
+              type="number"
+              min="500"
+              step="500"
+              v-model.number="form.stopGraceMs"
+            />
             <span>毫秒</span>
           </div>
         </div>
@@ -258,9 +283,15 @@ onUnmounted(() => {
       <header class="panel-head"><h3>保存</h3></header>
       <div class="panel-block">
         <div class="btn-row">
-          <button id="btn-save-settings" class="btn primary" :disabled="busy" @click="save">保存设置</button>
-          <button id="btn-reload-settings" class="btn" :disabled="busy" @click="reload">重新载入</button>
-          <button id="btn-open-userdata" class="btn ghost" @click="api.revealUserData()">打开配置目录</button>
+          <button id="btn-save-settings" class="btn primary" :disabled="busy" @click="save">
+            保存设置
+          </button>
+          <button id="btn-reload-settings" class="btn" :disabled="busy" @click="reload">
+            重新载入
+          </button>
+          <button id="btn-open-userdata" class="btn ghost" @click="api.revealUserData()">
+            打开配置目录
+          </button>
         </div>
         <p class="hint" id="settings-path">配置目录：{{ userData }}</p>
         <p class="hint settings-status" id="settings-status">{{ status }}</p>

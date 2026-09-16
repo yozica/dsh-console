@@ -132,7 +132,8 @@ async function restore() {
     type: 'question',
     title: '取消归档',
     message: `把「${s.title}」恢复到侧边栏？`,
-    detail: '取消归档只把它从归档列表移回侧边栏，会话与日志原样保留。正在运行的 dsh 需要重启后侧边栏才会出现它。'
+    detail:
+      '取消归档只把它从归档列表移回侧边栏，会话与日志原样保留。正在运行的 dsh 需要重启后侧边栏才会出现它。'
   })
   if (!ok) return
   busy.value = 'restore'
@@ -143,7 +144,11 @@ async function restore() {
       return
     }
     await load()
-    say(result.dshRunning ? '已恢复。dsh 正在运行，重启 dsh 后侧边栏会出现该会话。' : '已恢复到侧边栏。')
+    say(
+      result.dshRunning
+        ? '已恢复。dsh 正在运行，重启 dsh 后侧边栏会出现该会话。'
+        : '已恢复到侧边栏。'
+    )
   } finally {
     busy.value = ''
   }
@@ -156,7 +161,8 @@ async function remove() {
     type: 'warning',
     title: '删除归档会话',
     message: `确定要删除「${s.title}」吗？`,
-    detail: '这会删除该会话的日志与投影缓存，并从工作区注册表里移除，无法撤销。附件不会被删除（可能被其它会话共享）。'
+    detail:
+      '这会删除该会话的日志与投影缓存，并从工作区注册表里移除，无法撤销。附件不会被删除（可能被其它会话共享）。'
   })
   if (!ok) return
   busy.value = 'remove'
@@ -184,7 +190,12 @@ onMounted(() => {
 <template>
   <div class="archive">
     <div class="bar">
-      <button class="btn small primary" :disabled="loading" :aria-busy="loading ? 'true' : null" @click="load">
+      <button
+        class="btn small primary"
+        :disabled="loading"
+        :aria-busy="loading ? 'true' : null"
+        @click="load"
+      >
         <svg class="i"><use href="#i-replay" /></svg><span>刷新</span>
       </button>
       <div class="spacer"></div>
@@ -225,7 +236,9 @@ onMounted(() => {
           >
             <div class="archive-item-head">
               <span class="archive-item-title">{{ s.title }}</span>
-              <span class="archive-item-time">{{ fmtListTime(s.lastPromptAt || s.createdAt) }}</span>
+              <span class="archive-item-time">{{
+                fmtListTime(s.lastPromptAt || s.createdAt)
+              }}</span>
             </div>
             <div class="archive-item-meta">{{ s.firstPrompt || '（无首句）' }}</div>
             <div class="archive-item-sub">
@@ -317,7 +330,9 @@ onMounted(() => {
               <!-- eslint-disable-next-line vue/no-v-html -->
               <div class="archive-turn-body" v-html="renderMarkdown(m.text)"></div>
             </article>
-            <div v-if="conversation.truncated" class="archive-thread-note">内容过长，已截断到最近的对话。</div>
+            <div v-if="conversation.truncated" class="archive-thread-note">
+              内容过长，已截断到最近的对话。
+            </div>
           </div>
         </div>
       </section>

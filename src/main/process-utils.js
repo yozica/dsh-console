@@ -471,23 +471,29 @@ function probeHttp(url, timeoutMs = 1500) {
     }
     let request
     try {
-      request = http.get(url, { timeout: timeoutMs, headers: { 'user-agent': 'dsh-console' } }, (res) => {
-        let body = ''
-        res.setEncoding('utf8')
-        res.on('data', (chunk) => {
-          if (body.length < 65536) body += chunk
-        })
-        res.on('end', () => {
-          finish({
-            reachable: true,
-            statusCode: res.statusCode,
-            isDsh: isDshResponse(res.statusCode, body),
-            body: body.slice(0, 300),
-            location: res.headers.location
+      request = http.get(
+        url,
+        { timeout: timeoutMs, headers: { 'user-agent': 'dsh-console' } },
+        (res) => {
+          let body = ''
+          res.setEncoding('utf8')
+          res.on('data', (chunk) => {
+            if (body.length < 65536) body += chunk
           })
-        })
-        res.on('error', (error) => finish({ reachable: false, error: error.message, isDsh: false }))
-      })
+          res.on('end', () => {
+            finish({
+              reachable: true,
+              statusCode: res.statusCode,
+              isDsh: isDshResponse(res.statusCode, body),
+              body: body.slice(0, 300),
+              location: res.headers.location
+            })
+          })
+          res.on('error', (error) =>
+            finish({ reachable: false, error: error.message, isDsh: false })
+          )
+        }
+      )
     } catch (error) {
       finish({ reachable: false, error: error.message, isDsh: false })
       return
@@ -564,23 +570,33 @@ function portOwnerSync(port) {
     }
     try {
       if (isWindows) {
-        execFile('netstat', ['-ano', '-p', 'tcp'], { windowsHide: true, timeout: 8000 }, (error, stdout) => {
-          if (error) {
-            resolve(null)
-            return
+        execFile(
+          'netstat',
+          ['-ano', '-p', 'tcp'],
+          { windowsHide: true, timeout: 8000 },
+          (error, stdout) => {
+            if (error) {
+              resolve(null)
+              return
+            }
+            finish(stdout)
           }
-          finish(stdout)
-        })
+        )
       } else {
         // lsof 查询端口时经常要 sudo 才全（别的用户的进程看不见）；
         // 本应用场景只关心自己启动的 dsh，无权限时返回 null 由状态机兜底。
-        execFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], { timeout: 8000 }, (error, stdout) => {
-          if (error) {
-            resolve(null)
-            return
+        execFile(
+          'lsof',
+          ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'],
+          { timeout: 8000 },
+          (error, stdout) => {
+            if (error) {
+              resolve(null)
+              return
+            }
+            finish(stdout)
           }
-          finish(stdout)
-        })
+        )
       }
     } catch {
       // 系统命令起不来（受限环境）：当作未知，不影响状态机
@@ -654,7 +670,13 @@ function collectDescendants(pid, exec) {
 /** POSIX：优先杀"自己的进程组"（pgid==pid 时整组一起清），否则按后代顺序逐个终止。 */
 function killPosixTree(pid, signal) {
   try {
-    const pgid = Number(String(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { stdio: ['ignore', 'pipe', 'ignore'] })).trim())
+    const pgid = Number(
+      String(
+        execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], {
+          stdio: ['ignore', 'pipe', 'ignore']
+        })
+      ).trim()
+    )
     if (Number.isInteger(pgid) && pgid > 0 && pgid === pid) {
       process.kill(-pgid, signal)
       return

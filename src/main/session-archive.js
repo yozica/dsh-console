@@ -26,7 +26,6 @@ const os = require('node:os')
 const path = require('node:path')
 const zlib = require('node:zlib')
 
-
 /** 单条消息最多保留的字符数，防止异常大的日志把 IPC 撑爆 */
 const MAX_MESSAGE_CHARS = 8000
 /** 对话全文最多保留的总字符数，超出则截断（保留靠后的新消息） */
@@ -132,7 +131,12 @@ function decompressZstdFrames(buffer) {
   }
   const starts = []
   for (let i = 0; i <= buffer.length - 4; i++) {
-    if (buffer[i] === 0x28 && buffer[i + 1] === 0xb5 && buffer[i + 2] === 0x2f && buffer[i + 3] === 0xfd) {
+    if (
+      buffer[i] === 0x28 &&
+      buffer[i + 1] === 0xb5 &&
+      buffer[i + 2] === 0x2f &&
+      buffer[i + 3] === 0xfd
+    ) {
       starts.push(i)
     }
   }
@@ -201,7 +205,11 @@ function extractConversation(events) {
           truncated = true
           break
         }
-        messages.push({ role: 'user', text: value, time: typeof event.time === 'number' ? event.time : null })
+        messages.push({
+          role: 'user',
+          text: value,
+          time: typeof event.time === 'number' ? event.time : null
+        })
       }
     } else if (event.type === 'assistant/message' && data && data.message) {
       const text = contentText(data.message.content).trim()
@@ -212,7 +220,11 @@ function extractConversation(events) {
           truncated = true
           break
         }
-        messages.push({ role: 'assistant', text: value, time: typeof event.time === 'number' ? event.time : null })
+        messages.push({
+          role: 'assistant',
+          text: value,
+          time: typeof event.time === 'number' ? event.time : null
+        })
       }
     }
   }
@@ -310,7 +322,9 @@ class SessionArchiveManager {
       })
     }
 
-    sessions.sort((a, b) => (b.lastPromptAt || b.createdAt || 0) - (a.lastPromptAt || a.createdAt || 0))
+    sessions.sort(
+      (a, b) => (b.lastPromptAt || b.createdAt || 0) - (a.lastPromptAt || a.createdAt || 0)
+    )
     return sessions
   }
 

@@ -59,7 +59,14 @@ class DshManager extends EventEmitter {
     this.stopping = false
     this.lastExit = null
     this.lastError = null
-    this.probe = { reachable: false, isDsh: false, statusCode: null, latencyMs: null, checkedAt: null, error: null }
+    this.probe = {
+      reachable: false,
+      isDsh: false,
+      statusCode: null,
+      latencyMs: null,
+      checkedAt: null,
+      error: null
+    }
     this.portOwner = null
     this.externalPid = null
     this.externalName = ''
@@ -116,7 +123,12 @@ class DshManager extends EventEmitter {
   }
 
   isRunning() {
-    return this.sessionAlive && (this.phase === PHASE.running || this.phase === PHASE.starting || this.phase === PHASE.degraded)
+    return (
+      this.sessionAlive &&
+      (this.phase === PHASE.running ||
+        this.phase === PHASE.starting ||
+        this.phase === PHASE.degraded)
+    )
   }
 
   /** 启动时解析一次，界面里显示"将要执行的命令" */
@@ -124,7 +136,13 @@ class DshManager extends EventEmitter {
     try {
       return resolveDshInvocation(this.settings.all())
     } catch (error) {
-      return { file: '', args: [], display: `无法解析：${error.message}`, kind: 'error', error: error.message }
+      return {
+        file: '',
+        args: [],
+        display: `无法解析：${error.message}`,
+        kind: 'error',
+        error: error.message
+      }
     }
   }
 
@@ -236,7 +254,9 @@ class DshManager extends EventEmitter {
       .slice(-20)
     if (lines.length === 0) return ''
     const errorish = lines.find((line) =>
-      /error|错误|EADDRINUSE|EPERM|EACCES|ENOENT|failed|refused|denied|cannot|未找到|占用/i.test(line)
+      /error|错误|EADDRINUSE|EPERM|EACCES|ENOENT|failed|refused|denied|cannot|未找到|占用/i.test(
+        line
+      )
     )
     return (errorish || lines[lines.length - 1]).slice(0, 300)
   }
@@ -252,7 +272,10 @@ class DshManager extends EventEmitter {
     if (wasStopping) {
       this.log('info', `dsh 已停止（退出码 ${exitCode}）`)
     } else {
-      this.log(exitCode === 0 ? 'info' : 'error', `dsh 进程退出（退出码 ${exitCode}${signal ? `, 信号 ${signal}` : ''}）`)
+      this.log(
+        exitCode === 0 ? 'info' : 'error',
+        `dsh 进程退出（退出码 ${exitCode}${signal ? `, 信号 ${signal}` : ''}）`
+      )
       const said = this.lastOutputLine()
       // 非正常退出：把 dsh 自己说的原因也放进事件日志，别让人只看到"退出码 1"
       if (exitCode !== 0) {
@@ -293,7 +316,9 @@ class DshManager extends EventEmitter {
       throw new Error(`端口 ${this.effectivePort} 上已有 dsh 实例在运行`)
     }
     if (preflight.reachable && !preflight.isDsh) {
-      throw new Error(`端口 ${this.effectivePort} 已被其它进程占用（HTTP ${preflight.statusCode}），请换端口`)
+      throw new Error(
+        `端口 ${this.effectivePort} 已被其它进程占用（HTTP ${preflight.statusCode}），请换端口`
+      )
     }
 
     let launch
@@ -343,7 +368,10 @@ class DshManager extends EventEmitter {
       this.phase = PHASE.starting
       // Windows/ConPTY 的 PID 要等就绪事件之后才有值，这里只报告"已拉起"，PID 随后按需读取
       const pidNow = Number(session.proc && session.proc.pid)
-      this.log('info', pidNow > 0 ? `dsh 已拉起，PID ${pidNow}` : 'dsh 已拉起，等待 PTY 就绪后确认 PID…')
+      this.log(
+        'info',
+        pidNow > 0 ? `dsh 已拉起，PID ${pidNow}` : 'dsh 已拉起，等待 PTY 就绪后确认 PID…'
+      )
     } catch (error) {
       this.lastError = `启动失败: ${error.message}`
       this.phase = PHASE.stopped
@@ -391,7 +419,10 @@ class DshManager extends EventEmitter {
     }
 
     if (killExternal && this.externalPid) {
-      this.log('warn', `结束外部实例 PID ${this.externalPid}${this.externalName ? ` (${this.externalName})` : ''}`)
+      this.log(
+        'warn',
+        `结束外部实例 PID ${this.externalPid}${this.externalName ? ` (${this.externalName})` : ''}`
+      )
       await killTree(this.externalPid, true)
       this.externalPid = null
       this.externalName = ''
@@ -489,7 +520,8 @@ class DshManager extends EventEmitter {
         phase = PHASE.stopping
       } else if (alive) {
         if (this.probe.isDsh) phase = PHASE.running
-        else if (this.startedAt && Date.now() - this.startedAt < startTimeout) phase = PHASE.starting
+        else if (this.startedAt && Date.now() - this.startedAt < startTimeout)
+          phase = PHASE.starting
         else phase = PHASE.degraded
       } else if (this.probe.isDsh) {
         phase = PHASE.external
@@ -534,8 +566,10 @@ class DshManager extends EventEmitter {
         const previous = this.phase
         this.phase = phase
         this.log('info', `状态: ${previous} → ${phase}`)
-        if (phase === PHASE.running) this.log('info', `服务健康：${this.origin}（${this.probe.latencyMs} ms）`)
-        if (phase === PHASE.external) this.log('warn', `检测到外部 dsh 实例（PID ${this.externalPid ?? '未知'}），未重复启动`)
+        if (phase === PHASE.running)
+          this.log('info', `服务健康：${this.origin}（${this.probe.latencyMs} ms）`)
+        if (phase === PHASE.external)
+          this.log('warn', `检测到外部 dsh 实例（PID ${this.externalPid ?? '未知'}），未重复启动`)
         if (phase === PHASE.conflict) this.log('error', `端口 ${this.effectivePort} 被其它进程占用`)
       }
       this.emitState()

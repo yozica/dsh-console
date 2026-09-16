@@ -26,8 +26,8 @@ function exitImmersive() {
 }
 
 /** 状态灯：全屏时左栏被藏起来，灯挪到这一条里，状态词放 tooltip */
-const lampTitle = computed(() =>
-  `${phaseInfo.value.title}${phaseInfo.value.desc ? `：${phaseInfo.value.desc}` : ''}`
+const lampTitle = computed(
+  () => `${phaseInfo.value.title}${phaseInfo.value.desc ? `：${phaseInfo.value.desc}` : ''}`
 )
 
 /**
@@ -50,7 +50,12 @@ const note = computed(() => {
 
 <template>
   <header class="topbar">
-    <span class="lamp immersive-only" id="topbar-lamp" :data-phase="phase" :title="lampTitle"></span>
+    <span
+      class="lamp immersive-only"
+      id="topbar-lamp"
+      :data-phase="phase"
+      :title="lampTitle"
+    ></span>
     <h1 class="page-title" id="page-title">{{ title }}</h1>
     <div class="spacer"></div>
     <span class="topbar-note" id="topbar-note">{{ note }}</span>

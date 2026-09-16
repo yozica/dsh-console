@@ -11,27 +11,30 @@
    ========================================================================== */
 
 @font-face {
-  font-family: "IBM Plex Sans";
+  font-family: 'IBM Plex Sans';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("../../node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2") format("woff2");
+  src: url('../../node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2')
+    format('woff2');
 }
 
 @font-face {
-  font-family: "IBM Plex Sans";
+  font-family: 'IBM Plex Sans';
   font-style: normal;
   font-weight: 600;
   font-display: swap;
-  src: url("../../node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2") format("woff2");
+  src: url('../../node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2')
+    format('woff2');
 }
 
 @font-face {
-  font-family: "IBM Plex Mono";
+  font-family: 'IBM Plex Mono';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("../../node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+  src: url('../../node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2')
+    format('woff2');
 }
 
 :root {
@@ -50,8 +53,9 @@
   --bar-h: 36px;
   --dur: 140ms;
 
-  --sans: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans:
+    'IBM Plex Sans', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
   /* 表面：页底 → 面板 → 抬升 → 下沉井 */
   --bg: #0a0c10;
@@ -339,7 +343,9 @@ select {
   font-size: var(--t-md);
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur) ease, color var(--dur) ease;
+  transition:
+    background var(--dur) ease,
+    color var(--dur) ease;
 }
 
 .rail-item:hover {
@@ -377,7 +383,9 @@ select {
   color: var(--ink-faint);
   font-size: var(--t-xs);
   cursor: pointer;
-  transition: background var(--dur) ease, color var(--dur) ease;
+  transition:
+    background var(--dur) ease,
+    color var(--dur) ease;
 }
 
 .theme-switch button:hover {
@@ -615,7 +623,10 @@ main {
   font-size: var(--t-sm);
   white-space: nowrap;
   cursor: pointer;
-  transition: background var(--dur) ease, border-color var(--dur) ease, color var(--dur) ease;
+  transition:
+    background var(--dur) ease,
+    border-color var(--dur) ease,
+    color var(--dur) ease;
 }
 
 .btn:hover:not(:disabled) {
@@ -1143,7 +1154,10 @@ main {
   color: var(--ink-dim);
   font-size: var(--t-xs);
   cursor: pointer;
-  transition: background var(--dur) ease, color var(--dur) ease, border-color var(--dur) ease;
+  transition:
+    background var(--dur) ease,
+    color var(--dur) ease,
+    border-color var(--dur) ease;
 }
 
 .shell-tab:hover {
@@ -1412,7 +1426,9 @@ body[data-immersive='true'] .webview-wrap {
   border-radius: var(--r-control);
   color: var(--ink);
   font-size: var(--t-sm);
-  transition: border-color var(--dur) ease, box-shadow var(--dur) ease;
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
 }
 
 .form-row input::placeholder {
