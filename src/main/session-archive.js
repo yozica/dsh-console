@@ -26,8 +26,6 @@ const os = require('node:os')
 const path = require('node:path')
 const zlib = require('node:zlib')
 
-/** zstd 帧魔数（RFC 8878）：0xFD2FB528 小端 */
-const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
 
 /** 单条消息最多保留的字符数，防止异常大的日志把 IPC 撑爆 */
 const MAX_MESSAGE_CHARS = 8000
@@ -83,7 +81,7 @@ function atomicWriteJson(file, value) {
 
 /** 在 <home>/sessions/<项目目录>/ 下找某个会话目录（目录名即会话 id） */
 function findSessionDir(home, id) {
-  let projects = []
+  let projects
   try {
     projects = fs.readdirSync(sessionsRoot(home))
   } catch {
@@ -102,7 +100,7 @@ function findSessionDir(home, id) {
 
 /** 挑出会话目录里最高 generation 的日志文件（session.jsonl 视为 v0） */
 function pickLogFile(dir) {
-  let names = []
+  let names
   try {
     names = fs.readdirSync(dir)
   } catch {

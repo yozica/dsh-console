@@ -12,7 +12,7 @@
  * 迁移前的这些判断散在 app.js 的 updateUiHint / renderTokenWarning 里，用
  * `classList.add('hidden')` 和 `setText` 表达；现在是模板里的 v-if 与 computed。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { restartFlow } from '../lib/dsh-actions.js'
 import { currentTab, dsh, immersive, immersiveAutoEntered, settings } from '../lib/store.js'
 
@@ -300,6 +300,8 @@ onMounted(() => {
     <div id="ui-empty" class="empty empty-fill" :class="{ hidden: !hintVisible }">
       <svg class="i empty-i"><use href="#i-browser" /></svg>
       <h2 id="ui-hint-title">{{ hintTitle }}</h2>
+      <!-- 内容是本组件用 escapeHtml 转义后拼出来的，不含外部输入的可执行标记 -->
+      <!-- eslint-disable-next-line vue/no-v-html -->
       <div id="ui-hint-body" class="empty-body" v-html="hintBody"></div>
     </div>
   </div>

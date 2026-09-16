@@ -9,7 +9,7 @@
  * `<webview>` 的事件只能命令式挂（Vue 不代理自定义元素的事件），
  * 那部分留在 onMounted 里，用 onUnmounted 配平 —— 这正是用组件表达生命周期的好处。
  */
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { currentTab, settings } from '../lib/store.js'
 
 const api = window.dshConsole
@@ -161,6 +161,8 @@ onMounted(() => {
     <div id="usage-empty" class="empty empty-fill" :class="{ hidden: !hintVisible }">
       <svg class="i empty-i"><use href="#i-usage" /></svg>
       <h2 id="usage-hint-title">{{ hintTitle }}</h2>
+      <!-- 内容是本组件用 escapeHtml 转义后拼出来的，不含外部输入的可执行标记 -->
+      <!-- eslint-disable-next-line vue/no-v-html -->
       <div v-if="hintBody" id="usage-hint-body" class="empty-body" v-html="hintBody"></div>
       <div v-else id="usage-hint-body" class="empty-body">
         <p>这一页用来查看 DeepSeek API 的 token 用量，加载的是开放平台的页面。</p>

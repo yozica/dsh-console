@@ -23,7 +23,6 @@ const { PtySessions } = require('../src/main/pty-sessions')
 const { DshManager } = require('../src/main/dsh-manager')
 
 const IS_WINDOWS = process.platform === 'win32'
-const IS_MAC = process.platform === 'darwin'
 
 const results = []
 function check(name, ok, extra) {
@@ -610,8 +609,9 @@ async function main() {
   const closeBraces = (css.match(/\}/g) || []).length
   check('样式：花括号配对', openBraces === closeBraces, `${openBraces} / ${closeBraces}`)
 
-  // @font-face 指到不存在的文件会静默回退到系统字体，等于"刻意选字体"这件事白做了
-  const fontUrls = [...css.matchAll(/url\("([^"]+\.woff2)"\)/g)].map((match) => match[1])
+  // @font-face 指到不存在的文件会静默回退到系统字体，等于"刻意选字体"这件事白做了。
+  // 引号不挑：Prettier 会按 singleQuote 配置把 url() 里的引号统一成单引号。
+  const fontUrls = [...css.matchAll(/url\(["']([^"']+\.woff2)["']\)/g)].map((match) => match[1])
   const missingFonts = fontUrls.filter((rel) => !fs.existsSync(path.resolve(rendererDir, rel)))
   check(
     '字体：@font-face 引用的文件都存在',
@@ -693,7 +693,7 @@ async function main() {
   check('启动锁：done 之后直接返回', /if \(bootLockState === 'done'\) return/.test(rendererJs))
   // 解锁条件里一旦掺进"当前是否全屏"，用户一退全屏就会重新满足上锁条件。
   // 只看代码，不看注释（注释里提到 immersive 是为了解释这个坑）。
-  const updateBootLockBody = rendererJs.match(/function updateBootLock\([\s\S]*?\n  \}/)?.[0] || ''
+  const updateBootLockBody = rendererJs.match(/function updateBootLock\([\s\S]*?\n {2}\}/)?.[0] || ''
   const updateBootLockCode = updateBootLockBody.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
   check(
     '启动锁：解锁判定不看当前是否全屏',

@@ -313,6 +313,8 @@ onMounted(() => {
               :class="m.role === 'user' ? 'archive-turn-user' : 'archive-turn-assistant'"
             >
               <div v-if="roleLabel(index)" class="archive-turn-role">{{ roleLabel(index) }}</div>
+              <!-- renderMarkdown 先整段转义 HTML 再生成标签，输出里只剩它自己造的安全标签 -->
+              <!-- eslint-disable-next-line vue/no-v-html -->
               <div class="archive-turn-body" v-html="renderMarkdown(m.text)"></div>
             </article>
             <div v-if="conversation.truncated" class="archive-thread-note">内容过长，已截断到最近的对话。</div>

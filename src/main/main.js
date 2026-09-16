@@ -172,7 +172,7 @@ function suppressElectronDevNoise(message) {
  * 所以把 guest 的 console 与加载失败都收进应用的事件日志里。
  */
 function wireGuestDiagnostics(guest) {
-  let partition = ''
+  let partition
   try {
     partition = guest.session?.getPartition?.() || ''
   } catch {

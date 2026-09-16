@@ -82,7 +82,7 @@ function versionManagerInstalls() {
   const home = homeDir()
   const installs = []
   const scan = (base, toInstall) => {
-    let names = []
+    let names
     try {
       names = fs.readdirSync(base)
     } catch {
@@ -246,7 +246,7 @@ function canRunDsh(nodeExe, binJs) {
   const key = `${nodeExe}\u0000${binJs}`
   const cached = dshProbeCache.get(key)
   if (cached !== undefined) return cached
-  let ok = false
+  let ok
   try {
     const stdout = execFileSync(nodeExe, [binJs, '--version'], {
       timeout: 8000,
@@ -635,7 +635,7 @@ function collectDescendants(pid, exec) {
   while (queue.length > 0 && guard < 64) {
     guard += 1
     const parent = queue.shift()
-    let children = []
+    let children
     try {
       const stdout = exec('pgrep', ['-P', String(parent)])
       children = String(stdout || '')
