@@ -1348,9 +1348,18 @@ body[data-immersive='true'] .webview-wrap {
 
 .ui-paste {
   display: flex;
+  /* 居中对齐：不写这条时弹性的默认值是 stretch，而按钮有自己的固定高（.btn.small 27px），
+     结果就是按钮贴在这一行的顶部、比输入框矮 3px（用户看截图指出来的） */
+  align-items: center;
   gap: 8px;
   padding: 0 20px 12px;
   flex: 0 0 auto;
+}
+
+/* 这一行的按钮与输入框同高 —— .btn.small 的 27px 是给工具栏那种紧凑场合用的，
+   挨着一个 30px 的输入框就显得矮一截 */
+.ui-paste .btn {
+  height: 30px;
 }
 
 .ui-paste input {
