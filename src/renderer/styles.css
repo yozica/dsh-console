@@ -2307,6 +2307,14 @@ body[data-immersive='true'] .webview-wrap {
   padding-top: 4px;
 }
 
+/* 详情里每一行都自己带 16px 内边距（条目行要整行 hover / 分隔线，不能靠父级 padding），
+   所以这里的说明句必须单独补 —— 漏了就会像"贴到面板边上"那样顶头。 */
+.plugin-entries > .hint,
+.plugin-detail-body > .hint,
+.plugin-config-body > .hint {
+  padding: 0 16px;
+}
+
 .plugin-entries .block-head {
   padding: 0 16px;
 }
@@ -2359,7 +2367,7 @@ body[data-immersive='true'] .webview-wrap {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 10px 14px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--hairline);
   flex: 0 0 auto;
 }
@@ -2407,7 +2415,7 @@ body[data-immersive='true'] .webview-wrap {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 7px 14px;
+  padding: 7px 16px;
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
   background: var(--surface-2);
@@ -2436,7 +2444,7 @@ body[data-immersive='true'] .webview-wrap {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 12px 14px;
+  padding: 12px 16px;
 }
 
 .plugin-raw .hint {
