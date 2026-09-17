@@ -1197,6 +1197,22 @@ async function main(): Promise<void> {
     prodDeps.join(' / '),
   );
 
+  // ---------------------------------------------------------- 15. 更新卡片的"分平台"契约
+  //    只钉**结构**：说明行必须由 canAutoUpdate 分支决定（Windows 才承诺下载/安装，macOS 上
+  //    根本没这两件事 —— 写死成 Windows 那套时用户看截图指出了这个错）。
+  //
+  //    具体的措辞与排版**不在这里钉**：那是外观，改动频繁，钉字面量只会让"润色一句话就得改断言"
+  //    （判据见 AGENTS「为什么这些检查放在自检里」）。渲染出来的每个相位的文案由本地冒烟脚本
+  //    打印出来给人看，那里也会量"按钮在标题行里"这类布局。
+  const settingsSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
+    'utf8',
+  );
+  check(
+    '更新卡片：说明行由 canAutoUpdate 分支决定（Windows 才承诺下载/安装）',
+    /const updateNote = computed[\s\S]{0,400}?update\.value\.canAutoUpdate/.test(settingsSource),
+  );
+
   // ---------------------------------------------------------- 汇总
   const failed = results.filter((item) => !item.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`);
