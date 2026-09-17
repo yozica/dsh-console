@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 
 import * as processUtils from '../src/main/process-utils';
+import * as pluginManager from '../src/main/plugin-manager';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
 import { PtySessions } from '../src/main/pty-sessions';
@@ -415,6 +416,7 @@ async function main(): Promise<void> {
   //    界面正在逐页迁到 Vue 单文件组件，所以**标记与脚本都要把 .vue 一起算进来**
   //    （panes/ 是页面，shell/ 是外壳），否则迁走的部分会悄悄脱离这些检查的覆盖。
   const rendererDir = path.join(__dirname, '..', 'src', 'renderer');
+  const srcDir = path.join(__dirname, '..', 'src');
   const vueDirs = ['panes', 'shell'];
   const vueFiles: { dir: string; name: string }[] = []; // 形如 { dir, name }
   for (const dir of vueDirs) {
@@ -1211,6 +1213,125 @@ async function main(): Promise<void> {
   check(
     '更新卡片：说明行由 canAutoUpdate 分支决定（Windows 才承诺下载/安装）',
     /const updateNote = computed[\s\S]{0,400}?update\.value\.canAutoUpdate/.test(settingsSource),
+  );
+
+  // ---------------------------------------------------------- 16. 插件装配层（只读）
+  //    这一层全靠"别人写的文件 + 别人打印的文本"：profile 的 package.json 与
+  //    `dsh web --dump-config` 的 stdout/stderr。夹具是**真实输出**（本机 web profile），
+  //    所以上游改格式时这里第一时间变红，而不是等到用户发现层栈是空的。
+  //
+  //    钉的都是"回退了会静默坏掉"的东西：
+  //      - 空输出被当成成功（旧 Node 上 dsh 就是退出码 0 + 零输出）→ 会显示成"没有插件"；
+  //      - 未匹配的 patch 行来自 stderr（不在 dump 里）→ 漏读就等于丢掉唯一的告警；
+  //      - 层归因（`patched by`）解析错 → 用户会以为自己的层生效了；
+  //      - 把 profile 写成 desktop（CLI 保留给 Electron，直接报错）。
+  const pluginSource = fs.readFileSync(path.join(srcDir, 'main', 'plugin-manager.ts'), 'utf8');
+  const fixture = (name: string) => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
+
+  const realDump = fixture('dump-config-web.txt');
+  const dumpLayers = pluginManager.parseDump(realDump);
+  const dumpedEntries = dumpLayers.reduce((sum, layer) => sum + layer.entries.length, 0);
+  const patchedEntries = dumpLayers
+    .filter((layer) => layer.patchedBy !== null)
+    .reduce((sum, layer) => sum + layer.entries.length, 0);
+  check(
+    '插件：真实 dump 解析出层归因与全部条目（patched by 要拆开）',
+    dumpedEntries === 152 &&
+      patchedEntries === 25 &&
+      dumpLayers.some((layer) => layer.source === '@deepseek-ai/dsh-base') &&
+      dumpLayers.some((layer) => layer.patchedBy === '@deepseek-ai/dsh-web-app'),
+    `${dumpedEntries} 条 / 被覆盖 ${patchedEntries} 条 / ${dumpLayers.length} 个层段`,
+  );
+  check(
+    '插件：同一条目被覆盖时能看出是"被禁用"还是"config 被替换"',
+    (() => {
+      const patched = dumpLayers
+        .filter((layer) => layer.patchedBy !== null)
+        .flatMap((layer) => layer.entries);
+      const disabled = patched.filter((entry) => entry.disabled).length;
+      const withConfig = patched.filter((entry) => entry.hasConfig).length;
+      // 真实数据：25 条被覆盖里 23 条是"关掉"，12 条替换了 config（有重叠）
+      return disabled === 23 && withConfig === 12;
+    })(),
+  );
+  check(
+    '插件：未匹配的 patch 行只在 stderr 上，解析成 unmatched-patch 并带出条目 id',
+    (() => {
+      const problems = pluginManager.parseProblems(fixture('unmatched-patch.stderr.txt'));
+      const hit = problems.find((item) => item.kind === 'unmatched-patch');
+      return (
+        Boolean(hit) &&
+        hit?.entryId === '这个条目不存在' &&
+        Boolean(hit?.file?.endsWith('cordis.patch.yml'))
+      );
+    })(),
+  );
+  check(
+    '插件：patch 解析失败也来自 stderr，归到 parse-error 并点名文件',
+    (() => {
+      const problems = pluginManager.parseProblems(fixture('broken-patch.stderr.txt'));
+      const hit = problems.find((item) => item.kind === 'parse-error');
+      return Boolean(hit) && /YAMLException|unexpected end/.test(hit?.detail || '');
+    })(),
+  );
+  check(
+    '插件：空输出不算成功；失败时给的是诊断行而不是 Node 的堆栈首行',
+    pluginManager.checkDumpResult(0, '', '') !== null &&
+      pluginManager.checkDumpResult(0, realDump, '') === null &&
+      (() => {
+        const why = pluginManager.checkDumpResult(1, '', fixture('broken-patch.stderr.txt'));
+        return (
+          Boolean(why) && why?.includes('cordis.patch.yml') === true && !why?.includes('file://')
+        );
+      })(),
+  );
+  check(
+    '插件：真实 profile manifest 读得出 bundles 顺序与 patchReload',
+    (() => {
+      const manifest = pluginManager.readProfileManifest(
+        path.join(__dirname, 'fixtures', 'profile'),
+      );
+      return (
+        manifest.name === 'dsh-profile-web' &&
+        manifest.bundles.length === 2 &&
+        manifest.bundles[0] === '@deepseek-ai/dsh-base' &&
+        manifest.patchReload === 'live' &&
+        Object.keys(manifest.dependencies).length === 0
+      );
+    })(),
+  );
+  check(
+    '插件：装进来却没形成层的依赖、以及什么都没贡献的 bundle 都会被列出来',
+    (() => {
+      const plain = pluginManager.plainDependencies({
+        name: null,
+        dependencies: { 'some-lib': 'link:../lib' },
+        bundles: ['@deepseek-ai/dsh-base'],
+        patchReload: null,
+      });
+      const missing = pluginManager.missingLayers(
+        {
+          name: null,
+          dependencies: {},
+          bundles: ['@deepseek-ai/dsh-base', 'ghost-bundle'],
+          patchReload: null,
+        },
+        dumpLayers,
+      );
+      return (
+        plain.length === 1 &&
+        plain[0].kind === 'plain-dependency' &&
+        missing.length === 1 &&
+        missing[0].kind === 'missing-layer'
+      );
+    })(),
+  );
+  check(
+    '插件：只碰 web profile（desktop 是 CLI 保留给 Electron 的，传进去直接报错）',
+    pluginManager.PLUGIN_PROFILE === 'web' &&
+      /PLUGIN_PROFILE/.test(pluginSource) &&
+      !/'--profile',\s*'desktop'/.test(pluginSource) &&
+      !/"--profile",\s*"desktop"/.test(pluginSource),
   );
 
   // ---------------------------------------------------------- 汇总

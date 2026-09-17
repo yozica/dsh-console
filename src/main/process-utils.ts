@@ -33,6 +33,25 @@ export interface InterpreterCandidate {
   source: string;
 }
 
+/**
+ * 「怎么调用 dsh」——把解释器与入口脚本的解析从"启动 web 应用"里拆出来。
+ *
+ * 拆的理由：同一个 dsh 还有别的子命令要调（`plugin` 管插件、`web --dump-config`
+ * 看生效配置），它们必须用**同一个解释器**。dsh 的 CLI 在旧 Node 上会静默退出
+ * （退出码 0、零输出），所以这里挑出来的组合是实测能跑的，不能各自再猜一遍。
+ */
+export interface DshLauncher {
+  /** 真正要 spawn 的可执行文件（node / dsh shim / npx，Windows 上可能是 cmd.exe） */
+  file: string;
+  /** 位于 dsh 子命令之前的固定参数（入口脚本路径、npx 的 -y 等） */
+  prefixArgs: string[];
+  /** true 表示 file 是 cmd.exe、prefixArgs 开头是 /d /s /c + 脚本，后续参数要按 cmd 的规则转义 */
+  viaCmd: boolean;
+  /** 给人看的调用前缀（不含子命令），用于 display 与日志 */
+  display: string;
+  kind: string;
+}
+
 /** HTTP 探测结果 */
 export interface ProbeResult {
   reachable: boolean;
@@ -363,7 +382,7 @@ function binJsCandidates(shimPath: string): string[] {
 }
 
 /**
- * 解析要启动的 dsh 命令。
+ * 解析"怎么调用 dsh"（不含子命令）。
  * 优先级：自定义命令 > node + dsh 入口脚本（实测能跑的组合）> dsh shim > npx
  *
  * 两道保险都是为了"明明装了 dsh 却起不来"这类问题：
@@ -372,14 +391,7 @@ function binJsCandidates(shimPath: string): string[] {
  *  2. 解释器要实测：dsh 的 CLI 在旧 Node 上会**静默退出**（无输出、退出码 0），
  *     所以候选组合会跑一次 `--version` 验证，只挑真能跑的那个（见 pickDshInterpreter）。
  */
-export function resolveDshInvocation(settings: SettingsValues): InvocationSpec {
-  const args = ['web', '--no-open'];
-  const host = String(settings.host || '127.0.0.1').trim();
-  const port = Number(settings.port);
-  if (host && host !== '127.0.0.1') args.push('--host', host);
-  if (Number.isInteger(port) && port > 0) args.push('--port', String(port));
-  args.push(...splitArgs(settings.extraArgs));
-
+export function resolveDshLauncher(settings: SettingsValues): DshLauncher {
   const override = String(settings.dshCommand || '').trim();
   if (override) {
     // 支持写整条命令行，例如「/path/to/node /path/to/@deepseek-ai/dsh/lib/bin.js」——
@@ -395,25 +407,22 @@ export function resolveDshInvocation(settings: SettingsValues): InvocationSpec {
     if (/\.(cmd|bat)$/i.test(file)) {
       return {
         file: COMSPEC,
-        args: ['/d', '/s', '/c', `"${file}"`, ...prefixArgs, ...args.map(quoteForCmd)],
-        display: [override, ...args].join(' '),
+        prefixArgs: ['/d', '/s', '/c', `"${file}"`, ...prefixArgs],
+        viaCmd: true,
+        display: override,
         kind: 'custom-shim',
       };
     }
-    return {
-      file,
-      args: [...prefixArgs, ...args],
-      display: [override, ...args].join(' '),
-      kind: 'custom',
-    };
+    return { file, prefixArgs, viaCmd: false, display: override, kind: 'custom' };
   }
 
   const picked = pickDshInterpreter();
   if (picked) {
     return {
       file: picked.node,
-      args: [picked.binJs, ...args],
-      display: [picked.node, picked.binJs, ...args].join(' '),
+      prefixArgs: [picked.binJs],
+      viaCmd: false,
+      display: `${picked.node} ${picked.binJs}`,
       kind: 'node-bin',
     };
   }
@@ -422,27 +431,31 @@ export function resolveDshInvocation(settings: SettingsValues): InvocationSpec {
     if (isWindows) {
       return {
         file: COMSPEC,
-        args: ['/d', '/s', '/c', `"${dshShim}"`, ...args.map(quoteForCmd)],
-        display: [dshShim, ...args].join(' '),
+        prefixArgs: ['/d', '/s', '/c', `"${dshShim}"`],
+        viaCmd: true,
+        display: dshShim,
         kind: 'shim',
       };
     }
-    return { file: dshShim, args, display: [dshShim, ...args].join(' '), kind: 'shim' };
+    return { file: dshShim, prefixArgs: [], viaCmd: false, display: dshShim, kind: 'shim' };
   }
   const npx = whichSync(isWindows ? 'npx.cmd' : 'npx');
   if (npx) {
+    const prefixArgs = ['-y', '@deepseek-ai/dsh'];
     if (isWindows) {
       return {
         file: COMSPEC,
-        args: ['/d', '/s', '/c', `"${npx}"`, '-y', '@deepseek-ai/dsh', ...args.map(quoteForCmd)],
-        display: [npx, '-y', '@deepseek-ai/dsh', ...args].join(' '),
+        prefixArgs: ['/d', '/s', '/c', `"${npx}"`, ...prefixArgs],
+        viaCmd: true,
+        display: `${npx} ${prefixArgs.join(' ')}`,
         kind: 'npx',
       };
     }
     return {
       file: npx,
-      args: ['-y', '@deepseek-ai/dsh', ...args],
-      display: [npx, '-y', '@deepseek-ai/dsh', ...args].join(' '),
+      prefixArgs,
+      viaCmd: false,
+      display: `${npx} ${prefixArgs.join(' ')}`,
       kind: 'npx',
     };
   }
@@ -451,6 +464,33 @@ export function resolveDshInvocation(settings: SettingsValues): InvocationSpec {
       ? '找不到 dsh：PATH 里既没有 dsh.cmd，也没有 node/npx。请在设置里指定启动命令。'
       : '找不到 dsh：既没有全局安装的 @deepseek-ai/dsh，PATH 里也没有 node/npx。请在设置里指定启动命令。',
   );
+}
+
+/**
+ * 把 dsh 子命令拼成最终 argv。
+ * cmd.exe 那条路要按 cmd 的转义规则处理（`&`、引号等），这是唯一需要平台分支的地方。
+ */
+export function dshArgsFor(launcher: DshLauncher, args: string[]): string[] {
+  if (!launcher.viaCmd) return [...launcher.prefixArgs, ...args];
+  return [...launcher.prefixArgs, ...args.map(quoteForCmd)];
+}
+
+/** 解析要启动的 dsh web（= `dsh web --no-open` + 监听地址与附加参数） */
+export function resolveDshInvocation(settings: SettingsValues): InvocationSpec {
+  const args = ['web', '--no-open'];
+  const host = String(settings.host || '127.0.0.1').trim();
+  const port = Number(settings.port);
+  if (host && host !== '127.0.0.1') args.push('--host', host);
+  if (Number.isInteger(port) && port > 0) args.push('--port', String(port));
+  args.push(...splitArgs(settings.extraArgs));
+
+  const launcher = resolveDshLauncher(settings);
+  return {
+    file: launcher.file,
+    args: dshArgsFor(launcher, args),
+    display: [launcher.display, ...args].join(' '),
+    kind: launcher.kind,
+  };
 }
 
 /**

@@ -171,6 +171,7 @@
 #ui-root,
 #usage-root,
 #archive-root,
+#plugin-root,
 #settings-root {
   display: contents;
 }
@@ -2058,4 +2059,399 @@ body[data-immersive='true'] .webview-wrap {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ============================================================ 插件页（装配层）
+   这一页的版式跟归档页是一族的：上面一条 bar，下面两列（层栈 / 详情），
+   第二个视图把两列换成一份"按层分组的配置清单"。
+   视觉上只有两处是本页特有的：层栈的序号 + 选中竖线，以及"你的层"和
+   "被覆盖 / 被禁用"这三种标签 —— 它们必须一眼分得开，否则用户会以为
+   自己改的东西生效了（真实数据里 web-app 覆盖 base 的 25 条有 23 条是
+   把下层关掉，不是改配置）。 */
+
+.plugin {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* 两个视图的切换：胶囊按钮，和本地 Shell 的标签同一形态 */
+.plugin-views {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  background: var(--well);
+}
+
+.plugin-view {
+  height: 23px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.plugin-view.active {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.plugin-view:hover:not(.active) {
+  color: var(--ink-dim);
+}
+
+/* "没报错的错"：这是本页唯一用玫瑰色铺底的地方，因为它是唯一会静默
+   吃掉用户改动的失败（patch 指向了不存在的条目 / 文件解析失败 / 装了却
+   没形成层）。 */
+.plugin-problems {
+  flex: 0 0 auto;
+}
+
+.plugin-problem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 168px;
+  overflow: auto;
+}
+
+.plugin-problem {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--hairline);
+  font-size: var(--t-sm);
+}
+
+.plugin-problem-kind {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--rose-soft);
+  color: var(--rose);
+  font-size: var(--t-xs);
+}
+
+.plugin-problem-kind[data-kind='plain-dependency'] {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.plugin-problem-text {
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+/* ---- 视图一：层栈 + 详情 ---- */
+.plugin-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 14px;
+}
+
+.plugin-side {
+  width: 300px;
+  flex: 0 0 300px;
+}
+
+.plugin-stack {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.plugin-layer {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px 10px 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.plugin-layer:first-child {
+  border-top: 0;
+}
+
+.plugin-layer:hover {
+  background: var(--surface-2);
+}
+
+/* 选中态用伪元素竖线，避免切换时文字左右抖动（归档侧栏踩过这个） */
+.plugin-layer.active {
+  background: var(--accent-soft);
+}
+
+.plugin-layer.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.plugin-layer-order {
+  flex: 0 0 14px;
+  width: 14px;
+  padding-top: 1px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+}
+
+.plugin-layer-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.plugin-layer-name {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 内置层是"本来就有的"，比你自己装的东西淡一档 */
+.plugin-layer[data-kind='in-box'] .plugin-layer-name {
+  color: var(--ink-dim);
+}
+
+.plugin-layer.own .plugin-layer-name {
+  color: var(--sky);
+}
+
+.plugin-layer-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.plugin-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.plugin-tag.mono {
+  font-family: var(--mono);
+}
+
+.plugin-tag.muted {
+  color: var(--ink-faint);
+}
+
+.plugin-tag.accent {
+  border-color: transparent;
+  background: var(--sky-soft);
+  color: var(--sky);
+}
+
+.plugin-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.plugin-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0 14px;
+}
+
+.plugin-meta {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 7px 12px;
+  margin: 0;
+  padding: 6px 16px 14px;
+  font-size: var(--t-sm);
+}
+
+.plugin-meta dt {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  padding-top: 1px;
+}
+
+.plugin-meta dd {
+  margin: 0;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+}
+
+.plugin-entries {
+  padding-top: 4px;
+}
+
+.plugin-entries .block-head {
+  padding: 0 16px;
+}
+
+.plugin-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.plugin-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--hairline);
+  font-size: var(--t-sm);
+}
+
+.plugin-entry:hover {
+  background: var(--surface-2);
+}
+
+.plugin-entry-id {
+  flex: 0 0 auto;
+  min-width: 176px;
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
+.plugin-entry-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+}
+
+/* ---- 视图二：生效配置 ---- */
+.plugin-config {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.plugin-config-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+  flex: 0 0 auto;
+}
+
+.plugin-search {
+  height: 30px;
+  min-width: 240px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  background: var(--well);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.plugin-search::placeholder {
+  color: var(--ink-faint);
+}
+
+.plugin-filter {
+  height: 23px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.plugin-filter.active {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.plugin-config-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 分组标题：dump 自己是按"源层 / 被谁覆盖"分段的，这里照抄它的语义 */
+.plugin-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 14px;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-2);
+  font-size: var(--t-xs);
+}
+
+.plugin-group:first-child {
+  border-top: 0;
+}
+
+.plugin-group-name {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
+.plugin-group-note {
+  color: var(--ink-faint);
+}
+
+.plugin-group.overridden .plugin-group-name {
+  color: var(--sky);
+}
+
+/* 解析不出结构时的降级视图：原文照贴，而不是显示成空白 */
+.plugin-raw {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+}
+
+.plugin-raw .hint {
+  margin: 0 0 10px;
+}
+
+.plugin-raw-text {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+  background: var(--well);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  white-space: pre-wrap;
 }

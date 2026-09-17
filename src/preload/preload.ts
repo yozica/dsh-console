@@ -64,6 +64,9 @@ const api: DshConsoleApi = {
   archiveUnarchive: (id) => ipcRenderer.invoke('archive:unarchive', id),
   archiveRemove: (id) => ipcRenderer.invoke('archive:remove', id),
 
+  // 插件装配层（只读）
+  pluginInspect: () => ipcRenderer.invoke('plugin:inspect'),
+
   // 事件
   onState: (handler) => subscribe('dsh:state', handler),
   onOutput: (handler) => subscribe('dsh:output', handler),

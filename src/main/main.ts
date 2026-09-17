@@ -29,6 +29,7 @@ import { Settings, type SettingsPatch, type SettingsValues } from './settings';
 import { PtySessions } from './pty-sessions';
 import { DshManager } from './dsh-manager';
 import { SessionArchiveManager } from './session-archive';
+import { PluginManager } from './plugin-manager';
 import { createUpdater, type Updater } from './updater';
 import { installFileLogging } from './logger';
 import * as processUtils from './process-utils';
@@ -45,6 +46,7 @@ import type {
   DshLogEntry,
   DshOutputEvent,
   EnvInfo,
+  PluginInspectResult,
   RenameSessionResult,
   ResolvedTheme,
   SessionExitEvent,
@@ -80,6 +82,7 @@ let settings!: Settings;
 let ptySessions!: PtySessions;
 let dshManager!: DshManager;
 let archiveManager!: SessionArchiveManager;
+let pluginManager!: PluginManager;
 let updater!: Updater;
 
 let shellCounter = 0;
@@ -451,8 +454,8 @@ function wireDevTools(contents: WebContents): void {
  *
  * 为什么需要：键盘焦点在 <webview> 里时，键盘事件只到 guest，渲染层那个
  * window 级 keydown 处理器收不到 —— 于是人在 Harness 页里时，
- * Ctrl+1~7 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构全部失灵
- * （macOS 上对应 Cmd+1~7 / Cmd+R / Cmd+Shift+D）。
+ * Ctrl+1~8 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构全部失灵
+ * （macOS 上对应 Cmd+1~8 / Cmd+R / Cmd+Shift+D）。
  *
  * 做法是把同一个按键事件重新注入宿主 webContents，让渲染层原有的处理器照常处理
  * （不在这里复制一份快捷键逻辑，免得两处慢慢走样）。
@@ -468,7 +471,7 @@ function wireGuestShortcuts(guest: WebContents): void {
     const primary = isMac ? Boolean(input.meta) : Boolean(input.control);
     const plain = primary && !input.shift && !input.alt;
     const isAppKey =
-      (plain && /^[1-7]$/.test(key)) ||
+      (plain && /^[1-8]$/.test(key)) ||
       (plain && lower === 'r') ||
       (primary && input.shift && !input.alt && lower === 'd');
     const isEscape = key === 'Escape';
@@ -825,6 +828,17 @@ function registerIpc(): void {
       }
     },
   );
+
+  // ---------------------------------------------------------------- 插件装配层
+  // 只读：读 profile 的 package.json + 跑一次 `dsh web --dump-config`。
+  // dsh 没在跑也要能用 —— 插件把启动打挂时，这一页恰恰是唯一的入口。
+  ipcMain.handle('plugin:inspect', async (): Promise<PluginInspectResult> => {
+    try {
+      return await pluginManager.inspect();
+    } catch (error) {
+      return { ok: false, error: messageOf(error) };
+    }
+  });
 }
 
 function wireManagerEvents(): void {
@@ -888,6 +902,8 @@ async function bootstrap(): Promise<void> {
   ptySessions = new PtySessions();
   dshManager = new DshManager({ settings, ptySessions });
   archiveManager = new SessionArchiveManager();
+  // 插件装配层：只读地看 profile 的 bundle 层栈与生效配置（dsh 是否在跑都能看）
+  pluginManager = new PluginManager(settings);
   // 自动更新：状态变化统一走 app:update 事件（渲染层底栏与设置页读同一份）
   updater = createUpdater({
     settings,

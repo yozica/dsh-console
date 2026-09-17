@@ -91,6 +91,12 @@
         <circle cx="10.5" cy="10.5" r="6.5" />
         <path d="M15.5 15.5L20 20" />
       </symbol>
+      <symbol id="i-plugin" viewBox="0 0 24 24">
+        <path d="M10 4h4v2.5a1.8 1.8 0 1 0 3.6 0V4H20v4h-2.4a1.8 1.8 0 1 0 0 3.6H20V16h-2.4" />
+        <path
+          d="M17.6 16v4h-4v-2.4a1.8 1.8 0 1 0-3.6 0V20H6v-4H4V9.6h2.4a1.8 1.8 0 1 0 0-3.6H4V4h6"
+        />
+      </symbol>
       <symbol id="i-archive" viewBox="0 0 24 24">
         <rect x="3.5" y="4" width="17" height="4.5" rx="1.2" />
         <path d="M5 8.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V8.5" />
@@ -141,6 +147,12 @@
           <!-- 这一页已迁到 Vue（src/renderer/panes/ArchivePane.vue），这里只留挂载点 -->
           <section class="pane" id="pane-archive">
             <div id="archive-root"></div>
+          </section>
+
+          <!-- ============================ 插件 ============================ -->
+          <!-- 装配层视图：bundle 层栈 + 生效配置（src/renderer/panes/PluginPane.vue） -->
+          <section class="pane" id="pane-plugin">
+            <div id="plugin-root"></div>
           </section>
 
           <!-- ============================ 设置 ============================ -->

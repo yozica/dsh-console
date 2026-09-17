@@ -4,7 +4,7 @@
  * 渲染层需要按平台分叉的地方只有三类：
  *   1. 应用级快捷键用 Cmd（macOS）还是 Ctrl（其它平台）—— app.ts / xterm.ts 的处理器
  *   2. 顶栏要不要给左上角的红绿灯留位置 —— styles.css 认 html[data-platform]
- *   3. 界面上写给人看的快捷键提示与文案（⌘+1~7 / Ctrl+1~7）
+ *   3. 界面上写给人看的快捷键提示与文案（⌘+1~8 / Ctrl+1~8）
  *
  * 判定来源有两处：
  *   - `navigator.userAgent`（同步，模块加载时就能用）—— 首帧样式不能等 IPC
@@ -48,7 +48,7 @@ export function modLabel(): string {
   return isMac.value ? '⌘' : 'Ctrl';
 }
 
-/** 拼一条快捷键提示，例如 ⌘+1~7 / Ctrl+1~7 */
+/** 拼一条快捷键提示，例如 ⌘+1~8 / Ctrl+1~8 */
 export function shortcutLabel(key: string): string {
   return `${modLabel()}+${key}`;
 }

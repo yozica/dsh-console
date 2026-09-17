@@ -1,0 +1,22 @@
+file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1197
+		throw new Error(`${binName}: failed to parse ${label} ${file}: ${String(error)}`);
+		      ^
+
+Error: dsh: failed to parse overlay /Users/lichengming/Desktop/dsh/dsh-console/.build-home/design/dsh-home/profiles/web/cordis.patch.yml: YAMLException: unexpected end of the stream within a flow collection (4:1)
+
+ 1 | - id: broken
+ 2 |   config:
+ 3 |     a: [1, 2
+ 4 | 
+-----^
+    at parsePatchList (file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1197:9)
+    at loadOverlayPatches (file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1167:9)
+    at loadProfileDirectory (file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:862:73)
+    at loadProfile (file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:894:9)
+    at prepareProfile (file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/lib/profile-boot-Dk-7KqJc.js:208:18)
+    at runDumpConfig (file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/lib/dump-config-lFgMwK8i.js:25:17)
+    at runCli (file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/lib/bin.js:162:4)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///Users/lichengming/.nvm/versions/node/v22.17.1/lib/node_modules/@deepseek-ai/dsh/lib/bin.js:168:23
+
+Node.js v24.14.1

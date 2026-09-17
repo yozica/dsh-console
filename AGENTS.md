@@ -40,18 +40,19 @@ src/
     logger.ts           主进程日志：console 同时落盘到 <userData>/logs/console.log
     updater.ts          自动更新状态机（electron-updater）：检查 / 下载 / 安装
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
+    plugin-manager.ts   插件装配层：profile 的 bundle 层栈 + `dsh web --dump-config` 的解析（含 stderr 上的"没报错的错"）
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
   shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
   renderer/             Vue 3 + Vite，产物 dist/renderer/
-    index.html          页面骨架：七个页面容器 + 挂载点 + 内联图标精灵 + 启动锁
+    index.html          页面骨架：八个页面容器 + 挂载点 + 内联图标精灵 + 启动锁
     main.ts             入口：样式导入顺序 → app.ts → 建立共享状态 → 挂载
     app.ts              应用级胶水：启动守卫、启动锁状态机、自动打开、快捷键
     mount.ts            挂载清单：外壳三块 + 全部页面
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
-    panes/              七个页面组件
-test/selftest.ts        103 项自检（`npm test`），不需要 Electron
+    panes/              八个页面组件
+test/selftest.ts        111 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -88,7 +89,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（103 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（111 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -261,7 +262,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 两个独立成因，症状相似：
 
-1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：七个页面改为 `position:absolute + visibility:hidden` **常驻布局**（`.pane.active { visibility: visible }`），切换时再补一次视口重算。
+1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：全部页面改为 `position:absolute + visibility:hidden` **常驻布局**（`.pane.active { visibility: visible }`），切换时再补一次视口重算。
 2. **`<webview>` 自己没写尺寸** → 它是替换元素，漏写 CSS 就退化成浏览器默认的约 300×150，页面上只出现顶部一小条。修法：两个内嵌页共用 `.embedded-view`（`width/height:100%`），**以后新增 webview 必须带上这个 class**。
 
 自检：「样式：页面容器靠 visibility 隐藏，不用 display:none」与「样式：每个 webview 都有明确高度的样式」。另外 `vite.config.mts` 的 `compilerOptions.isCustomElement` 把 `<webview>` 声明为自定义元素，否则 Vue 编译器会试着把它当组件解析。两个内嵌页用**各自独立且持久**的分区（`persist:dsh-ui` 存令牌 / `persist:deepseek` 存登录态），且主进程在启动时统一抹掉 UA 里的 Electron 标识（`app.userAgentFallback`，不是等 webview 挂上来再改 —— 后者可能晚于该页的第一次请求）。
@@ -340,15 +341,35 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 **哪条自检守着**：「自动更新：契约里有 7 个相位、UpdateState 字段与 4 个 API」「自动更新：`autoCheckUpdates` 在契约与 DEFAULTS 两处一致」「自动更新：不会偷偷下载 / 偷偷安装」「自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）」「自动更新：未打包时不加载 electron-updater（没有顶层 import，只按需 require）」。这五条**都是静态检查**：受限环境里跑不了打包后的应用，所以真机上装完新版后的行为仍要人工验一次。
 
+### 7.18 插件装配层：两个层面，别混
+
+dsh 的「插件」有两个层面，界面与代码都得分开看：
+
+- **运行层**：已经挂载进配置树的条目、它们的启停与设置项。这一层由 dsh 自己的界面管（内嵌 Harness 的 **设置 → 插件**：`插件配置` 改插件暴露的 settings 命名空间，`插件列表` 是只读清单）。console **不重做**，只在插件页给一句跳转提示。
+- **装配层**：装了什么 bundle、哪个版本、从哪来、层序如何、生效配置最后长什么样。没有任何界面管这个 —— 这就是 console 插件页（第 8 页）存在的理由，也是「dsh 因为插件起不来」时唯一的入口。
+
+术语对应关系（改这块代码前先认清）：**bundle** 是可安装单位（npm 包，manifest 里声明 `dsh.bundle.patch`），**profile** 是 `$DSH_HOME/profiles/<name>` 那份「哪些 bundle、按什么顺序」的清单，**插件**是两者最终装出来的 `apply(ctx)` 模块。层序是：各 bundle 的 patch（按 `dsh.profile.bundles` 顺序）→ profile 自己的 `cordis.patch.yml` → `$DSH_HOME/cordis.patch.yml` → `--patch` 覆盖层；**后面的按 `id` 整条替换前面的条目（替换整个 `config`，不是深合并）**。
+
+`src/main/plugin-manager.ts` 的几条硬约定：
+
+- **只读，只碰 `web`**。console 启动的是 `dsh web`（= `--profile web`），所以 `PLUGIN_PROFILE = 'web'`；`desktop` 是 CLI 保留给 Electron 的（`bin.js` 直接报错），永远不要传。
+- **空输出不是成功**。dsh 的 CLI 在跑不动的 Node 上是「退出码 0 + 零输出」（见 7.4），把它当成功就会静默显示成「没有插件」。`checkDumpResult()` 是这条判据的纯函数版本，自检直接钉它。
+- **未匹配的 patch 行在 stderr 上，不在 dump 里**：`dsh: [<层文件>] patch: entry "<id>" not found`，**退出码是 0**。这类"没报错的错"是用户改动悄悄不生效的主因，必须单独收；解析失败（抛异常）时 stderr 前面是一坨 Node 堆栈，取原因要用 `firstMeaningfulLine()`（第一行是 `file:///…`，不是原因）。
+- **`--dump-config` 会写 profile 根文件 `cordis.yml`**（实测：目录只读时报 EPERM）。它不是纯读操作，但那个文件本来就由 dsh 自己维护，不冲突。
+- **层归因直接来自 dump 的注释标签**：`# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app`；profile 自己那一层的标签是**文件全路径**。
+- **「被覆盖」要拆成两种**：真实数据里 `dsh-web-app` 覆盖 base 的 25 条有 23 条是把下层 `disabled: true`（不是改配置）。界面上必须分开标，否则用户以为配置被改了。
+
+自检守着：「插件：真实 dump 解析出层归因与全部条目」「插件：未匹配的 patch 行只在 stderr 上」「插件：空输出不算成功；失败时给的是诊断行而不是 Node 的堆栈首行」「插件：只碰 web profile」。夹具是**真实输出**（`test/fixtures/`，含一份 539 行的真 dump），所以上游改格式时这里第一时间变红。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，103 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，111 项，不需要 Electron、不启停任何进程
 ```
 
-`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。
+`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。
 
 **为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。
 
