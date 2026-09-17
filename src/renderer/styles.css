@@ -2111,6 +2111,7 @@ body[data-immersive='true'] .webview-wrap {
    没形成层）。 */
 .plugin-problems {
   flex: 0 0 auto;
+  margin: 0 20px;
 }
 
 .plugin-problem-list {
@@ -2155,6 +2156,9 @@ body[data-immersive='true'] .webview-wrap {
   flex: 1 1 auto;
   min-height: 0;
   gap: 14px;
+  /* 页面容器的内边距由各页自己给（.pane 只负责定位），这里的值与
+     .archive-body / .settings 一致：左右与底部各 20px，顶部 2px（工具条自己有 10px）。 */
+  padding: 2px 20px 20px;
 }
 
 .plugin-side {
@@ -2360,6 +2364,8 @@ body[data-immersive='true'] .webview-wrap {
 .plugin-config {
   flex: 1 1 auto;
   min-height: 0;
+  /* 与两边对齐的那一套一致：左右 20px、底部 20px */
+  margin: 0 20px 20px;
 }
 
 .plugin-config-bar {

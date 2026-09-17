@@ -320,6 +320,8 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 看板侧栏需要 `.panel { min-height: 0 }` 才能在内部滚动，但它会让设置页那些「高度跟着内容走」的卡片被压到容器高度以内，多出来的部分被 `.panel` 的 `overflow: hidden` 裁掉 —— 而 `scrollHeight == clientHeight` 意味着**连滚动条都不会出现**（症状：设置页最后一项永远看不到）。修法是给设置页的网格加 `grid-auto-rows: max-content`（行高跟内容走）。改这类布局前先想清楚「这个容器的滚动由谁负责」。
 
+**页面级内边距由各页自己给**：`.pane` 只负责定位（`position: absolute; inset: 0`），它**没有任何 padding** —— 所以新页面的根容器必须自己写左右与底部各 20px（`.archive-body` 是 `2px 20px 20px`、`.settings` 是 `4px 20px 20px`，工具条 `.bar` 自带 `10px 20px`）。漏了就会像插件页第一版那样整块面板贴到窗口边缘。冒烟里有一条「插件页与归档页的面板内边距必须一致」盯着（比的是两页**第一个面板的左边距 + 最后一个面板的右边距** —— 拿第一个去比右边距会把侧栏宽度当成边距）。
+
 ### 7.15 健康判据与令牌掩码
 
 - **健康判据**是 `GET http://host:port/`：dsh 对无令牌请求返回 `401 dsh web authentication required`，这本身就是「服务活着」的强特征；带 `__DSH_BOOT__` 或 `DeepSeek Harness` 的 200 同样判定为 dsh（`process-utils.ts` 的 `isDshResponse`）。所以探测**不需要令牌**，也不会把「401」误判成「服务没起」。
