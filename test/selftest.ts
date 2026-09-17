@@ -12,6 +12,7 @@
  *   5. DshManager 状态机（外部实例接管判定）
  *   6. 渲染层静态检查（含 macOS 的平台适配契约）
  *   7. 主题取值、发布：CHANGELOG 条目与 changeset 片段的汇总规则
+ *   8. 自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater）
  */
 
 import path from 'node:path';
@@ -1015,6 +1016,77 @@ async function main(): Promise<void> {
     assetGateThrew = true;
   }
   check('发布正文：产物不全时直接抛错，不会默默发出', assetGateThrew);
+
+  // ---------------------------------------------------------- 11. 自动更新契约
+  //     electron-updater 接上了 GitHub Releases 的 latest.yml。三条最容易静默失效的边界：
+  //     不会偷偷下载 / 偷偷安装；macOS 是 ad-hoc 签名（Squirrel.Mac 会拒绝安装）所以不更新；
+  //     开发态没有 app-update.yml 所以连 electron-updater 都不加载。
+  const ipcSource = fs.readFileSync(path.join(repoRoot, 'src', 'shared', 'ipc.ts'), 'utf8');
+  // 类型声明会被 Prettier 折行，所以先把空白压平再匹配
+  const flatIpc = ipcSource.replace(/\s+/g, ' ');
+  check(
+    '自动更新：契约里有 7 个相位、UpdateState 字段与 4 个 API',
+    /export type UpdatePhase = 'idle' \| 'checking' \| 'available' \| 'downloading' \| 'downloaded' \| 'error' \| 'unsupported';/.test(
+      flatIpc,
+    ) &&
+      /export interface UpdateState \{/.test(flatIpc) &&
+      /canAutoUpdate: boolean;/.test(flatIpc) &&
+      /releasesUrl: string;/.test(flatIpc) &&
+      /checkForUpdates: \(\) => Promise<UpdateState>;/.test(flatIpc) &&
+      /downloadUpdate: \(\) => Promise<UpdateState>;/.test(flatIpc) &&
+      /installUpdate: \(\) => Promise<boolean>;/.test(flatIpc) &&
+      /onUpdateState: \(handler: \(state: UpdateState\) => void\) => \(\) => void;/.test(flatIpc),
+  );
+  check(
+    '自动更新：autoCheckUpdates 在契约与 DEFAULTS 两处一致（默认开）',
+    /autoCheckUpdates: boolean;/.test(flatIpc) && DEFAULTS.autoCheckUpdates === true,
+    `DEFAULTS.autoCheckUpdates=${JSON.stringify(DEFAULTS.autoCheckUpdates)}`,
+  );
+
+  const updaterSource = fs.readFileSync(path.join(repoRoot, 'src', 'main', 'updater.ts'), 'utf8');
+  // 只看代码不看注释：文件头与行内注释为了解释原因会反复提到这些名字，当真值去查会误报
+  const updaterCode = updaterSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  check(
+    '自动更新：不会偷偷下载 / 偷偷安装（autoDownload 与 autoInstallOnAppQuit 都写死 false）',
+    /autoDownload = false/.test(updaterCode) && /autoInstallOnAppQuit = false/.test(updaterCode),
+  );
+  check(
+    '自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）',
+    /process\.platform === 'darwin'/.test(updaterCode) &&
+      /macOS 当前是 ad-hoc 签名/.test(updaterCode) &&
+      /canAutoUpdate: false/.test(updaterCode) &&
+      /releasesUrl/.test(updaterCode),
+  );
+  check(
+    '自动更新：未打包时不加载 electron-updater（没有顶层 import，只按需 require）',
+    /!app\.isPackaged/.test(updaterCode) &&
+      /开发态不检查更新/.test(updaterCode) &&
+      /createRequire/.test(updaterCode) &&
+      !/^import\s*\{[^}]*\}\s*from\s*'electron-updater'/m.test(updaterSource),
+  );
+
+  // ---------------------------------------------------------- 11. 产物命名与更新源
+  //    electron-updater 按 latest.yml / latest-mac.yml 里的文件名去 Releases 下载。名字一旦对不上
+  //    就是"能检查到新版本、下载 404"。而 productName 里带空格时三个阶段会各改一次（磁盘保留空格、
+  //    yml 变 -、GitHub 资产变 .），所以在 build 配置里给每个 target 写死 artifactName 是硬约定。
+  const buildConfig = (
+    JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+      build: Record<string, { artifactName?: string }>;
+    }
+  ).build;
+  const artifactNames = ['nsis', 'portable', 'mac', 'dmg'].map(
+    (target) => buildConfig[target]?.artifactName ?? '',
+  );
+  check(
+    '产物命名：四个 target 都写死了 artifactName，且里面没有空格',
+    artifactNames.every((name) => name.length > 0 && !/\s/.test(name)),
+    artifactNames.join(' | '),
+  );
+  check(
+    '产物命名：macOS 的 dmg 与 zip 同名基底（同一个 mac.artifactName / dmg.artifactName 模板）',
+    buildConfig.dmg?.artifactName === buildConfig.mac?.artifactName,
+    `dmg=${buildConfig.dmg?.artifactName} mac=${buildConfig.mac?.artifactName}`,
+  );
 
   // ---------------------------------------------------------- 汇总
   const failed = results.filter((item) => !item.ok);
