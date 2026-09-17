@@ -51,7 +51,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              七个页面组件
-test/selftest.ts        100 项自检（`npm test`），不需要 Electron
+test/selftest.ts        102 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -88,7 +88,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（100 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（102 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -176,6 +176,8 @@ git tag v0.2.3 && git push origin main --tags
 - **为什么打包与发布拆成不同 job**：v0.2.0 时两个 runner 各自 `electron-builder --publish always`，并发调 `getOrCreateRelease()` 都发现「没有 release」就各建一个，Windows 的安装包与 `latest.yml` 因此没传上去；更麻烦的是 electron-builder 默认 `releaseType=draft`，release 一旦被人点成「已发布」，后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn）。现在草稿由 `gh release create` 自己建、产物用 `gh release upload --clobber` 传，重跑可以放心覆盖同名产物。**推论：不要改回 `--publish always`，也不要让两个平台各自建 Release。**
 
 **`ci.yml` 的闸门**：PR 与合入 `main` 时跑同一个 `check` job；PR 上额外跑 `npx changeset status --since=origin/<base>`，**改了代码却没带片段就失败**。这也是 `npx changeset add --empty` 的用途 —— 放一个空片段当「通行证」，它不产生版本、也不进 CHANGELOG，汇总时自动清掉。
+
+**依赖归属**：`dependencies` 里**只放主进程运行时要 `require` 的包**（现在只有 `node-pty` 与 `electron-updater`）；`vue` / `@xterm/*` / `@fontsource/*` 这类渲染层依赖一律放 `devDependencies` —— 它们已经被 Vite 打进 `dist/renderer`，留在生产依赖里只会被 electron-builder **再拷一份**进 `app.asar`（实测：asar 2.1 MB → 20.2 MB、未压缩 .app 289 MB → 306 MB）。自检「打包：每个生产依赖都真的被主进程 require」与「渲染层依赖在 devDependencies」钉着这条。
 
 **打包相关的配置**（`package.json` 的 `build` 字段）：`asarUnpack: ["**/node_modules/node-pty/**"]`（node-pty 是原生模块，`.node` 与 conpty 的 `OpenConsole.exe` 不能塞进 asar）；`files` 必须包含 `dist/**/*`，`main` 指向编译后的 `dist/main/main.js`，源码不随包分发；两个平台的图标都指向 `build/icon.png`（512×512，由 `npx tsx tools/make-icon.mts` 生成，PNG 编解码是手写的，仓库因此不引图像库）。
 
@@ -341,7 +343,7 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，100 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，102 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。

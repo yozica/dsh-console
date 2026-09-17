@@ -47,21 +47,20 @@
     "dist:mac": "npm run build && electron-builder --mac"
   },
   "dependencies": {
-    "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@fontsource/ibm-plex-sans": "^5.3.0",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-web-links": "^0.12.0",
-    "@xterm/xterm": "^6.0.0",
     "electron-updater": "^6.8.9",
-    "node-pty": "1.2.0-beta.15",
-    "vue": "^3.5.42"
+    "node-pty": "1.2.0-beta.15"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
     "@eslint/js": "^10.0.1",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@lobehub/icons-static-png": "^1.75.0",
     "@types/node": "^24.13.5",
     "@vitejs/plugin-vue": "^6.0.8",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
     "eslint": "^10.10.0",
@@ -75,6 +74,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
     "vite": "^8.3.0",
+    "vue": "^3.5.42",
     "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.3.11"
   },
