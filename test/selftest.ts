@@ -949,7 +949,7 @@ async function main(): Promise<void> {
   );
 
   // ---------------------------------------------------------- 10. Release 的标题与正文
-  //    publish job 用 tools/release-notes.mts 生成标题与正文：标题 = `v<版本> —— <主题>`（主题
+  //    publish job 用 tools/release-notes.mts 生成标题与正文：标题 = `v<版本>: <主题>`（主题
   //    写在 CHANGELOG 标题行里），正文里的安装表来自**真实产物清单**。这两块最容易在改标题
   //    格式、改产物名、或换 electron-builder 之后悄悄跑偏 —— 而跑偏的代价是发出去的 Release
   //    让人下错文件（v0.2.0 就是说明里让下、页面上没有），所以全部钉住。
@@ -965,7 +965,7 @@ async function main(): Promise<void> {
   ];
 
   check(
-    '发布正文：标题 = `v<版本> —— <主题>`，主题取自 CHANGELOG 标题行',
+    '发布正文：标题 = `v<版本>: <主题>`，主题取自 CHANGELOG 标题行',
     releaseNotes.releaseTitle(
       '0.3.0',
       releaseNotes.extractTopic('## [0.3.0] - 2026-09-17: TypeScript 迁移'),
