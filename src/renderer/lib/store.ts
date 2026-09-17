@@ -64,6 +64,7 @@ export const update = ref<UpdateState>({
   percent: null,
   message: null,
   canAutoUpdate: false,
+  canCheck: false,
   releasesUrl: RELEASES_URL,
 });
 

@@ -20,7 +20,7 @@
 import { app, type BrowserWindow } from 'electron';
 import { createRequire } from 'node:module';
 
-import { RELEASES_URL, type UpdateState } from '../shared/ipc';
+import { RELEASES_URL, UPDATE_MAC_FEED_URL, type UpdateState } from '../shared/ipc';
 import type { Settings } from './settings';
 import type { AppUpdater, UpdateDownloadedEvent, UpdateInfo, ProgressInfo } from 'electron-updater';
 
@@ -30,6 +30,8 @@ const FIRST_CHECK_DELAY_MS = 8_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** 错误文案只留一句，太长的堆栈放进日志而不是状态里 */
 const ERROR_TEXT_LIMIT = 180;
+/** 轻量版本检查的超时：拿一个不到 1 KB 的 yml，慢到 15 秒就没必要再等了 */
+const FEED_TIMEOUT_MS = 15_000;
 
 export interface UpdaterOptions {
   settings: Settings;
@@ -101,6 +103,36 @@ export function summarizeUpdateError(error: unknown): string {
   return `检查更新失败：${brief}`;
 }
 
+/**
+ * 比较两个 `x.y.z` 版本号：a > b 返回正数、相等 0、a < b 负数。
+ * 只认数字段（我们发的就是这种）；预发布后缀（`-beta.1`）按"同版本"处理 —— 宁可少提示，
+ * 不要因为后缀比较写错而天天提示有新版本。
+ */
+export function compareVersions(a: string, b: string): number {
+  const parts = (value: string): number[] =>
+    String(value)
+      .trim()
+      .replace(/^v/i, '')
+      // 预发布后缀（`0.4.1-beta.1`）按"同版本"处理：先砍掉 `-…` / `+…` 再比数字段
+      .replace(/[-+].*$/, '')
+      .split('.')
+      .map((piece) => Number.parseInt(piece, 10))
+      .map((piece) => (Number.isFinite(piece) ? piece : 0));
+  const left = parts(a);
+  const right = parts(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+/** 从 `latest-mac.yml` 里取 `version:`（文件很小，不值得为它引一个 YAML 解析器） */
+export function parseFeedVersion(text: string): string | null {
+  const matched = /^version:\s*(\S+)\s*$/m.exec(String(text || ''));
+  return matched ? matched[1] : null;
+}
+
 export class Updater {
   private readonly settings: Settings;
   private readonly sendState: (state: UpdateState) => void;
@@ -124,6 +156,7 @@ export class Updater {
       percent: null,
       message: null,
       canAutoUpdate: false,
+      canCheck: false,
       releasesUrl: RELEASES_URL,
     };
   }
@@ -147,16 +180,33 @@ export class Updater {
         percent: null,
         message: '开发态不检查更新（仅安装版可用）',
         canAutoUpdate: false,
+        canCheck: false,
       });
     }
     if (process.platform === 'darwin') {
+      // macOS 装不了（ad-hoc 签名），但**照样能查** —— 直接取那个不到 1 KB 的 latest-mac.yml
+      // 比版本号，不碰 electron-updater / Squirrel。用户至少能在底栏看到"有新版本"。
+      const state = this.publish({
+        phase: 'idle',
+        currentVersion,
+        version: null,
+        percent: null,
+        message: '当前是 ad-hoc 签名，无法自动安装；有新版本会在底栏提示，点「打开下载页」手动下载',
+        canAutoUpdate: false,
+        canCheck: true,
+      });
+      this.applyAutoCheck();
+      return state;
+    }
+    if (process.platform !== 'win32') {
       return this.publish({
         phase: 'unsupported',
         currentVersion,
         version: null,
         percent: null,
-        message: 'macOS 当前是 ad-hoc 签名，系统会拒绝安装更新；请在 Releases 页面手动下载',
+        message: '这个平台上没有可用的更新源（本项目只发 Windows 与 macOS）',
         canAutoUpdate: false,
+        canCheck: false,
       });
     }
 
@@ -176,6 +226,7 @@ export class Updater {
       percent: null,
       message: null,
       canAutoUpdate: true,
+      canCheck: true,
     });
     this.applyAutoCheck();
     return state;
@@ -186,20 +237,57 @@ export class Updater {
     this.applyAutoCheck();
   }
 
-  /** 手动检查（设置页的「检查更新」/「重试」按钮）—— 不受 autoCheckUpdates 影响 */
+  /**
+   * 手动检查（设置页的「检查更新」/「重试」按钮）—— 不受 autoCheckUpdates 影响。
+   * Windows 交给 electron-updater；macOS 走下面那个轻量检查（装不了，但查得了）。
+   */
   async checkNow(): Promise<UpdateState> {
-    if (!this.updater || !this.state.canAutoUpdate) return this.snapshot();
+    if (!this.state.canCheck) return this.snapshot();
     if (this.busy) return this.snapshot();
     this.busy = 'check';
     try {
       this.publish({ phase: 'checking', percent: null, message: '正在检查更新…' });
-      await this.updater.checkForUpdates();
+      if (this.updater) await this.updater.checkForUpdates();
+      else await this.checkFeedVersion();
     } catch (error) {
       this.fail(error);
     } finally {
       this.busy = null;
     }
     return this.snapshot();
+  }
+
+  /**
+   * 轻量版本检查（macOS）：取 `latest-mac.yml`（GitHub 的 latest 别名指向最新**已发布**的
+   * Release）→ 比 `version:` 与当前版本。不下载、不安装，只把结果推给界面。
+   */
+  private async checkFeedVersion(): Promise<void> {
+    const response = await fetch(UPDATE_MAC_FEED_URL, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`取不到更新源（HTTP ${response.status}）：${UPDATE_MAC_FEED_URL}`);
+    }
+    const latest = parseFeedVersion(await response.text());
+    if (!latest) throw new Error('更新源里没有 version 字段（latest-mac.yml 格式变了？）');
+    const current = app.getVersion();
+    if (compareVersions(latest, current) > 0) {
+      log('info', `发现新版本 ${latest}（当前 ${current}）—— macOS 只能手动下载`);
+      this.publish({
+        phase: 'available',
+        version: latest,
+        percent: null,
+        message: `发现新版本 ${latest}，点「打开下载页」下载`,
+      });
+      return;
+    }
+    this.publish({
+      phase: 'idle',
+      version: null,
+      percent: null,
+      message: `已是最新版本（${current}）`,
+    });
   }
 
   /** 用户点了「下载」才开始下载（autoDownload 已关） */
@@ -274,7 +362,7 @@ export class Updater {
 
   /** 定时检查：启动后延迟一次，之后每 6 小时一次；设置关掉就停 */
   private applyAutoCheck(): void {
-    const wanted = this.state.canAutoUpdate && Boolean(this.settings.get('autoCheckUpdates'));
+    const wanted = this.state.canCheck && Boolean(this.settings.get('autoCheckUpdates'));
     if (!wanted) {
       this.clearTimers();
       return;

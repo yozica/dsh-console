@@ -51,7 +51,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              七个页面组件
-test/selftest.ts        96 项自检（`npm test`），不需要 Electron
+test/selftest.ts        100 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -88,7 +88,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（96 项，不需要 Electron、不启停任何进程）                        |
+| `npm test`                      | `tsx test/selftest.ts`（100 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -332,7 +332,7 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 **原因**：`package.json` 的 `mac.identity` 是 `"-"`（ad-hoc，见 7.3），而 macOS 的更新由 Squirrel.Mac 校验签名 —— 它要求更新包的签名与当前应用一致且被系统信任，ad-hoc 不满足，于是拒绝安装。开发态（`app.isPackaged === false`）的 resources 里没有 electron-builder 生成的 `app-update.yml`，electron-updater 没有可用的更新源。
 
-**现在的做法**：`src/main/updater.ts` 只在 **`app.isPackaged && process.platform !== 'darwin'`** 时才**按需 `require('electron-updater')`**（用 `createRequire(__filename)`，**不是顶层 import** —— `require('electron-updater')` 一求值就会按平台构造 updater 单例，macOS 上就是 Squirrel.Mac）。其余两种形态直接回报 `phase: 'unsupported'` + `canAutoUpdate: false` + `RELEASES_URL`，界面只给「打开下载页」。另外 `autoDownload` 与 `autoInstallOnAppQuit` 都写死 `false`：发现新版本只推状态，下载与安装必须用户点 —— 升级会退出应用、连带停掉正在跑的 dsh，不能替用户决定。定时检查（启动后一次 + 每 6 小时）由设置项 `autoCheckUpdates` 控制，改设置后由 `main.ts` 调 `updater.syncSettings()` 立即生效。
+**现在的做法**：`src/main/updater.ts` 只在 **`app.isPackaged && platform === 'win32'`** 时才**按需 `require('electron-updater')`**（用 `createRequire(__filename)`，**不是顶层 import** —— `require('electron-updater')` 一求值就会按平台构造 updater 单例，macOS 上就是 Squirrel.Mac）。macOS 上改成**自己能查、但不装**：直接取 `releases/latest/download/latest-mac.yml`（GitHub 的 latest 别名指向最新**已发布**的 Release，与 Windows 读的是同一份更新源），比一下 `version:` 就把结果推给界面 —— 所以 mac 用户照样能在底栏看到「发现新版本」，只是按钮是「打开下载页」；契约里 `canCheck`（能不能查）与 `canAutoUpdate`（能不能装）因此是**分开的两个字段**。开发态与其它平台回报 `unsupported` + 两个 false。另外 `autoDownload` 与 `autoInstallOnAppQuit` 都写死 `false`：发现新版本只推状态，下载与安装必须用户点 —— 升级会退出应用、连带停掉正在跑的 dsh，不能替用户决定。定时检查（启动后一次 + 每 6 小时）由设置项 `autoCheckUpdates` 控制，改设置后由 `main.ts` 调 `updater.syncSettings()` 立即生效。
 
 **哪条自检守着**：「自动更新：契约里有 7 个相位、UpdateState 字段与 4 个 API」「自动更新：`autoCheckUpdates` 在契约与 DEFAULTS 两处一致」「自动更新：不会偷偷下载 / 偷偷安装」「自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）」「自动更新：未打包时不加载 electron-updater（没有顶层 import，只按需 require）」。这五条**都是静态检查**：受限环境里跑不了打包后的应用，所以真机上装完新版后的行为仍要人工验一次。
 
@@ -341,7 +341,7 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，96 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，100 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。

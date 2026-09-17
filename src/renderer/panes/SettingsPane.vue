@@ -138,8 +138,12 @@ type UpdateAction = 'check' | 'download' | 'install' | 'releases';
 
 /** 按钮语义只看"能不能自动更新 + 当前相位"（macOS / 开发态永远只有「打开下载页」） */
 const updateAction = computed<UpdateAction>(() => {
-  if (!update.value.canAutoUpdate) return 'releases';
-  if (update.value.phase === 'available') return 'download';
+  // 既不能查也不能装（开发态、其它平台）→ 只剩"去下载页"
+  if (!update.value.canCheck) return 'releases';
+  if (update.value.phase === 'available') {
+    // macOS：查得到新版本，但装不了（ad-hoc 签名）→ 引导去下载页
+    return update.value.canAutoUpdate ? 'download' : 'releases';
+  }
   if (update.value.phase === 'downloaded') return 'install';
   return 'check';
 });
@@ -157,11 +161,11 @@ const updateLabel = computed(() => {
     case 'error':
       return '重试';
     case 'available':
-      return '下载';
+      return update.value.canAutoUpdate ? '下载' : '打开下载页';
     case 'downloaded':
       return '重启并安装';
     default:
-      return update.value.canAutoUpdate ? '检查更新' : '打开下载页';
+      return update.value.canCheck ? '检查更新' : '打开下载页';
   }
 });
 
