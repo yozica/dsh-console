@@ -13,6 +13,45 @@
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type ResolvedTheme = 'light' | 'dark';
 
+// ---------------------------------------------------------------- 自动更新
+
+/**
+ * 自动更新的相位（主进程 updater.ts 是唯一写入方）。
+ *
+ * - `idle`：没有正在进行的动作（还没检查过，或已是最新版本）
+ * - `checking`：正在请求更新元数据（latest.yml）
+ * - `available`：发现了新版本，**等用户点「下载」**（我们不会自动下载）
+ * - `downloading`：正在下载，percent 从 0 到 100
+ * - `downloaded`：下载完成，**等用户点「重启并安装」**（退出时也不会偷偷装）
+ * - `error`：任意一步失败，原因摘成一句中文放在 message 里
+ * - `unsupported`：这个平台/运行形态用不了自动更新（macOS 的 ad-hoc 签名、开发态）
+ */
+export type UpdatePhase =
+  'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error' | 'unsupported';
+
+/** 自动更新的当前状态（app:update 事件、快照的 update 字段、设置页的更新卡片共用） */
+export interface UpdateState {
+  phase: UpdatePhase;
+  /** 当前安装的版本（app.getVersion()） */
+  currentVersion: string;
+  /** 发现 / 已下载的新版本号；没有就是 null */
+  version: string | null;
+  /** 下载进度 0~100；只有 downloading 相位有意义 */
+  percent: number | null;
+  /** 给用户看的一句中文（错误原因也在这里，不是只写 console） */
+  message: string | null;
+  /** 这个运行形态能不能自动更新（macOS 与开发态为 false） */
+  canAutoUpdate: boolean;
+  /** 不能自动更新时的出路：Releases 页面 */
+  releasesUrl: string;
+}
+
+/**
+ * GitHub Releases 页面。与 package.json 的 build.publish（owner: yozica / repo: dsh-console）
+ * 是同一处；主进程用它填 UpdateState.releasesUrl，渲染层用它做「打开下载页」的兜底。
+ */
+export const RELEASES_URL = 'https://github.com/yozica/dsh-console/releases';
+
 export interface ThemeInfo {
   mode: ThemeMode;
   resolved: ResolvedTheme;
@@ -102,6 +141,8 @@ export interface SettingsValues {
   openUiOnStart: boolean;
   uiFullscreenOnStart: boolean;
   killOnExit: boolean;
+  /** 自动检查更新：启动后检查一次，之后每 6 小时一次（发现新版本仍要用户确认才下载） */
+  autoCheckUpdates: boolean;
   pollIntervalMs: number;
   startTimeoutMs: number;
   stopGraceMs: number;
@@ -149,6 +190,11 @@ export interface AppSnapshot {
   sessions: SessionInfo[];
   launch: LaunchInfo;
   env: EnvInfo;
+  /**
+   * 自动更新的当前状态。放进快照是因为它天生是"主进程先有、渲染层后连上"的：
+   * macOS / 开发态在窗口加载前就已经是 unsupported，只靠 app:update 事件会丢。
+   */
+  update: UpdateState;
   userData: string;
   theme: ThemeInfo;
 }
@@ -321,6 +367,12 @@ export interface DshConsoleApi {
   openExternal: (url?: string) => Promise<string>;
   revealUserData: () => Promise<string>;
   confirm: (payload: ConfirmRequest) => Promise<boolean>;
+
+  // 自动更新：状态由主进程持有，渲染层只下命令 + 订阅（见 main/updater.ts）
+  checkForUpdates: () => Promise<UpdateState>;
+  downloadUpdate: () => Promise<UpdateState>;
+  installUpdate: () => Promise<boolean>;
+  onUpdateState: (handler: (state: UpdateState) => void) => () => void;
 
   // 归档会话管理
   archiveList: () => Promise<ArchiveListResult>;

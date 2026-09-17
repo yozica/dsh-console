@@ -43,6 +43,8 @@ export const DEFAULTS: SettingsValues = {
   uiFullscreenOnStart: true,
   /** 关闭应用时是否一并停止本应用启动的 dsh */
   killOnExit: true,
+  /** 自动检查更新：启动后检查一次，之后每 6 小时一次（只提示，下载与安装都要用户点） */
+  autoCheckUpdates: true,
   /** 状态轮询间隔（毫秒） */
   pollIntervalMs: 1500,
   /** 启动后多少毫秒仍未通过健康检查就判定为异常 */

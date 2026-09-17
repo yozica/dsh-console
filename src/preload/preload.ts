@@ -52,6 +52,12 @@ const api: DshConsoleApi = {
   revealUserData: () => ipcRenderer.invoke('app:revealUserData'),
   confirm: (payload) => ipcRenderer.invoke('app:confirm', payload),
 
+  // 自动更新：状态由主进程推（app:update），这里只下命令
+  checkForUpdates: () => ipcRenderer.invoke('app:update-check'),
+  downloadUpdate: () => ipcRenderer.invoke('app:update-download'),
+  installUpdate: () => ipcRenderer.invoke('app:update-install'),
+  onUpdateState: (handler) => subscribe('app:update', handler),
+
   // 归档会话管理
   archiveList: () => ipcRenderer.invoke('archive:list'),
   archiveRead: (id) => ipcRenderer.invoke('archive:read', id),

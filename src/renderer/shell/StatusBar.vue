@@ -8,7 +8,7 @@
  * 也不会被下一次响应式更新抹掉。
  */
 import { computed, onUnmounted, ref } from 'vue';
-import { dsh, phaseInfo, snapshot } from '../lib/store.js';
+import { currentTab, dsh, phaseInfo, snapshot, update } from '../lib/store.js';
 import { shortcutLabel } from '../lib/platform.js';
 
 const MESSAGE_MS = 6000;
@@ -45,11 +45,30 @@ const env = computed(() => {
 
 /** 快捷键提示按平台写：macOS 是 ⌘1~7，其它平台是 Ctrl+1~7（页面数见 app.ts 的 TAB_ORDER） */
 const tabHint = computed(() => `${shortcutLabel('1~7')} 切换页面`);
+
+/**
+ * 有新版本（发现 / 已下载）时在底栏加一句可点的提示，点它去设置页的更新卡片。
+ * 只在"需要用户动手"的两个相位出现，其余时间底栏保持原样。
+ */
+const updateHint = computed(() => {
+  if (update.value.phase === 'available') {
+    return `发现新版本 ${update.value.version || ''}，点此查看`;
+  }
+  if (update.value.phase === 'downloaded') return '新版本已下载，点此查看';
+  return '';
+});
+
+function openUpdateSettings(): void {
+  currentTab.value = 'settings';
+}
 </script>
 
 <template>
   <footer class="statusbar">
     <span id="footer-state">{{ message || state }}</span>
+    <button v-if="updateHint" class="update-hint" @click="openUpdateSettings">
+      {{ updateHint }}
+    </button>
     <div class="spacer"></div>
     <span class="kbd-hint">{{ tabHint }}</span>
     <span id="footer-env">{{ env }}</span>

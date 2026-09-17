@@ -38,6 +38,7 @@ src/
     process-utils.ts    命令探测、端口占用、进程名、结束进程树、HTTP 探测、ANSI 清理
     settings.ts         settings.json 读写（含 v1→v2 一次性迁移）
     logger.ts           主进程日志：console 同时落盘到 <userData>/logs/console.log
+    updater.ts          自动更新状态机（electron-updater）：检查 / 下载 / 安装
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
   shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
@@ -50,7 +51,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              七个页面组件
-test/selftest.ts        86 项自检（`npm test`），不需要 Electron
+test/selftest.ts        93 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -87,7 +88,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（86 项，不需要 Electron、不启停任何进程）                        |
+| `npm test`                      | `tsx test/selftest.ts`（93 项，不需要 Electron、不启停任何进程）                        |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -171,7 +172,7 @@ git tag v0.2.3 && git push origin main --tags
 ### `release.yml` 的两个 job 与产物
 
 - **`build-windows` / `build-macos`**：各在 `windows-latest` / `macos-latest` 上 `npm ci` → `npm test` → `lint && format:check && typecheck` → `npm run build` → `electron-builder --win|--mac --publish never`，产物挂成 Artifacts。**不加 `--config.npmRebuild=false`**：runner 上有 C++ 工具链，让 electron-builder 对着打包用的 Electron 版本重编 node-pty 才对（node-pty 是 N-API，跨 Electron 大版本不用改代码）。
-- **`publish`**（仅在标签构建时跑）：收齐两边产物 → `tools/release-notes.mts` 生成标题与正文（`--assets` 吃 `ls assets` 的输出）→ `gh release create --draft --title "$(cat .release/title.txt)" --notes-file .release/notes.md`（已存在就只补产物、正文不动）→ `gh release upload --clobber`。产物是 Windows 的 NSIS 安装包 + 便携版 exe、macOS 的 arm64 / x64 dmg 与 zip，外加 `latest.yml` / `latest-mac.yml` 与 `*.blockmap`（差分下载索引与更新元数据，现在**没接自动更新**，先留着）。手动触发 `release` 工作流则**只构建、不发版**，产物在 Artifacts 里。
+- **`publish`**（仅在标签构建时跑）：收齐两边产物 → `tools/release-notes.mts` 生成标题与正文（`--assets` 吃 `ls assets` 的输出）→ `gh release create --draft --title "$(cat .release/title.txt)" --notes-file .release/notes.md`（已存在就只补产物、正文不动）→ `gh release upload --clobber`。产物是 Windows 的 NSIS 安装包 + 便携版 exe、macOS 的 arm64 / x64 dmg 与 zip，外加 `latest.yml` / `latest-mac.yml` 与 `*.blockmap` —— 这些就是**自动更新（electron-updater）的更新源**：Windows 版按 `latest.yml` 检查与下载增量包，`*.blockmap` 是差分索引。手动触发 `release` 工作流则**只构建、不发版**，产物在 Artifacts 里。
 - **为什么打包与发布拆成不同 job**：v0.2.0 时两个 runner 各自 `electron-builder --publish always`，并发调 `getOrCreateRelease()` 都发现「没有 release」就各建一个，Windows 的安装包与 `latest.yml` 因此没传上去；更麻烦的是 electron-builder 默认 `releaseType=draft`，release 一旦被人点成「已发布」，后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn）。现在草稿由 `gh release create` 自己建、产物用 `gh release upload --clobber` 传，重跑可以放心覆盖同名产物。**推论：不要改回 `--publish always`，也不要让两个平台各自建 Release。**
 
 **`ci.yml` 的闸门**：PR 与合入 `main` 时跑同一个 `check` job；PR 上额外跑 `npx changeset status --since=origin/<base>`，**改了代码却没带片段就失败**。这也是 `npx changeset add --empty` 的用途 —— 放一个空片段当「通行证」，它不产生版本、也不进 CHANGELOG，汇总时自动清掉。
@@ -320,15 +321,25 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 归档页的数据全在主进程 `session-archive.ts` 里直接读写 DSH 的数据目录（`$DSH_HOME`，没有则 `~/.dsh`）：归档 id 在 `storages/workspace.json`，标题 / 首句在投影缓存，对话全文在 zstd 压缩的 JSONL 会话日志里（按帧解压还原）。「取消归档 / 删除」只改 `workspace.json`（原子写），删除时连会话日志与投影缓存一起删，**附件不删**（可能被多个会话共享）。注意：正在运行的 dsh 把 `workspace.json` 读进了内存，直接改磁盘不会立刻反映到它的界面，所以操作后会提示「重启 dsh 才生效」。
 
+### 7.17 自动更新：Windows 能自动，macOS 与开发态不能
+
+**现象**：macOS 上若照 Windows 那一套接 electron-updater，应用会正常发现新版本、下载，然后**安装失败**（用户点了「重启并安装」什么也没发生）；开发态则连更新元数据都没有，检查必然报错，日志里是一串看不懂的路径错误。
+
+**原因**：`package.json` 的 `mac.identity` 是 `"-"`（ad-hoc，见 7.3），而 macOS 的更新由 Squirrel.Mac 校验签名 —— 它要求更新包的签名与当前应用一致且被系统信任，ad-hoc 不满足，于是拒绝安装。开发态（`app.isPackaged === false`）的 resources 里没有 electron-builder 生成的 `app-update.yml`，electron-updater 没有可用的更新源。
+
+**现在的做法**：`src/main/updater.ts` 只在 **`app.isPackaged && process.platform !== 'darwin'`** 时才**按需 `require('electron-updater')`**（用 `createRequire(__filename)`，**不是顶层 import** —— `require('electron-updater')` 一求值就会按平台构造 updater 单例，macOS 上就是 Squirrel.Mac）。其余两种形态直接回报 `phase: 'unsupported'` + `canAutoUpdate: false` + `RELEASES_URL`，界面只给「打开下载页」。另外 `autoDownload` 与 `autoInstallOnAppQuit` 都写死 `false`：发现新版本只推状态，下载与安装必须用户点 —— 升级会退出应用、连带停掉正在跑的 dsh，不能替用户决定。定时检查（启动后一次 + 每 6 小时）由设置项 `autoCheckUpdates` 控制，改设置后由 `main.ts` 调 `updater.syncSettings()` 立即生效。
+
+**哪条自检守着**：「自动更新：契约里有 7 个相位、UpdateState 字段与 4 个 API」「自动更新：`autoCheckUpdates` 在契约与 DEFAULTS 两处一致」「自动更新：不会偷偷下载 / 偷偷安装」「自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）」「自动更新：未打包时不加载 electron-updater（没有顶层 import，只按需 require）」。这五条**都是静态检查**：受限环境里跑不了打包后的应用，所以真机上装完新版后的行为仍要人工验一次。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，86 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，93 项，不需要 Electron、不启停任何进程
 ```
 
-`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。
+`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。
 
 **为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。凡是「界面必须长这样」「产物必须长这样」的**契约**，都尽量写成自检而不是靠人记。
 
