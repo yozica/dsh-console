@@ -20,6 +20,7 @@ import type {
   PluginEntry,
   PluginInspectResult,
   PluginLayer,
+  PluginLiveEntry,
   PluginProblem,
 } from '../../shared/ipc.js';
 
@@ -134,6 +135,53 @@ function ownLayerWhy(layer: PluginLayer): string {
   return '文件里是 []';
 }
 
+/**
+ * 运行中的条目按"配置里的 id"建索引：接口返回的 id 带 `include:` 前缀（它们是从根
+ * include 加载进来的），剥掉才和生效配置里的 id 对得上。哈希命名的那些（启动时挂的
+ * 目录选择器 / HMR）没有对应配置行，单独列。
+ */
+const liveById = computed(() => {
+  const map = new Map<string, PluginLiveEntry>();
+  for (const entry of data.value?.live?.entries ?? []) {
+    map.set(stripIncludePrefix(entry.entryId), entry);
+  }
+  return map;
+});
+
+/** 运行中但配置里没有的行（根 include + 三个哈希 id 的原生选择器/HMR）—— 这就是两个数量对不上的差额 */
+const liveOnly = computed(() =>
+  (data.value?.live?.entries ?? []).filter(
+    (entry) => !staticIds.value.has(stripIncludePrefix(entry.entryId)),
+  ),
+);
+
+const staticIds = computed(() => {
+  const ids = new Set<string>();
+  for (const group of data.value?.treeLayers ?? []) {
+    for (const entry of group.entries) ids.add(entry.id);
+  }
+  return ids;
+});
+
+function stripIncludePrefix(entryId: string): string {
+  const prefix = 'include:';
+  return entryId.startsWith(prefix) ? entryId.slice(prefix.length) : entryId;
+}
+
+/** 条目的运行状态：接口读不到时返回 null，界面就什么都不标 */
+function liveState(id: string): PluginLiveEntry | null {
+  return liveById.value.get(id) ?? null;
+}
+
+function stateLabel(phase: PluginLiveEntry['fiberPhase']): string {
+  if (phase === 'active') return '运行中';
+  if (phase === 'failed') return '加载失败';
+  if (phase === 'loading') return '加载中';
+  if (phase === 'unloading') return '卸载中';
+  if (phase === 'pending') return '待加载';
+  return '未挂载';
+}
+
 function problemLabel(kind: PluginProblem['kind']): string {
   if (kind === 'unmatched-patch') return '指向了不存在的条目';
   if (kind === 'parse-error') return '解析失败';
@@ -222,7 +270,21 @@ function clearFilters(): void {
       <div class="spacer"></div>
       <span v-if="error" class="bar-note">{{ error }}</span>
       <template v-else-if="data">
-        <span class="bar-note">{{ data.entryCount }} 个组合条目 · {{ layers.length }} 层</span>
+        <span v-if="data.live" class="bar-note">
+          运行中 {{ data.live.counts.total }} 条（{{ data.live.counts.active }} 已挂载<template
+            v-if="data.live.counts.idle"
+          >
+            · {{ data.live.counts.idle }} 未挂载</template
+          ><template v-if="data.live.counts.failed">
+            · <b class="plugin-failed">{{ data.live.counts.failed }} 加载失败</b></template
+          >）
+        </span>
+        <span v-else class="bar-note"
+          >{{ data.entryCount }} 个组合条目 · {{ layers.length }} 层</span
+        >
+        <span v-if="!data.live" class="plugin-tag muted" :title="data.liveError || ''"
+          >运行中清单不可用</span
+        >
         <span v-if="data.patchReload" class="bar-hint">
           {{ data.patchReload === 'live' ? 'patch 层改动即时生效' : 'patch 层只在启动时应用' }}
         </span>
@@ -414,9 +476,10 @@ function clearFilters(): void {
         <div v-else class="plugin-config-body">
           <p class="plugin-scope">
             口径：这里是 <code>--dump-config</code> 组合出来的<b>行</b>（各 bundle 的 patch + 你的
-            patch 层）。Harness 的「插件列表」数的是<b>运行中的 Loader 条目</b
-            >，它还包含启动时挂上的根 <code>include</code> 行与运行时新增的行 ——
-            两个数字不会相等，它们回答的也不是同一个问题。
+            patch 层）。运行中的 Loader 条目还多出几行 —— 启动时挂上的根
+            <code>include</code> 与原生目录选择器 /
+            HMR，它们不在配置文件里（见下面的「运行时挂载」）。两个数字回答的不是同一个问题，
+            所以不等。<template v-if="data.live">dsh 在跑时，两个数都给你。</template>
           </p>
           <template v-for="(group, gi) in visibleGroups" :key="`${group.label}-${gi}`">
             <div class="plugin-group" :class="{ overridden: group.patchedBy !== null }">
@@ -436,10 +499,44 @@ function clearFilters(): void {
                 <span class="plugin-entry-name">{{ entry.name }}</span>
                 <span v-if="entry.disabled" class="plugin-tag muted">disabled</span>
                 <span v-else-if="group.patchedBy" class="plugin-tag accent">被覆盖</span>
+                <span
+                  v-if="liveState(entry.id)"
+                  class="plugin-state"
+                  :data-phase="liveState(entry.id)?.fiberPhase"
+                  >{{ stateLabel(liveState(entry.id)?.fiberPhase ?? null) }}</span
+                >
               </li>
             </ul>
           </template>
           <p v-if="visibleGroups.length === 0" class="hint">没有匹配的条目。</p>
+
+          <!-- 运行中但配置里没有的行：根 include + 启动时挂的原生选择器 / HMR。
+               这正是「运行中」与「组合条目」两个数字对不上的那几行。 -->
+          <template v-if="liveOnly.length && !query && !layerFilter">
+            <div class="plugin-group">
+              <span class="plugin-group-name">运行时挂载</span>
+              <span class="plugin-group-note"
+                >— 不在配置文件里，启动时由 dsh 自己挂的，{{ liveOnly.length }} 条</span
+              >
+            </div>
+            <ul class="plugin-entry-list">
+              <li v-for="entry in liveOnly" :key="entry.entryId" class="plugin-entry">
+                <span class="plugin-entry-id">{{ entry.entryId }}</span>
+                <span class="plugin-entry-name">{{ entry.moduleName }}</span>
+                <span class="plugin-state" :data-phase="entry.fiberPhase">{{
+                  stateLabel(entry.fiberPhase)
+                }}</span>
+              </li>
+            </ul>
+          </template>
+
+          <p v-if="data.live?.presets.length" class="plugin-presets">
+            会话插件（Agent 预设按会话组装的行数）：
+            <span v-for="preset in data.live.presets" :key="preset.id" class="plugin-tag mono"
+              >{{ preset.id }}<template v-if="preset.isDefault">（默认）</template>
+              {{ preset.rows }} 行</span
+            >
+          </p>
         </div>
       </section>
     </template>

@@ -416,6 +416,36 @@ export interface PluginProblem {
   layer?: string;
 }
 
+/** 运行中的 Loader 条目的 fiber 阶段（null = 没有存活的根 fiber，多半是被禁用/被覆盖了） */
+export type PluginFiberPhase = 'pending' | 'active' | 'loading' | 'failed' | 'unloading' | null;
+
+/**
+ * 运行中的一条（来自 dsh 的 pluginInventory/list 接口，不是配置文件）。
+ * entryId 带 `include:` 前缀（根 include 加载进来的），与配置里的 id 对照时要去掉。
+ */
+export interface PluginLiveEntry {
+  entryId: string;
+  moduleName: string;
+  enabled: boolean;
+  fiberPhase: PluginFiberPhase;
+}
+
+/** 每个 Agent 预设会给会话挂多少行（Harness 里那个「会话插件 N 个」就是这个） */
+export interface PluginLivePreset {
+  id: string;
+  name: string | null;
+  isDefault: boolean;
+  broken: string | null;
+  rows: number;
+}
+
+/** 运行中的清单。只有 dsh 由本应用启动（手上有令牌）时才拿得到；拿不到就是 null + 一句原因。 */
+export interface PluginLiveSnapshot {
+  entries: PluginLiveEntry[];
+  presets: PluginLivePreset[];
+  counts: { total: number; active: number; failed: number; idle: number };
+}
+
 export interface PluginInspectResult {
   ok: boolean;
   error?: string;
@@ -436,6 +466,9 @@ export interface PluginInspectResult {
   commands?: string[];
   /** 解析不出结构时的原文（界面降级为纯文本，而不是显示空白） */
   rawDump?: string | null;
+  /** 运行中的清单；拿不到时是 null（看 liveError 的原因），页面退回纯静态视图 */
+  live?: PluginLiveSnapshot | null;
+  liveError?: string;
 }
 
 /**

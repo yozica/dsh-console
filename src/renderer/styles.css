@@ -2276,6 +2276,54 @@ body[data-immersive='true'] .webview-wrap {
   color: var(--ink-faint);
 }
 
+/* 运行状态：只有在拿到运行中清单时才出现（拿不到就什么都不标，不猜） */
+.plugin-state {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--run-soft);
+  color: var(--run);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.plugin-state[data-phase='failed'] {
+  background: var(--rose-soft);
+  color: var(--rose);
+}
+
+.plugin-state[data-phase='pending'],
+.plugin-state[data-phase='loading'],
+.plugin-state[data-phase='unloading'] {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+/* fiberPhase 为空 = 没有存活的根 fiber（多半被上层禁用了），不是"正常" */
+.plugin-state[data-phase=''] {
+  background: transparent;
+  color: var(--ink-faint);
+}
+
+.plugin-failed {
+  color: var(--rose);
+  font-weight: 600;
+}
+
+/* 会话插件（Agent 预设）行数：解释 Harness 里那个"28 个" */
+.plugin-presets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 10px 16px 14px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
 .plugin-tag.accent {
   border-color: transparent;
   background: var(--sky-soft);

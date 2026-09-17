@@ -33,8 +33,12 @@ import { resolveDshHome } from './session-archive';
 import type { Settings, SettingsValues } from './settings';
 import type {
   PluginEntry,
+  PluginFiberPhase,
   PluginInspectResult,
   PluginLayer,
+  PluginLiveEntry,
+  PluginLivePreset,
+  PluginLiveSnapshot,
   PluginProblem,
   PluginTreeLayer,
 } from '../shared/ipc';
@@ -48,6 +52,10 @@ export const PLUGIN_PROFILE = 'web';
 
 /** dump 是启动前的组合计算，不该慢；超时按失败处理而不是无限等 */
 const DUMP_TIMEOUT_MS = 20_000;
+/** 运行中清单走本机 HTTP，正常是毫秒级；超时按"读不到"处理 */
+const LIVE_TIMEOUT_MS = 5_000;
+/** dsh 客户端的 Remote 端点：`<service>/<method>` 就是 /api 后面的路径 */
+const LIVE_ENDPOINT = 'pluginInventory/list';
 /** 本机 web profile 的 dump 约 17 KB；留足余量，异常大时按失败处理 */
 const DUMP_MAX_BUFFER = 8 * 1024 * 1024;
 
@@ -459,10 +467,161 @@ export function missingLayers(
     }));
 }
 
+// ---------------------------------------------------------------- 运行中的清单
+//
+// 静态组合（dump）拿不到"运行中"的事实：根 include 行、两个原生目录选择器、HMR
+// 这几行是启动时挂的，配置里根本没有；条目是被禁用还是真的活着也只有进程知道。
+// 这些只在 dsh 的 Loader 里，而访问它要先过 dsh web 的鉴权 —— 所以走它自己的接口：
+//
+//   1. GET  <origin>/?token=<控制台捕获的令牌>   → 303 + Set-Cookie: dsh-auth-<hash>=…
+//   2. POST <origin>/api/pluginInventory/list   → 带 cookie 与下面这个信封
+//
+// 这是 rc 版本的内部协议（cookie 名、路径形状、信封字段），上游一改就会失效，
+// 所以整条路都是"尽力而为"：任何一步失败都只记一句原因，页面退回纯静态视图。
+
+/** `http://127.0.0.1:3080/?token=xyz` → { origin, token }；没有令牌或不是 URL 时返回 null */
+export function parseTokenUrl(
+  url: string | null | undefined,
+): { origin: string; token: string } | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const token = parsed.searchParams.get('token');
+    if (!token) return null;
+    return { origin: parsed.origin, token };
+  } catch {
+    return null;
+  }
+}
+
+/** 运行中的条目 id 带 `include:` 前缀（它们是从根 include 加载进来的），对配置里的 id 时要剥掉 */
+export function stripIncludePrefix(entryId: string): string {
+  const prefix = 'include:';
+  return entryId.startsWith(prefix) ? entryId.slice(prefix.length) : entryId;
+}
+
+/** 一元调用的请求信封（dsh 客户端协议：type / rpcId / method / payload.args） */
+export function unaryEnvelope(method: string, rpcId: string): string {
+  return JSON.stringify({ type: 'client-request', rpcId, method, payload: { args: {} } });
+}
+
+/** 从 server-response 信封里取出 value；ok:false 或形状不对时返回 null */
+export function unwrapLiveValue(text: string): unknown {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const envelope = asRecord(parsed);
+  if (envelope.type !== 'server-response') return null;
+  const result = asRecord(envelope.result);
+  if (result.ok !== true) return null;
+  return result.value;
+}
+
+/** 把接口返回整理成界面要的形状（计数、预设行数） */
+export function summarizeLive(value: unknown): PluginLiveSnapshot {
+  const raw = asRecord(value);
+  const entries: PluginLiveEntry[] = (Array.isArray(raw.entries) ? raw.entries : []).map((item) => {
+    const entry = asRecord(item);
+    const phase = entry.fiberPhase;
+    return {
+      entryId: typeof entry.entryId === 'string' ? entry.entryId : String(entry.entryId ?? ''),
+      moduleName: typeof entry.moduleName === 'string' ? entry.moduleName : '',
+      enabled: entry.enabled === true,
+      fiberPhase: (typeof phase === 'string' ? phase : null) as PluginFiberPhase,
+    };
+  });
+  const presets: PluginLivePreset[] = (Array.isArray(raw.agentPresets) ? raw.agentPresets : []).map(
+    (item) => {
+      const preset = asRecord(item);
+      return {
+        id: typeof preset.id === 'string' ? preset.id : '',
+        name: typeof preset.name === 'string' ? preset.name : null,
+        isDefault: preset.isDefault === true,
+        broken: typeof preset.broken === 'string' ? preset.broken : null,
+        rows: Array.isArray(preset.rows) ? preset.rows.length : 0,
+      };
+    },
+  );
+  return {
+    entries,
+    presets,
+    counts: {
+      total: entries.length,
+      active: entries.filter((entry) => entry.fiberPhase === 'active').length,
+      failed: entries.filter((entry) => entry.fiberPhase === 'failed').length,
+      idle: entries.filter((entry) => entry.fiberPhase === null).length,
+    },
+  };
+}
+
+/**
+ * 运行中清单的客户端：令牌换 cookie（30 天），再用 cookie 调一次接口。
+ * cookie 缓存在实例里；401 时自动重换一次（dsh 重启后旧 cookie 就失效了）。
+ */
+class LiveClient {
+  private cookie: string | null = null;
+
+  constructor(private readonly getTokenUrl: () => string | null) {}
+
+  private async authenticate(origin: string, token: string): Promise<void> {
+    const response = await fetch(`${origin}/?token=${encodeURIComponent(token)}`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
+    });
+    const raw = response.headers.getSetCookie?.() ?? [];
+    const cookie = raw.map((line) => line.split(';')[0]).find((pair) => pair.includes('='));
+    if (!cookie) throw new Error('dsh 没有回访问 cookie（可能这个地址不是它的）');
+    this.cookie = cookie;
+  }
+
+  private async post(origin: string, method: string, rpcId: string): Promise<Response> {
+    return fetch(`${origin}/api/${LIVE_ENDPOINT}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(this.cookie ? { cookie: this.cookie } : {}),
+      },
+      body: unaryEnvelope(method, rpcId),
+      signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
+    });
+  }
+
+  async fetchInventory(): Promise<PluginLiveSnapshot> {
+    const target = parseTokenUrl(this.getTokenUrl());
+    if (!target) {
+      throw new Error('dsh 不是本应用启动的（拿不到访问令牌），运行中的清单读不到');
+    }
+    if (!this.cookie) await this.authenticate(target.origin, target.token);
+
+    let response = await this.post(target.origin, LIVE_ENDPOINT, 'plugin-inventory-1');
+    if (response.status === 401) {
+      // cookie 过期（dsh 重启过）：重换一次再试
+      this.cookie = null;
+      await this.authenticate(target.origin, target.token);
+      response = await this.post(target.origin, LIVE_ENDPOINT, 'plugin-inventory-2');
+    }
+    if (!response.ok) throw new Error(`dsh 返回 ${response.status}`);
+    const value = unwrapLiveValue(await response.text());
+    if (value === null) throw new Error('dsh 的应答看不懂（协议可能变了）');
+    return summarizeLive(value);
+  }
+}
+
 // ---------------------------------------------------------------- 对外
 
 export class PluginManager {
-  constructor(private readonly settings: Settings) {}
+  private readonly live: LiveClient;
+
+  constructor(
+    private readonly settings: Settings,
+    /** 当前 dsh 的带令牌地址（DshManager.uiUrl）；由 main.ts 注入 */
+    getTokenUrl: () => string | null = () => null,
+  ) {
+    this.live = new LiveClient(getTokenUrl);
+  }
 
   /** profile 目录（$DSH_HOME/profiles/web） */
   profileDir(): string {
@@ -486,7 +645,17 @@ export class PluginManager {
         : null;
     const moduleDirs = [profileDir, ...(dshRoot ? [dshRoot] : []), path.join(home, 'profiles')];
 
-    const run = await runDump(this.settings.all());
+    // dump（静态组合）与运行中清单互不依赖，并行取；运行中清单是"尽力而为"，失败不影响页面
+    const [run, liveResult] = await Promise.all([
+      runDump(this.settings.all()),
+      this.live
+        .fetchInventory()
+        .then((snapshot) => ({ snapshot, error: '' }))
+        .catch((error: unknown) => ({
+          snapshot: null,
+          error: error instanceof Error ? error.message : String(error),
+        })),
+    ]);
     const dumpLayers = parseDump(run.stdout);
     const problems = [
       ...parseProblems(run.stderr),
@@ -520,6 +689,8 @@ export class PluginManager {
       commands: [run.display],
       // 解析不出来（上游改了格式）时保留原文，界面降级成纯文本视图而不是空白
       rawDump: dumpLayers.length === 0 ? run.stdout : null,
+      live: liveResult.snapshot,
+      liveError: liveResult.error || undefined,
     };
   }
 }

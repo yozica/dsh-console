@@ -903,7 +903,8 @@ async function bootstrap(): Promise<void> {
   dshManager = new DshManager({ settings, ptySessions });
   archiveManager = new SessionArchiveManager();
   // 插件装配层：只读地看 profile 的 bundle 层栈与生效配置（dsh 是否在跑都能看）
-  pluginManager = new PluginManager(settings);
+  // 运行中的清单要拿 dsh 的访问令牌（只有本应用启动的 dsh 才有），所以注入一个取地址的函数
+  pluginManager = new PluginManager(settings, () => dshManager.uiUrl);
   // 自动更新：状态变化统一走 app:update 事件（渲染层底栏与设置页读同一份）
   updater = createUpdater({
     settings,

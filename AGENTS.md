@@ -52,7 +52,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              八个页面组件
-test/selftest.ts        111 项自检（`npm test`），不需要 Electron
+test/selftest.ts        115 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -89,7 +89,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（111 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（115 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -363,14 +363,34 @@ dsh 的「插件」有两个层面，界面与代码都得分开看：
 
 **两个口径不要混**（用户已经问过一次"为什么数量对不上"）：本页数的是 `--dump-config` **组合出来的行**（各 bundle 的 patch + 你的 patch 层），而内嵌 Harness 的「插件列表」数的是**运行中的非 group Loader 条目**（`dsh-host-plugin-inventory/lib/index.js` 里 `for (const entry of ctx.loader.entries()) if (entry.options.group) continue`）—— 后者多了启动时由 `mountRootInclude` 挂上去的根 `include` 行（`dsh-app-boot` 的 `id: "include"`，不是 group，所以计数）以及运行时新增的行，所以两个数**天然不相等**（本机实测 152 vs 156）。界面上因此写"组合条目"并且给出一句口径说明，不要写"个条目"。
 
-自检守着：「插件：真实 dump 解析出层归因与全部条目」「插件：未匹配的 patch 行只在 stderr 上」「插件：空输出不算成功；失败时给的是诊断行而不是 Node 的堆栈首行」「插件：只碰 web profile」。夹具是**真实输出**（`test/fixtures/`，含一份 539 行的真 dump），所以上游改格式时这里第一时间变红。
+### 运行中的清单：另一条通道（`pluginInventory/list`）
+
+静态 dump 永远看不到这几行：根 `include` 行、以及**启动时用生成的 id 挂上去**的原生目录选择器（host + client 各一）与 HMR。所以两个数字天然差 4（实测静态 153 / 运行中 157）。要拿运行中的事实，只能问 dsh 自己：
+
+```
+GET  <origin>/?token=<令牌>            → 303 + Set-Cookie: dsh-auth-<hash>=…（30 天）
+POST <origin>/api/pluginInventory/list → cookie 鉴权
+     body {"type":"client-request","rpcId":"…","method":"pluginInventory/list","payload":{"args":{}}}
+     → { entries:[{entryId,moduleName,enabled,fiberPhase}], agentPresets:[{id,rows:[…]}] }
+```
+
+几条硬约定：
+
+- **令牌只在 dsh 由本应用启动时才有**（`DshManager.uiUrl`）；外部实例拿不到 → `live` 为 null，页面显示「运行中清单不可用」，`liveError` 放原因（挂在 title 上）。绝不因此报错或空白。
+- 这是 rc 版本内部协议（cookie 名、`/api/<service>/<method>`、信封字段），**整条路都必须"尽力而为"**：失败只记 `liveError`，页面退回纯静态视图。同类依赖（DSH 的磁盘格式）在 7.16 已经有先例。
+- 端点 id 在 URL 里是 **`<service>/<method>`**（`pluginInventory/list`），不是生成的完整 descriptor id —— 完整 id 含 `@` 与 `#`，而 URL 段只允许 `[A-Za-z0-9_$.-]`，直接 POST 完整 id 只会拿到 404。
+- 运行中的 id 带 **`include:` 前缀**（它们经根 include 加载），跟配置里的 id 对照要先剥掉；三条哈希 id 是启动时生成的，**每次启动都不一样**，断言不许钉具体值。
+- `fiberPhase: null` 表示没有存活的根 fiber（多半被上层禁用了），**不是"正常"**，界面上要跟 `active` 分开标；`failed` 才是真的加载失败。
+- 夹具 `test/fixtures/plugin-inventory.json` 是**真实应答**（157 条 / standard 28 行等 4 个预设），自检钉住形状；cookie 缓存在实例里，401 时自动重换一次（dsh 重启后旧 cookie 失效）。
+
+自检守着：「插件：真实 dump 解析出层归因与全部条目」「插件：未匹配的 patch 行只在 stderr 上」「插件：空输出不算成功；失败时给的是诊断行而不是 Node 的堆栈首行」「插件：只碰 web profile」「插件：真实应答能解出运行中的条目与预设行数」「插件：运行中的 id 带 include: 前缀，剥掉才和配置里的 id 对得上」「插件：令牌地址解析（没有令牌、地址不是 URL、空值都要老实返回 null）」「插件：调用信封与应答解包（ok:false / 非 JSON / 不是 server-response 都算失败）」。夹具都是**真实输出**（`test/fixtures/`：一份 539 行的真 dump + 一份真接口应答），上游改格式或改协议时这里第一时间变红。
 
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，111 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，115 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。

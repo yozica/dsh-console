@@ -1326,6 +1326,64 @@ async function main(): Promise<void> {
       );
     })(),
   );
+  // 运行中清单：走 dsh 自己的接口（令牌换 cookie → /api/pluginInventory/list）。
+  // 这是 rc 版本的内部协议，所以两道保险：真实应答当夹具钉住形状 + 纯函数钉住解析。
+  const liveRaw = fixture('plugin-inventory.json');
+  const liveValue = pluginManager.unwrapLiveValue(liveRaw);
+  const live = pluginManager.summarizeLive(liveValue);
+  check(
+    '插件：真实应答能解出运行中的条目与预设行数',
+    live.entries.length >= 150 &&
+      live.presets.find((preset) => preset.id === 'standard')?.rows === 28 &&
+      live.counts.total === live.entries.length &&
+      live.counts.active > 0 &&
+      live.counts.idle > 0,
+    `${live.counts.total} 条 · active ${live.counts.active} · 未挂载 ${live.counts.idle} · 预设 ${live.presets.length} 个`,
+  );
+  check(
+    '插件：运行中的 id 带 include: 前缀，剥掉才和配置里的 id 对得上',
+    live.entries.some((entry) => entry.entryId.startsWith('include:')) &&
+      pluginManager.stripIncludePrefix('include:llm') === 'llm' &&
+      pluginManager.stripIncludePrefix('llm') === 'llm' &&
+      // 启动时挂的行没有 include: 前缀，id 还是生成的哈希
+      live.entries.some((entry) => /^[0-9a-f]{8}$/.test(entry.entryId)) &&
+      live.entries.some((entry) => entry.entryId === 'include'),
+  );
+  check(
+    '插件：令牌地址解析（没有令牌、地址不是 URL、空值都要老实返回 null）',
+    (() => {
+      const ok = pluginManager.parseTokenUrl('http://127.0.0.1:3080/?token=abc123');
+      return (
+        ok?.origin === 'http://127.0.0.1:3080' &&
+        ok?.token === 'abc123' &&
+        pluginManager.parseTokenUrl('http://127.0.0.1:3080/') === null &&
+        pluginManager.parseTokenUrl('不是 URL') === null &&
+        pluginManager.parseTokenUrl('') === null &&
+        pluginManager.parseTokenUrl(null) === null
+      );
+    })(),
+  );
+  check(
+    '插件：调用信封与应答解包（ok:false / 非 JSON / 不是 server-response 都算失败）',
+    (() => {
+      const envelope = JSON.parse(pluginManager.unaryEnvelope('pluginInventory/list', 'probe')) as {
+        type?: string;
+        method?: string;
+        payload?: { args?: unknown };
+      };
+      return (
+        envelope.type === 'client-request' &&
+        envelope.method === 'pluginInventory/list' &&
+        envelope.payload?.args !== undefined &&
+        pluginManager.unwrapLiveValue(liveRaw) !== null &&
+        pluginManager.unwrapLiveValue('{"type":"server-response","result":{"ok":false}}') ===
+          null &&
+        pluginManager.unwrapLiveValue('不是 JSON') === null &&
+        pluginManager.unwrapLiveValue('{"type":"other"}') === null
+      );
+    })(),
+  );
+
   check(
     '插件：只碰 web profile（desktop 是 CLI 保留给 Electron 的，传进去直接报错）',
     pluginManager.PLUGIN_PROFILE === 'web' &&
