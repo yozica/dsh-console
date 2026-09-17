@@ -40,18 +40,19 @@ src/
     logger.ts           主进程日志：console 同时落盘到 <userData>/logs/console.log
     updater.ts          自动更新状态机（electron-updater）：检查 / 下载 / 安装
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
+    plugin-manager.ts   插件装配层：profile 的 bundle 层栈 + `dsh web --dump-config` 的解析（含 stderr 上的"没报错的错"）
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
   shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
   renderer/             Vue 3 + Vite，产物 dist/renderer/
-    index.html          页面骨架：七个页面容器 + 挂载点 + 内联图标精灵 + 启动锁
+    index.html          页面骨架：八个页面容器 + 挂载点 + 内联图标精灵 + 启动锁
     main.ts             入口：样式导入顺序 → app.ts → 建立共享状态 → 挂载
     app.ts              应用级胶水：启动守卫、启动锁状态机、自动打开、快捷键
     mount.ts            挂载清单：外壳三块 + 全部页面
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
-    panes/              七个页面组件
-test/selftest.ts        103 项自检（`npm test`），不需要 Electron
+    panes/              八个页面组件
+test/selftest.ts        116 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -88,7 +89,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（103 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（116 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -261,7 +262,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 两个独立成因，症状相似：
 
-1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：七个页面改为 `position:absolute + visibility:hidden` **常驻布局**（`.pane.active { visibility: visible }`），切换时再补一次视口重算。
+1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：全部页面改为 `position:absolute + visibility:hidden` **常驻布局**（`.pane.active { visibility: visible }`），切换时再补一次视口重算。
 2. **`<webview>` 自己没写尺寸** → 它是替换元素，漏写 CSS 就退化成浏览器默认的约 300×150，页面上只出现顶部一小条。修法：两个内嵌页共用 `.embedded-view`（`width/height:100%`），**以后新增 webview 必须带上这个 class**。
 
 自检：「样式：页面容器靠 visibility 隐藏，不用 display:none」与「样式：每个 webview 都有明确高度的样式」。另外 `vite.config.mts` 的 `compilerOptions.isCustomElement` 把 `<webview>` 声明为自定义元素，否则 Vue 编译器会试着把它当组件解析。两个内嵌页用**各自独立且持久**的分区（`persist:dsh-ui` 存令牌 / `persist:deepseek` 存登录态），且主进程在启动时统一抹掉 UA 里的 Electron 标识（`app.userAgentFallback`，不是等 webview 挂上来再改 —— 后者可能晚于该页的第一次请求）。
@@ -319,6 +320,8 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 看板侧栏需要 `.panel { min-height: 0 }` 才能在内部滚动，但它会让设置页那些「高度跟着内容走」的卡片被压到容器高度以内，多出来的部分被 `.panel` 的 `overflow: hidden` 裁掉 —— 而 `scrollHeight == clientHeight` 意味着**连滚动条都不会出现**（症状：设置页最后一项永远看不到）。修法是给设置页的网格加 `grid-auto-rows: max-content`（行高跟内容走）。改这类布局前先想清楚「这个容器的滚动由谁负责」。
 
+**页面级内边距由各页自己给**：`.pane` 只负责定位（`position: absolute; inset: 0`），它**没有任何 padding** —— 所以新页面的根容器必须自己写左右与底部各 20px（`.archive-body` 是 `2px 20px 20px`、`.settings` 是 `4px 20px 20px`，工具条 `.bar` 自带 `10px 20px`）。漏了就会像插件页第一版那样整块面板贴到窗口边缘。冒烟里有一条「插件页与归档页的面板内边距必须一致」盯着（比的是两页**第一个面板的左边距 + 最后一个面板的右边距** —— 拿第一个去比右边距会把侧栏宽度当成边距）。
+
 ### 7.15 健康判据与令牌掩码
 
 - **健康判据**是 `GET http://host:port/`：dsh 对无令牌请求返回 `401 dsh web authentication required`，这本身就是「服务活着」的强特征；带 `__DSH_BOOT__` 或 `DeepSeek Harness` 的 200 同样判定为 dsh（`process-utils.ts` 的 `isDshResponse`）。所以探测**不需要令牌**，也不会把「401」误判成「服务没起」。
@@ -340,15 +343,57 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 **哪条自检守着**：「自动更新：契约里有 7 个相位、UpdateState 字段与 4 个 API」「自动更新：`autoCheckUpdates` 在契约与 DEFAULTS 两处一致」「自动更新：不会偷偷下载 / 偷偷安装」「自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）」「自动更新：未打包时不加载 electron-updater（没有顶层 import，只按需 require）」。这五条**都是静态检查**：受限环境里跑不了打包后的应用，所以真机上装完新版后的行为仍要人工验一次。
 
+### 7.18 插件装配层：两个层面，别混
+
+dsh 的「插件」有两个层面，界面与代码都得分开看：
+
+- **运行层**：已经挂载进配置树的条目、它们的启停与设置项。这一层由 dsh 自己的界面管（内嵌 Harness 的 **设置 → 插件**：`插件配置` 改插件暴露的 settings 命名空间，`插件列表` 是只读清单）。console **不重做**，只在插件页给一句跳转提示。
+- **装配层**：装了什么 bundle、哪个版本、从哪来、层序如何、生效配置最后长什么样。没有任何界面管这个 —— 这就是 console 插件页（左栏第 7 项，快捷键 `7`）存在的理由，也是「dsh 因为插件起不来」时唯一的入口。
+
+术语对应关系（改这块代码前先认清）：**bundle** 是可安装单位（npm 包，manifest 里声明 `dsh.bundle.patch`），**profile** 是 `$DSH_HOME/profiles/<name>` 那份「哪些 bundle、按什么顺序」的清单，**插件**是两者最终装出来的 `apply(ctx)` 模块。层序是：各 bundle 的 patch（按 `dsh.profile.bundles` 顺序）→ profile 自己的 `cordis.patch.yml` → `$DSH_HOME/cordis.patch.yml` → `--patch` 覆盖层；**后面的按 `id` 整条替换前面的条目（替换整个 `config`，不是深合并）**。
+
+`src/main/plugin-manager.ts` 的几条硬约定：
+
+- **只读，只碰 `web`**。console 启动的是 `dsh web`（= `--profile web`），所以 `PLUGIN_PROFILE = 'web'`；`desktop` 是 CLI 保留给 Electron 的（`bin.js` 直接报错），永远不要传。
+- **空输出不是成功**。dsh 的 CLI 在跑不动的 Node 上是「退出码 0 + 零输出」（见 7.4），把它当成功就会静默显示成「没有插件」。`checkDumpResult()` 是这条判据的纯函数版本，自检直接钉它。
+- **未匹配的 patch 行在 stderr 上，不在 dump 里**：`dsh: [<层文件>] patch: entry "<id>" not found`，**退出码是 0**。这类"没报错的错"是用户改动悄悄不生效的主因，必须单独收；解析失败（抛异常）时 stderr 前面是一坨 Node 堆栈，取原因要用 `firstMeaningfulLine()`（第一行是 `file:///…`，不是原因）。
+- **`--dump-config` 会写 profile 根文件 `cordis.yml`**（实测：目录只读时报 EPERM）。它不是纯读操作，但那个文件本来就由 dsh 自己维护，不冲突。
+- **层归因直接来自 dump 的注释标签**：`# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app`；profile 自己那一层的标签是**文件全路径**。
+- **「被覆盖」要拆成两种**：真实数据里 `dsh-web-app` 覆盖 base 的 25 条有 23 条是把下层 `disabled: true`（不是改配置）。界面上必须分开标，否则用户以为配置被改了。
+
+**两个口径不要混**（用户已经问过一次"为什么数量对不上"）：本页数的是 `--dump-config` **组合出来的行**（各 bundle 的 patch + 你的 patch 层），而内嵌 Harness 的「插件列表」数的是**运行中的非 group Loader 条目**（`dsh-host-plugin-inventory/lib/index.js` 里 `for (const entry of ctx.loader.entries()) if (entry.options.group) continue`）—— 后者多了启动时由 `mountRootInclude` 挂上去的根 `include` 行（`dsh-app-boot` 的 `id: "include"`，不是 group，所以计数）以及运行时新增的行，所以两个数**天然不相等**（本机实测 152 vs 156）。界面上因此写"组合条目"并且给出一句口径说明，不要写"个条目"。
+
+### 运行中的清单：另一条通道（`pluginInventory/list`）
+
+静态 dump 永远看不到这几行：根 `include` 行、以及**启动时用生成的 id 挂上去**的原生目录选择器（host + client 各一）与 HMR。所以两个数字天然差 4（实测静态 153 / 运行中 157）。要拿运行中的事实，只能问 dsh 自己：
+
+```
+GET  <origin>/?token=<令牌>            → 303 + Set-Cookie: dsh-auth-<hash>=…（30 天）
+POST <origin>/api/pluginInventory/list → cookie 鉴权
+     body {"type":"client-request","rpcId":"…","method":"pluginInventory/list","payload":{"args":{}}}
+     → { entries:[{entryId,moduleName,enabled,fiberPhase}], agentPresets:[{id,rows:[…]}] }
+```
+
+几条硬约定：
+
+- **令牌只在 dsh 由本应用启动时才有**（`DshManager.uiUrl`）；外部实例拿不到 → `live` 为 null，页面显示「运行中清单不可用」，`liveError` 放原因（挂在 title 上）。绝不因此报错或空白。
+- 这是 rc 版本内部协议（cookie 名、`/api/<service>/<method>`、信封字段），**整条路都必须"尽力而为"**：失败只记 `liveError`，页面退回纯静态视图。同类依赖（DSH 的磁盘格式）在 7.16 已经有先例。
+- 端点 id 在 URL 里是 **`<service>/<method>`**（`pluginInventory/list`），不是生成的完整 descriptor id —— 完整 id 含 `@` 与 `#`，而 URL 段只允许 `[A-Za-z0-9_$.-]`，直接 POST 完整 id 只会拿到 404。
+- 运行中的 id 带 **`include:` 前缀**（它们经根 include 加载），跟配置里的 id 对照要先剥掉；三条哈希 id 是启动时生成的，**每次启动都不一样**，断言不许钉具体值。
+- `fiberPhase: null` 表示没有存活的根 fiber（多半被上层禁用了），**不是"正常"**，界面上要跟 `active` 分开标；`failed` 才是真的加载失败。
+- 夹具 `test/fixtures/plugin-inventory.json` 是**真实应答**（157 条 / standard 28 行等 4 个预设），自检钉住形状；cookie 缓存在实例里，401 时自动重换一次（dsh 重启后旧 cookie 失效）。
+
+自检守着：「插件：真实 dump 解析出层归因与全部条目」「插件：未匹配的 patch 行只在 stderr 上」「插件：空输出不算成功；失败时给的是诊断行而不是 Node 的堆栈首行」「插件：只碰 web profile」「插件：真实应答能解出运行中的条目与预设行数」「插件：运行中的 id 带 include: 前缀，剥掉才和配置里的 id 对得上」「插件：令牌地址解析（没有令牌、地址不是 URL、空值都要老实返回 null）」「插件：调用信封与应答解包（ok:false / 非 JSON / 不是 server-response 都算失败）」。夹具都是**真实输出**（`test/fixtures/`：一份 539 行的真 dump + 一份真接口应答），上游改格式或改协议时这里第一时间变红。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，103 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，116 项，不需要 Electron、不启停任何进程
 ```
 
-`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。
+`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。
 
 **为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。
 
@@ -379,6 +424,7 @@ npm test     # tsx test/selftest.ts，103 项，不需要 Electron、不启停�
 ### 隔离/无头地验证界面
 
 - **独立 userData**：`DSH_CONSOLE_USER_DATA=<临时目录>` 可以改配置目录，配上单实例锁就能与正在运行的实例互不打扰（`.verify/`、`.verify-userdata/`、`.build-home/` 都在 `.gitignore` 里，可以拿来当临时目录）。
+- **量内边距要量文字，不要量块的 `rect`**：块级元素自己的 `padding` **不改变它 border box 的左边缘**，所以 `el.getBoundingClientRect().left - parentLeft` 永远是 0（+ 边框），看不出"顶头"。要判断文字有没有贴边，得用 `document.createRange()` + `selectNodeContents(el)` 量文字盒 —— 插件页那句说明句第一次就是这么量错的，白跑一轮。
 - **读计算样式而不是截图**：加载构建产物后用 `executeJavaScript` 取 `document.documentElement.dataset.platform`、`getComputedStyle(document.querySelector('.topbar')).paddingLeft` 这类确定值 —— macOS 适配就是这么做静态校对的（元素位置 / 内边距比截图更可信，也更容易在自动化里断言）。
 - **stub preload 的思路**：渲染层启动时只依赖 `window.dshConsole`（`app.ts` 里检查它，缺失就显示一句可读的启动错误），所以可以用一个假的 `window.dshConsole` 把构建产物单独载入，验证布局与样式，不启动真正的 dsh 或 PTY。注意这样做只能验界面，验不了主进程行为。
 - **抓屏**：想真正看到渲染结果，Windows 用 Win32/GDI 抓屏脚本，macOS 用系统自带的 `screencapture`（首次需在「系统设置 → 隐私与安全性 → 屏幕录制」里授权）。**不要试图让 Chromium 截自己的图**：受限环境里 Chromium 系进程可能起不来（Mojo platform channel 被拒），`capturePage()`、headless 浏览器、Playwright / Puppeteer 都可能走不通；而抓屏不需要浏览器。写 PowerShell 脚本时注意 `.ps1` 必须是**纯 ASCII**（PowerShell 5.1 读没有 BOM 的脚本时按 GBK 解码，中文会把引号和大括号解析搞崩）。

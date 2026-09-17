@@ -352,6 +352,126 @@ export interface ArchiveRemoveResult extends Partial<RemoveArchivedResult> {
 }
 
 /**
+ * 插件页：**装配层**的只读视图（装了什么 bundle、层序如何、生效配置长什么样）。
+ *
+ * 与 dsh 自己界面里的「设置 → 插件」分工不同，别混：
+ *   - 那边管**运行层**：已挂载条目的清单与它们的设置项（需要插件注册 settings 命名空间）。
+ *   - 这边管**装配层**：profile 的 bundle 层栈、每个 bundle 的版本与来源、
+ *     你的 patch 层、以及"没报错的错"（未匹配的 patch 行等）。
+ * 这里全部来自磁盘上的 profile + `dsh web --dump-config`，不依赖 dsh 是否在跑
+ * ——插件把启动打挂时，恰恰只有这份数据还能看。
+ */
+
+/** 层栈里的一层：内置 bundle / 树外 bundle / profile patch / 机器级 patch */
+export interface PluginLayer {
+  /** in-box=随 dsh 安装目录解析 | out-of-tree=pnpm 装进 profile 的 | profile-patch / home-patch=你自己的 tweak 层 */
+  kind: 'in-box' | 'out-of-tree' | 'profile-patch' | 'home-patch';
+  /** 包名或文件路径（原样，界面按 kind 决定怎么显示） */
+  name: string;
+  version: string | null;
+  /** 从磁盘上解析到的位置；解析不到为 null（不看真假值，看它是不是 null） */
+  resolvedPath: string | null;
+  /** pnpm 的 spec（`link:../x`、`github:you/x#sha`…）；内置层为 null */
+  spec: string | null;
+  /** 在 `dsh.profile.bundles` 里的序号（从 1 开始）；patch 层没有序号 */
+  order: number | null;
+  /** 有没有在生效配置里出现（false = 它在层栈里但什么都没贡献） */
+  present: boolean;
+  /** 这一层干了什么：插入多少条、覆盖多少条、其中多少条是把下层关掉 */
+  contributions: {
+    inserted: number;
+    insertedDisabled: number;
+    patched: number;
+    patchedDisabled: number;
+  };
+}
+
+/** 生效配置里的一条 */
+export interface PluginEntry {
+  id: string;
+  name: string;
+  disabled: boolean;
+  hasConfig: boolean;
+}
+
+/** 生效配置按源层分组后的一段（dump 本身就是这么标注的） */
+export interface PluginTreeLayer {
+  /** dump 里的原始标签（含 `patched by`），用于展示真实来源 */
+  label: string;
+  source: string;
+  patchedBy: string | null;
+  entries: PluginEntry[];
+}
+
+/** "没报错的错"：这些不会让命令失败，但会让用户的改动悄悄不生效 */
+export interface PluginProblem {
+  kind: 'unmatched-patch' | 'parse-error' | 'plain-dependency' | 'missing-layer' | 'other';
+  /** 人类可读的一句话（已经是我们归纳过的说法） */
+  detail: string;
+  /** 涉及的文件（patch 层文件） */
+  file?: string;
+  /** unmatched-patch：指向了哪个不存在的 id */
+  entryId?: string;
+  /** parse-error：dsh 报的层标签（overlay / bundle 名） */
+  layer?: string;
+}
+
+/** 运行中的 Loader 条目的 fiber 阶段（null = 没有存活的根 fiber，多半是被禁用/被覆盖了） */
+export type PluginFiberPhase = 'pending' | 'active' | 'loading' | 'failed' | 'unloading' | null;
+
+/**
+ * 运行中的一条（来自 dsh 的 pluginInventory/list 接口，不是配置文件）。
+ * entryId 带 `include:` 前缀（根 include 加载进来的），与配置里的 id 对照时要去掉。
+ */
+export interface PluginLiveEntry {
+  entryId: string;
+  moduleName: string;
+  enabled: boolean;
+  fiberPhase: PluginFiberPhase;
+}
+
+/** 每个 Agent 预设会给会话挂多少行（Harness 里那个「会话插件 N 个」就是这个） */
+export interface PluginLivePreset {
+  id: string;
+  name: string | null;
+  isDefault: boolean;
+  broken: string | null;
+  rows: number;
+}
+
+/** 运行中的清单。只有 dsh 由本应用启动（手上有令牌）时才拿得到；拿不到就是 null + 一句原因。 */
+export interface PluginLiveSnapshot {
+  entries: PluginLiveEntry[];
+  presets: PluginLivePreset[];
+  counts: { total: number; active: number; failed: number; idle: number };
+}
+
+export interface PluginInspectResult {
+  ok: boolean;
+  error?: string;
+  /** 恒为 'web'：console 启动的就是 `dsh web`（= `--profile web`） */
+  profile?: string;
+  home?: string;
+  profileDir?: string;
+  /** profile 的 package.json 里的 name，例如 dsh-profile-web */
+  profileName?: string | null;
+  /** live = 改 patch 即时生效；startup = 只在启动时应用；null = 老 profile 的历史默认 */
+  patchReload?: string | null;
+  /** 按**应用顺序**排列：先应用的在前，所以越靠后越优先 */
+  layers?: PluginLayer[];
+  treeLayers?: PluginTreeLayer[];
+  problems?: PluginProblem[];
+  entryCount?: number;
+  /** 页面会跑的命令（给人看"这些数字是怎么来的"） */
+  commands?: string[];
+  /** 解析不出结构时的原文（界面降级为纯文本，而不是显示空白） */
+  rawDump?: string | null;
+  /** 运行中的清单；拿不到时是 null（看 liveError 的原因），页面退回纯静态视图 */
+  live?: PluginLiveSnapshot | null;
+  liveError?: string;
+}
+
+/**
  * preload 暴露给渲染层的 API（window.dshConsole）。
  * 渲染层写 `api.xxx()` 时能看到签名与返回类型，这是这次 TS 迁移最直接的收益。
  */
@@ -392,6 +512,9 @@ export interface DshConsoleApi {
   archiveRead: (id: string) => Promise<ArchiveReadResult>;
   archiveUnarchive: (id: string) => Promise<ArchiveUnarchiveResult>;
   archiveRemove: (id: string) => Promise<ArchiveRemoveResult>;
+
+  // 插件装配层（只读；装/卸/升级是后续一步）
+  pluginInspect: () => Promise<PluginInspectResult>;
 
   onState: (handler: (snapshot: DshSnapshot) => void) => () => void;
   onOutput: (handler: (payload: DshOutputEvent) => void) => () => void;

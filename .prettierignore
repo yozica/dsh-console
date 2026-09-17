@@ -8,3 +8,6 @@ node_modules/
 
 # npm 自己生成的锁文件（每次 install 都会重写，格式化只会制造无谓 diff）
 package-lock.json
+
+# 夹具是上游/外部给的原文（真实 dump、真实接口应答），格式化它只会让下次重新抓取产生无意义的 diff
+test/fixtures/*.json

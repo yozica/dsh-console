@@ -15,6 +15,7 @@ const PAGE_TITLES = {
   ui: 'DeepSeek Harness',
   usage: 'DeepSeek 用量',
   archive: '归档会话',
+  plugin: '插件',
   settings: '设置',
 };
 

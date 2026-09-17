@@ -14,6 +14,7 @@ import { createApp, type Component } from 'vue';
 
 import ArchivePane from './panes/ArchivePane.vue';
 import DashboardPane from './panes/DashboardPane.vue';
+import PluginPane from './panes/PluginPane.vue';
 import SettingsPane from './panes/SettingsPane.vue';
 import ShellPane from './panes/ShellPane.vue';
 import TerminalPane from './panes/TerminalPane.vue';
@@ -35,6 +36,7 @@ const MOUNTS: readonly MountEntry[] = [
   ['ui-root', UiPane],
   ['usage-root', UsagePane],
   ['archive-root', ArchivePane],
+  ['plugin-root', PluginPane],
   ['settings-root', SettingsPane],
 ];
 

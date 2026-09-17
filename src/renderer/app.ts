@@ -6,7 +6,7 @@
  *   1. 启动守卫（preload / xterm 没就绪时给一句能看懂的报错，而不是白屏）
  *   2. 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住界面，就绪后解锁
  *   3. 自动打开：dsh 就绪后按设置切到 Harness 页并进全屏
- *   4. 键盘快捷键：Ctrl+R / ⌘R 重载、Ctrl+1~7 / ⌘1~7 切页、Esc 退出全屏/跳过启动锁
+ *   4. 键盘快捷键：Ctrl+R / ⌘R 重载、Ctrl+1~8 / ⌘1~8 切页、Esc 退出全屏/跳过启动锁
  *
  * 它们都在"状态之上"而不是"界面之上"，所以不需要组件外壳；等启动锁也做成组件后，
  * 这里会只剩守卫与快捷键。
@@ -225,8 +225,17 @@ function wireAutoOpen(): void {
 
 // ------------------------------------------------------------ 快捷键
 
-/** 快捷键切页的顺序（1~7）——与左栏导航一致 */
-const TAB_ORDER: TabId[] = ['dashboard', 'terminal', 'shell', 'ui', 'usage', 'archive', 'settings'];
+/** 快捷键切页的顺序（1~8）——与左栏导航一致 */
+const TAB_ORDER: TabId[] = [
+  'dashboard',
+  'terminal',
+  'shell',
+  'ui',
+  'usage',
+  'archive',
+  'plugin',
+  'settings',
+];
 
 function wireShortcuts(): void {
   window.addEventListener('keydown', (event) => {
@@ -250,7 +259,7 @@ function wireShortcuts(): void {
       event.preventDefault();
       return;
     }
-    if (isAppModifier(event) && !event.shiftKey && /^[1-7]$/.test(event.key)) {
+    if (isAppModifier(event) && !event.shiftKey && /^[1-8]$/.test(event.key)) {
       currentTab.value = TAB_ORDER[Number(event.key) - 1];
       event.preventDefault();
     }
