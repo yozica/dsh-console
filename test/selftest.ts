@@ -1197,6 +1197,26 @@ async function main(): Promise<void> {
     prodDeps.join(' / '),
   );
 
+  // ---------------------------------------------------------- 15. 更新卡片的文案
+  //    卡片底部那句说明必须**按平台分开**：Windows 才能说"下载与安装都不会自己做"，macOS 上根本
+  //    没有这两件事（ad-hoc 签名装不了）—— 之前写死成 Windows 那套，用户看截图指出了这个错。
+  const settingsSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
+    'utf8',
+  );
+  check(
+    '更新卡片：说明行按 canAutoUpdate 分平台（macOS 不再承诺"下载与安装"）',
+    /const updateNote = computed/.test(settingsSource) &&
+      /update\.value\.canAutoUpdate/.test(settingsSource) &&
+      /macOS 当前是 ad-hoc 签名，系统会拒绝安装更新/.test(settingsSource) &&
+      /下载与安装都要你确认/.test(settingsSource),
+  );
+  check(
+    '更新卡片：说明行有稳定 id（自检与冒烟按它取），且按钮与标题同一行',
+    /id="update-note"/.test(settingsSource) &&
+      /class="update-head"[\s\S]*?class="spacer"[\s\S]*?<button/.test(settingsSource),
+  );
+
   // ---------------------------------------------------------- 汇总
   const failed = results.filter((item) => !item.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`);

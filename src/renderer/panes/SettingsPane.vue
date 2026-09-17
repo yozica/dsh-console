@@ -132,6 +132,27 @@ const PHASE_FALLBACK: Record<UpdatePhase, string> = {
 };
 
 const updateText = computed(() => update.value.message || PHASE_FALLBACK[update.value.phase]);
+
+/**
+ * 卡片底部那句说明 —— **按平台分开写**。
+ *
+ * 之前这里是一句写死的话（"发现新版本会先问你，下载与安装都不会自己做"），那是 Windows 的行为；
+ * macOS 上是 ad-hoc 签名、根本没有下载与安装，照样说这句就是错的（用户看过截图指出来的）。
+ * 版本号也不在这里重复：上面「关于」里已经有 `DSH Console x.y.z`。
+ */
+const updateNote = computed(() => {
+  // 既不能查也不能装（开发态）：状态行已经把原因说全了，不再补一句
+  if (!update.value.canCheck) return '';
+  const actionable = update.value.phase === 'available' || update.value.phase === 'downloaded';
+  if (update.value.canAutoUpdate) {
+    return actionable
+      ? '下载与安装都要你确认；安装时应用会退出并重新打开。'
+      : '发现新版本会先问你，下载与安装都不会自己做。';
+  }
+  return actionable
+    ? 'macOS 当前是 ad-hoc 签名，系统会拒绝安装更新；点「打开下载页」下载新的 dmg 覆盖安装。'
+    : 'macOS 当前是 ad-hoc 签名，无法自动安装；有新版本会在这里提示。';
+});
 const updatePercent = computed(() => Math.max(0, Math.min(100, update.value.percent ?? 0)));
 
 type UpdateAction = 'check' | 'download' | 'install' | 'releases';
@@ -380,10 +401,16 @@ onUnmounted(() => {
         </p>
       </div>
       <div class="panel-block">
+        <!-- 标题与按钮同一行：按钮出现在它该在的位置（右侧、与标题对齐），
+             状态与说明各占一行 —— 版本号不在这里重复（上面那行已经写了） -->
         <div class="update-head">
           <span class="update-title">软件更新</span>
-          <span class="update-phase" :data-phase="update.phase">{{ updateText }}</span>
+          <div class="spacer"></div>
+          <button class="btn small" :disabled="updateBusy" @click="runUpdate">
+            {{ updateLabel }}
+          </button>
         </div>
+        <p class="update-phase" :data-phase="update.phase">{{ updateText }}</p>
         <div
           v-if="update.phase === 'downloading'"
           class="update-progress"
@@ -394,15 +421,7 @@ onUnmounted(() => {
         >
           <div class="update-bar" :style="{ width: `${updatePercent}%` }"></div>
         </div>
-        <p class="hint">
-          当前版本
-          {{ update.currentVersion || appVersion }}。发现新版本会先问你，下载与安装都不会自己做。
-        </p>
-        <div class="btn-row">
-          <button class="btn small" :disabled="updateBusy" @click="runUpdate">
-            {{ updateLabel }}
-          </button>
-        </div>
+        <p v-if="updateNote" id="update-note" class="hint">{{ updateNote }}</p>
       </div>
     </section>
   </div>
