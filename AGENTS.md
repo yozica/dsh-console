@@ -51,7 +51,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              七个页面组件
-test/selftest.ts        104 项自检（`npm test`），不需要 Electron
+test/selftest.ts        103 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -88,7 +88,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（104 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（103 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -345,12 +345,25 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，104 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，103 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。
 
-**为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。凡是「界面必须长这样」「产物必须长这样」的**契约**，都尽量写成自检而不是靠人记。
+**为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。
+
+**什么样的东西该写成断言（判据）**：
+
+| 放哪                                              | 放什么                                                               | 例子                                                                                                            |
+| ------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `test/selftest.ts`（进 CI）                       | **回退了会静默坏掉**的机制与契约：坏了没人看得出，只有用户撞上才发现 | 每个生产依赖必须被主进程 `require`；更新源文件名与资产一致；入口不能用动态 import（白屏）；自动全屏要求界面可用 |
+| 本地冒烟脚本（`.build-home/harness.cjs`，不入库） | **界面外观**：布局尺寸、各状态渲染出来的文案                         | 粘贴行按钮与输入框同高且居中；更新卡片按钮在标题行内；七个相位各自的状态行                                      |
+| 什么都不钉                                        | 一次性细节、纯措辞                                                   | 某句话怎么断句                                                                                                  |
+
+两条补充规矩：
+
+- **钉结构，别钉字面量**。断言写成"说明行必须由 `canAutoUpdate` 分支决定"（结构），而不是"必须包含某句中文" —— 后者会在下次润色文案时无谓地变红，让维护变成负担。
+- 加之前问一句：**这条回退了，会不会有人看得出来？** 看得出来（变歪、变丑、措辞差）→ 放冒烟或靠 review；看不出来（白屏、404、包变胖、承诺了不存在的行为）→ 进自检。
 
 ### 开发期诊断（非打包运行时才装）
 
