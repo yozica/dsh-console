@@ -2172,6 +2172,16 @@ body[data-immersive='true'] .webview-wrap {
   overflow: auto;
 }
 
+/* 层栈顶部的一句说明：顺序语义 + 最后两行是谁（用户问过"下面这两个是什么"） */
+.plugin-stack-note {
+  margin: 0;
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  line-height: 1.7;
+}
+
 .plugin-layer {
   position: relative;
   display: flex;

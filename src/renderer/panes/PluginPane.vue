@@ -239,6 +239,11 @@ function clearFilters(): void {
             <span class="bar-hint">从上到下依次应用</span>
           </header>
           <div class="plugin-stack">
+            <p class="plugin-stack-note">
+              从上到下依次应用，后一层按 <code>id</code> 整条覆盖前一层（替换整个
+              <code>config</code>，不是深合并）。最后两行是你自己的 patch 层：profile 级只影响这个
+              profile，机器级影响所有 profile、优先级更高。
+            </p>
             <div
               v-for="(layer, i) in layers"
               :key="layer.name"
@@ -259,7 +264,9 @@ function clearFilters(): void {
                   <span v-if="layer.contributions.patched" class="plugin-tag">
                     覆盖 {{ layer.contributions.patched }}
                   </span>
-                  <span v-if="!layer.present" class="plugin-tag muted">没有贡献</span>
+                  <span v-if="!layer.present" class="plugin-tag muted">{{
+                    isOwnLayer(layer) ? (layer.resolvedPath ? '空 []' : '未创建') : '没有贡献'
+                  }}</span>
                 </div>
               </div>
             </div>
@@ -324,8 +331,17 @@ function clearFilters(): void {
               </p>
             </div>
             <p v-else class="hint">
-              这一层在生效配置里没有条目。装进来的包如果没声明 <code>dsh.bundle</code>，
-              就只会当普通依赖存在，不形成配置层。
+              <template v-if="isOwnLayer(selected)">
+                这一层还没有内容（{{ selected.resolvedPath ? '文件里是 []' : '文件还没创建' }}）。
+                它的用途是按条目 id 覆盖下面某一层、插入新条目，或把某条
+                <code>disabled</code> 掉；改完{{
+                  data.patchReload === 'live' ? '即时生效，不用重启 dsh' : '下次启动 dsh 时生效'
+                }}。
+              </template>
+              <template v-else>
+                这一层在生效配置里没有条目。装进来的包如果没声明 <code>dsh.bundle</code>，
+                就只会当普通依赖存在，不形成配置层。
+              </template>
             </p>
           </div>
         </section>
