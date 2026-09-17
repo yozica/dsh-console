@@ -1157,6 +1157,46 @@ async function main(): Promise<void> {
       parseFeedVersion('files:\n') === null,
   );
 
+  // ---------------------------------------------------------- 14. 依赖归属与包体积
+  //    渲染层依赖（vue / @xterm / @fontsource）会被 Vite 打进 dist/renderer；如果它们还挂在
+  //    dependencies 里，electron-builder 会**再拷一份**进 app.asar —— 实测让 asar 从 2.1 MB 涨到
+  //    20.2 MB、未压缩的 .app 从 289 MB 涨到 306 MB。规则：dependencies 只放主进程运行时真的要
+  //    require 的包（现在是 node-pty 与 electron-updater），其余一律 devDependencies。
+  const pkgAll = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const prodDeps = Object.keys(pkgAll.dependencies ?? {});
+  const devDeps = pkgAll.devDependencies ?? {};
+  /** 主进程/preload 的源码（含 shared：它只放类型，但一起查没坏处） */
+  const mainSideCode = [
+    ...fs
+      .readdirSync(path.join(repoRoot, 'src', 'main'))
+      .filter((file) => file.endsWith('.ts'))
+      .map((file) => fs.readFileSync(path.join(repoRoot, 'src', 'main', file), 'utf8')),
+    fs.readFileSync(path.join(repoRoot, 'src', 'preload', 'preload.ts'), 'utf8'),
+  ]
+    .join('\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/[^\n]*/gm, '');
+  const usedByMain = (name: string): boolean =>
+    mainSideCode.includes(`from '${name}'`) ||
+    mainSideCode.includes(`require('${name}')`) ||
+    mainSideCode.includes(`import('${name}')`);
+
+  check(
+    '打包：每个生产依赖都真的被主进程 require（不然它会白白多进一份到 app.asar）',
+    prodDeps.length > 0 && prodDeps.every(usedByMain),
+    prodDeps.map((name) => `${name}${usedByMain(name) ? '' : '（主进程没用到）'}`).join(' / '),
+  );
+  check(
+    '打包：渲染层依赖在 devDependencies 而不是 dependencies（Vite 已经把它们打进 dist）',
+    ['vue', '@xterm/xterm', '@fontsource/ibm-plex-sans', '@fontsource/ibm-plex-mono'].every(
+      (name) => name in devDeps && !prodDeps.includes(name),
+    ),
+    prodDeps.join(' / '),
+  );
+
   // ---------------------------------------------------------- 汇总
   const failed = results.filter((item) => !item.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`);
