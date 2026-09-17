@@ -400,6 +400,7 @@ npm test     # tsx test/selftest.ts，111 项，不需要 Electron、不启停�
 ### 隔离/无头地验证界面
 
 - **独立 userData**：`DSH_CONSOLE_USER_DATA=<临时目录>` 可以改配置目录，配上单实例锁就能与正在运行的实例互不打扰（`.verify/`、`.verify-userdata/`、`.build-home/` 都在 `.gitignore` 里，可以拿来当临时目录）。
+- **量内边距要量文字，不要量块的 `rect`**：块级元素自己的 `padding` **不改变它 border box 的左边缘**，所以 `el.getBoundingClientRect().left - parentLeft` 永远是 0（+ 边框），看不出"顶头"。要判断文字有没有贴边，得用 `document.createRange()` + `selectNodeContents(el)` 量文字盒 —— 插件页那句说明句第一次就是这么量错的，白跑一轮。
 - **读计算样式而不是截图**：加载构建产物后用 `executeJavaScript` 取 `document.documentElement.dataset.platform`、`getComputedStyle(document.querySelector('.topbar')).paddingLeft` 这类确定值 —— macOS 适配就是这么做静态校对的（元素位置 / 内边距比截图更可信，也更容易在自动化里断言）。
 - **stub preload 的思路**：渲染层启动时只依赖 `window.dshConsole`（`app.ts` 里检查它，缺失就显示一句可读的启动错误），所以可以用一个假的 `window.dshConsole` 把构建产物单独载入，验证布局与样式，不启动真正的 dsh 或 PTY。注意这样做只能验界面，验不了主进程行为。
 - **抓屏**：想真正看到渲染结果，Windows 用 Win32/GDI 抓屏脚本，macOS 用系统自带的 `screencapture`（首次需在「系统设置 → 隐私与安全性 → 屏幕录制」里授权）。**不要试图让 Chromium 截自己的图**：受限环境里 Chromium 系进程可能起不来（Mojo platform channel 被拒），`capturePage()`、headless 浏览器、Playwright / Puppeteer 都可能走不通；而抓屏不需要浏览器。写 PowerShell 脚本时注意 `.ps1` 必须是**纯 ASCII**（PowerShell 5.1 读没有 BOM 的脚本时按 GBK 解码，中文会把引号和大括号解析搞崩）。
