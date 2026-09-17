@@ -105,6 +105,35 @@ function kindLabel(kind: PluginLayer['kind']): string {
   return '机器级';
 }
 
+/**
+ * 你自己的 patch 层"没贡献"的三种情况，别混成一句：
+ * missing = 文件还没建；unmatched = 有 patch 行但一条都没匹配上（那些行会被 dsh 忽略）；
+ * empty = 文件里就是 []（这一层什么都不改）。
+ */
+function ownLayerState(layer: PluginLayer): 'missing' | 'unmatched' | 'empty' {
+  if (!layer.resolvedPath) return 'missing';
+  const hit = problems.value.some(
+    (item) => item.kind === 'unmatched-patch' && item.file === layer.name,
+  );
+  return hit ? 'unmatched' : 'empty';
+}
+
+function ownLayerTag(layer: PluginLayer): string {
+  const state = ownLayerState(layer);
+  if (state === 'missing') return '未创建';
+  if (state === 'unmatched') return '没匹配上';
+  return '空 []';
+}
+
+function ownLayerWhy(layer: PluginLayer): string {
+  const state = ownLayerState(layer);
+  if (state === 'missing') return '文件还没创建';
+  if (state === 'unmatched') {
+    return '里面有 patch 行，但没有一条匹配到现存条目（见页面上方的「需要注意的」）';
+  }
+  return '文件里是 []';
+}
+
 function problemLabel(kind: PluginProblem['kind']): string {
   if (kind === 'unmatched-patch') return '指向了不存在的条目';
   if (kind === 'parse-error') return '解析失败';
@@ -265,7 +294,7 @@ function clearFilters(): void {
                     覆盖 {{ layer.contributions.patched }}
                   </span>
                   <span v-if="!layer.present" class="plugin-tag muted">{{
-                    isOwnLayer(layer) ? (layer.resolvedPath ? '空 []' : '未创建') : '没有贡献'
+                    isOwnLayer(layer) ? ownLayerTag(layer) : '没有贡献'
                   }}</span>
                 </div>
               </div>
@@ -332,8 +361,8 @@ function clearFilters(): void {
             </div>
             <p v-else class="hint">
               <template v-if="isOwnLayer(selected)">
-                这一层还没有内容（{{ selected.resolvedPath ? '文件里是 []' : '文件还没创建' }}）。
-                它的用途是按条目 id 覆盖下面某一层、插入新条目，或把某条
+                这一层还没有生效的内容（{{ ownLayerWhy(selected) }}）。它的用途是三件事：按条目 id
+                覆盖下面某一层、插入新条目（官方随包但默认不启用的插件就是靠这个挂进来），或把某条
                 <code>disabled</code> 掉；改完{{
                   data.patchReload === 'live' ? '即时生效，不用重启 dsh' : '下次启动 dsh 时生效'
                 }}。

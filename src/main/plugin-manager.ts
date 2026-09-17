@@ -403,7 +403,11 @@ function buildLayers(options: {
     resolvedPath: fs.existsSync(profilePatch) ? profilePatch : null,
     spec: null,
     order: null,
-    present: dumpLayers.some((layer) => layer.patchedBy === profilePatch),
+    // 这一层"有没有贡献"要看两件事：它插入的行（source 是它）与它覆盖掉的行（patchedBy 是它）——
+    // 只看 patchedBy 会把"只插入、没覆盖"的 patch 层误判成空。
+    present: dumpLayers.some(
+      (layer) => layer.source === profilePatch || layer.patchedBy === profilePatch,
+    ),
     contributions: contributionsOf(dumpLayers, profilePatch),
   });
 
@@ -415,7 +419,11 @@ function buildLayers(options: {
     resolvedPath: fs.existsSync(homePatch) ? homePatch : null,
     spec: null,
     order: null,
-    present: dumpLayers.some((layer) => layer.patchedBy === homePatch),
+    // 这一层"有没有贡献"要看两件事：它插入的行（source 是它）与它覆盖掉的行（patchedBy 是它）——
+    // 只看 patchedBy 会把"只插入、没覆盖"的 patch 层误判成空。
+    present: dumpLayers.some(
+      (layer) => layer.source === homePatch || layer.patchedBy === homePatch,
+    ),
     contributions: contributionsOf(dumpLayers, homePatch),
   });
 
