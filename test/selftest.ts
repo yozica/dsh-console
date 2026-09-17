@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process';
 
 import * as processUtils from '../src/main/process-utils';
 import { Settings, DEFAULTS } from '../src/main/settings';
+import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
 import { PtySessions } from '../src/main/pty-sessions';
 import { DshManager } from '../src/main/dsh-manager';
 
@@ -1051,10 +1052,11 @@ async function main(): Promise<void> {
     /autoDownload = false/.test(updaterCode) && /autoInstallOnAppQuit = false/.test(updaterCode),
   );
   check(
-    '自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）',
+    '自动更新：macOS 分支存在（ad-hoc 签名 → 能查、不能自动装，引导去下载页）',
     /process\.platform === 'darwin'/.test(updaterCode) &&
-      /macOS 当前是 ad-hoc 签名/.test(updaterCode) &&
+      /ad-hoc 签名/.test(updaterCode) &&
       /canAutoUpdate: false/.test(updaterCode) &&
+      /canCheck: true/.test(updaterCode) &&
       /releasesUrl/.test(updaterCode),
   );
   check(
@@ -1114,6 +1116,45 @@ async function main(): Promise<void> {
   check(
     '自动全屏：启动时自动打开那条路同样要求 uiLoadable',
     /settings\.value\.uiFullscreenOnStart && uiLoadable\.value/.test(appCode),
+  );
+
+  // ---------------------------------------------------------- 13. macOS 的版本检查
+  //    macOS 装不了自动更新（ad-hoc 签名），但**照样要知道有没有新版本** —— 主进程直接取
+  //    `releases/latest/download/latest-mac.yml` 比版本号，不碰 Squirrel。这几条钉住：
+  //    契约里有 canCheck、macOS 分支会去查、比较函数正确、更新源地址与 build.publish 一致。
+  const publishConfig = (
+    JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+      build?: { publish?: { owner?: string; repo?: string }[] };
+    }
+  ).build?.publish?.[0];
+
+  check(
+    'macOS 更新：契约里有 canCheck（"能不能查"与"能不能装"分开）',
+    /canCheck: boolean;/.test(flatIpc) && /canCheck: true/.test(updaterSource),
+  );
+  check(
+    'macOS 更新：darwin 分支会去查 latest-mac.yml（不加载 electron-updater）',
+    /process\.platform === 'darwin'/.test(updaterSource) &&
+      /checkFeedVersion/.test(updaterSource) &&
+      /latest\/download\/latest-mac\.yml/.test(ipcSource) &&
+      /compareVersions\(latest, current\) > 0/.test(updaterSource),
+  );
+  check(
+    'macOS 更新：更新源地址与 package.json 的 build.publish 是同一个人/仓库',
+    Boolean(publishConfig?.owner) &&
+      RELEASES_URL.includes(`github.com/${publishConfig?.owner}/${publishConfig?.repo}`) &&
+      UPDATE_MAC_FEED_URL.includes(`github.com/${publishConfig?.owner}/${publishConfig?.repo}`),
+    `${publishConfig?.owner}/${publishConfig?.repo}`,
+  );
+  const { compareVersions, parseFeedVersion } = await import('../src/main/updater.js');
+  check(
+    'macOS 更新：版本比较与 yml 解析都对（0.4.2 > 0.4.1、后缀按同版本、坏数据返回 null）',
+    compareVersions('0.4.2', '0.4.1') > 0 &&
+      compareVersions('0.4.1', '0.4.1') === 0 &&
+      compareVersions('0.10.0', '0.9.9') > 0 &&
+      compareVersions('0.4.1-beta.1', '0.4.1') === 0 &&
+      parseFeedVersion('version: 0.4.2\nfiles:\n') === '0.4.2' &&
+      parseFeedVersion('files:\n') === null,
   );
 
   // ---------------------------------------------------------- 汇总

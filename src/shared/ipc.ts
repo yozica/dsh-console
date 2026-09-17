@@ -42,6 +42,8 @@ export interface UpdateState {
   message: string | null;
   /** 这个运行形态能不能自动更新（macOS 与开发态为 false） */
   canAutoUpdate: boolean;
+  /** 能不能检查有没有新版本：macOS 不能自动装、但**照样能查**（开发态为 false） */
+  canCheck: boolean;
   /** 不能自动更新时的出路：Releases 页面 */
   releasesUrl: string;
 }
@@ -51,6 +53,17 @@ export interface UpdateState {
  * 是同一处；主进程用它填 UpdateState.releasesUrl，渲染层用它做「打开下载页」的兜底。
  */
 export const RELEASES_URL = 'https://github.com/yozica/dsh-console/releases';
+
+/**
+ * 版本检查用的更新源（GitHub 的 "latest" 别名指向最新一个**已发布**的 Release，
+ * 草稿不算 —— 与 Windows 走 electron-updater 时读的是同一份 `latest-mac.yml`）。
+ *
+ * macOS 上装不了自动更新（ad-hoc 签名），但我们仍然想知道"有没有新版本"：
+ * 主进程直接取这个小文件、比一下版本号就行，不引入 Squirrel 那套。
+ * 与 `build.publish` 的 owner/repo 是同一处，自检会核对它们一致。
+ */
+export const UPDATE_MAC_FEED_URL =
+  'https://github.com/yozica/dsh-console/releases/latest/download/latest-mac.yml';
 
 export interface ThemeInfo {
   mode: ThemeMode;
