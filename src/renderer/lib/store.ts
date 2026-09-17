@@ -40,6 +40,19 @@ export const phaseInfo = computed(() => phaseText(phase.value));
 export const owned = computed(() => Boolean(dsh.value?.owned));
 
 /**
+ * 内嵌 DSH 界面「可用或即将可用」—— 自动进全屏只该在它为真时发生。
+ *
+ * - 已经拿到带令牌地址（`uiUrl`）→ 可用；
+ * - 本应用启动的 dsh（`owned`）**未必要马上有令牌**：先起服务、后打印地址，所以令牌在路上时
+ *   也算"即将可用"，页面会在令牌到达后自动载入；
+ * - **外部实例且没令牌时不算**：那时 Harness 页只有一段"拿不到令牌"的说明，为它收起整屏
+ *   （藏掉左栏与底栏）没有意义 —— 用户点开这一页时莫名全屏，反馈过这一条。
+ *
+ * 用户手动粘贴的地址在 UiPane 自己的 ref 里、不在这份共享状态中，所以那边会额外 `|| pastedUrl`。
+ */
+export const uiLoadable = computed(() => Boolean(dsh.value?.uiUrl) || owned.value);
+
+/**
  * 自动更新状态：主进程（main/updater.ts）是唯一状态机，这里只是镜像 ——
  * 底栏（shell/StatusBar.vue）与设置页读同一份。
  * 初始 idle 只是"快照还没到"的占位；startStore() 会用快照里的 update 覆盖它。

@@ -51,7 +51,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              七个页面组件
-test/selftest.ts        93 项自检（`npm test`），不需要 Electron
+test/selftest.ts        96 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -88,7 +88,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（93 项，不需要 Electron、不启停任何进程）                        |
+| `npm test`                      | `tsx test/selftest.ts`（96 项，不需要 Electron、不启停任何进程）                        |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -296,6 +296,11 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 ### 7.11 令牌：为什么不去自签 cookie
 
+（相关的界面规则：**应用内全屏只在内嵌界面可用或即将可用时自动开启** —— `store.ts` 的 `uiLoadable`
+= 已有令牌地址 **或** dsh 由本应用启动（令牌可能还在路上）。外部实例拿不到令牌时，Harness 页
+只有一段说明，为它藏掉左栏与底栏没有意义；设置项 `uiFullscreenOnStart` 不改变这条前提。
+自检「自动全屏：…」三条守着它。）
+
 `dsh web` 的访问令牌是**进程私有**的随机值，只在启动时打印一次，不落盘、没有接口能事后取回。因此 `UiPane` 分三种情形：本应用启动的 dsh（自动捕获令牌）、外部实例（拿不到令牌，顶部常驻提醒 + 「重启为受管实例」的出路 + 可粘贴地址）、没在跑（提示回控制台启动）。**没有令牌时不会退化成裸地址去载入**（那样只会拿到 401 并抛 `ERR_ABORTED`）。
 
 有一个能让外部实例也用上内嵌界面的办法，本项目**有意没有采用**：cookie 的签名密钥明文存在 DSH 的 credentials 文件里，应用完全可以自己签一个合法 cookie 写进 webview 的 session。不做的原因是它依赖 dsh 的内部实现细节（cookie 名、载荷结构、HMAC 格式），属于 rc 版本的实现细节，上游一改就会静默失效；而且它是「代替用户登录」的伪造型能力。当前策略是明确提示用户用本应用重新启动 dsh（官方支持的路径）。
@@ -336,7 +341,7 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，93 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，96 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），以及发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）。

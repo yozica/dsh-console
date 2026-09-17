@@ -21,6 +21,7 @@ import {
   dsh,
   immersive,
   immersiveAutoEntered,
+  uiLoadable,
   settings,
   snapshot,
   startStore,
@@ -211,8 +212,10 @@ function wireAutoOpen(): void {
       if (harnessAutoOpened || phase !== 'running' || !settings.value.openUiOnStart) return;
       harnessAutoOpened = true;
       if (currentTab.value !== 'ui') currentTab.value = 'ui';
-      // 切页时 UiPane 已按设置进过一次全屏，这里只是兜住"本来就在该页"的情况
-      if (!immersiveAutoEntered.value && settings.value.uiFullscreenOnStart) {
+      // 切页时 UiPane 已按设置进过一次全屏，这里只是兜住"本来就在该页"的情况。
+      // 这条只在 phase === 'running'（本应用启动的 dsh）时走得到；界面不可用时不该自动全屏
+      // （规则与 store 的 uiLoadable 一致：外部实例没有令牌时那边也不会全屏）。
+      if (!immersiveAutoEntered.value && settings.value.uiFullscreenOnStart && uiLoadable.value) {
         immersiveAutoEntered.value = true;
         immersive.value = true;
       }

@@ -1088,6 +1088,34 @@ async function main(): Promise<void> {
     `dmg=${buildConfig.dmg?.artifactName} mac=${buildConfig.mac?.artifactName}`,
   );
 
+  // ---------------------------------------------------------- 12. 自动全屏的前提
+  //    应用内全屏是"为内嵌 DSH 界面让出整屏"。外部实例拿不到令牌时这一页只有一段说明，
+  //    为它收起左栏与底栏没有意义 —— 用户点开 Harness 页莫名全屏就是这个问题。
+  const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
+  const storeSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
+  const codeOf = (text: string): string =>
+    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '');
+  const uiPaneCode = codeOf(uiPaneSource);
+  const storeCode = codeOf(storeSource);
+  const appCode = codeOf(rendererJs);
+
+  check(
+    '自动全屏：store 用 uiLoadable 表达"内嵌界面可用或即将可用"（令牌在或本应用启动）',
+    /export const uiLoadable = computed\(\(\) => Boolean\(dsh\.value\?\.uiUrl\) \|\| owned\.value\)/.test(
+      storeCode,
+    ),
+  );
+  check(
+    '自动全屏：切到 Harness 页时先看界面能不能用，再看设置（外部实例没令牌不自动全屏）',
+    /function maybeAutoFullscreen\(\)[\s\S]*?!uiLoadable\.value && !pastedUrl\.value[\s\S]*?return/.test(
+      uiPaneCode,
+    ) && /settings\.value\.uiFullscreenOnStart/.test(uiPaneCode),
+  );
+  check(
+    '自动全屏：启动时自动打开那条路同样要求 uiLoadable',
+    /settings\.value\.uiFullscreenOnStart && uiLoadable\.value/.test(appCode),
+  );
+
   // ---------------------------------------------------------- 汇总
   const failed = results.filter((item) => !item.ok);
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`);
