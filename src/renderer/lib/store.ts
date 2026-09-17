@@ -10,6 +10,7 @@ import { computed, ref } from 'vue';
 
 import { phaseText } from './phase-text.js';
 import { applyPlatformAttribute, setPlatform } from './platform.js';
+import { RELEASES_URL } from '../../shared/ipc';
 import type {
   AppSnapshot,
   DshConsoleApi,
@@ -18,6 +19,7 @@ import type {
   SettingsValues,
   ThemeInfo,
   ThemeMode,
+  UpdateState,
 } from '../../shared/ipc';
 
 const api: DshConsoleApi = window.dshConsole;
@@ -36,6 +38,21 @@ export const phase = computed<DshPhase>(() => dsh.value?.phase || 'stopped');
 export const phaseInfo = computed(() => phaseText(phase.value));
 /** 归属判断只看 dsh.owned */
 export const owned = computed(() => Boolean(dsh.value?.owned));
+
+/**
+ * 自动更新状态：主进程（main/updater.ts）是唯一状态机，这里只是镜像 ——
+ * 底栏（shell/StatusBar.vue）与设置页读同一份。
+ * 初始 idle 只是"快照还没到"的占位；startStore() 会用快照里的 update 覆盖它。
+ */
+export const update = ref<UpdateState>({
+  phase: 'idle',
+  currentVersion: '',
+  version: null,
+  percent: null,
+  message: null,
+  canAutoUpdate: false,
+  releasesUrl: RELEASES_URL,
+});
 
 /** 当前页面（外壳的导航与各页共用） */
 export const currentTab = ref<TabId>('dashboard');
@@ -76,6 +93,9 @@ export function startStore(): Promise<void> {
   if (!pending) {
     pending = (async () => {
       snapshot.value = await api.getSnapshot();
+      // 更新状态也来自快照：它是"主进程先有、渲染层后连上"的（macOS / 开发态在窗口加载前
+      // 就已经是 unsupported），只靠 onUpdateState 会丢掉那一次。
+      update.value = snapshot.value.update;
       // 主进程的 platform 是权威值：拿它校准 UA 推断的结果，再落到 <html data-platform>
       setPlatform(snapshot.value?.env?.platform);
       applyPlatformAttribute();
@@ -89,6 +109,9 @@ export function startStore(): Promise<void> {
         syncDocumentTheme();
       });
       api.onFullscreen((on) => syncDocumentFullscreen(Boolean(on)));
+      api.onUpdateState((next) => {
+        update.value = next;
+      });
     })();
   }
   return pending;

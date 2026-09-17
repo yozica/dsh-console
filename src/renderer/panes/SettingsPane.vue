@@ -10,9 +10,9 @@
  * 与外壳（app.ts）之间只通过一个 CustomEvent 通信（保存/重载后通知它刷新快照），
  * 不共享可变全局。
  */
-import { onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { snapshot } from '../lib/store.js';
-import type { EnvInfo, SettingsValues } from '../../shared/ipc';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { snapshot, update } from '../lib/store.js';
+import type { EnvInfo, SettingsValues, UpdatePhase } from '../../shared/ipc';
 
 const api = window.dshConsole;
 
@@ -33,6 +33,7 @@ const form = reactive({
   openUiOnStart: true,
   uiFullscreenOnStart: true,
   killOnExit: true,
+  autoCheckUpdates: true,
 });
 
 const userData = ref('');
@@ -115,6 +116,63 @@ async function reload() {
   } finally {
     busy.value = false;
   }
+}
+
+// ---------------------------------------------------------------- 自动更新
+
+/** 相位兜底文案：主进程一般会给 message，这里只兜"还没检查过"这类空档 */
+const PHASE_FALLBACK: Record<UpdatePhase, string> = {
+  idle: '尚未检查更新',
+  checking: '正在检查更新…',
+  available: '发现新版本',
+  downloading: '正在下载更新…',
+  downloaded: '已下载，重启后安装',
+  error: '检查更新失败',
+  unsupported: '自动更新不可用',
+};
+
+const updateText = computed(() => update.value.message || PHASE_FALLBACK[update.value.phase]);
+const updatePercent = computed(() => Math.max(0, Math.min(100, update.value.percent ?? 0)));
+
+type UpdateAction = 'check' | 'download' | 'install' | 'releases';
+
+/** 按钮语义只看"能不能自动更新 + 当前相位"（macOS / 开发态永远只有「打开下载页」） */
+const updateAction = computed<UpdateAction>(() => {
+  if (!update.value.canAutoUpdate) return 'releases';
+  if (update.value.phase === 'available') return 'download';
+  if (update.value.phase === 'downloaded') return 'install';
+  return 'check';
+});
+
+const updateBusy = computed(
+  () => update.value.phase === 'checking' || update.value.phase === 'downloading',
+);
+
+const updateLabel = computed(() => {
+  switch (update.value.phase) {
+    case 'checking':
+      return '检查中…';
+    case 'downloading':
+      return '下载中…';
+    case 'error':
+      return '重试';
+    case 'available':
+      return '下载';
+    case 'downloaded':
+      return '重启并安装';
+    default:
+      return update.value.canAutoUpdate ? '检查更新' : '打开下载页';
+  }
+});
+
+/** 一个按钮承载四种动作；模板里不给导入的 ref 直接赋值，统一走这个函数 */
+async function runUpdate(): Promise<void> {
+  if (updateBusy.value) return;
+  const action = updateAction.value;
+  if (action === 'download') update.value = await api.downloadUpdate();
+  else if (action === 'install') await api.installUpdate();
+  else if (action === 'releases') void api.openExternal(update.value.releasesUrl);
+  else update.value = await api.checkForUpdates();
 }
 
 onMounted(async () => {
@@ -281,6 +339,10 @@ onUnmounted(() => {
           <input id="s-killOnExit" type="checkbox" v-model="form.killOnExit" />
           <span>关闭应用时停止本应用启动的 dsh</span>
         </label>
+        <label class="check">
+          <input id="s-autoCheckUpdates" type="checkbox" v-model="form.autoCheckUpdates" />
+          <span>自动检查更新（启动后检查一次，之后每 6 小时一次）</span>
+        </label>
       </div>
     </section>
 
@@ -312,6 +374,31 @@ onUnmounted(() => {
         <p class="hint" id="settings-runtime">
           Electron {{ runtime.electron }} · Node {{ runtime.node }} · Chromium {{ runtime.chrome }}
         </p>
+      </div>
+      <div class="panel-block">
+        <div class="update-head">
+          <span class="update-title">软件更新</span>
+          <span class="update-phase" :data-phase="update.phase">{{ updateText }}</span>
+        </div>
+        <div
+          v-if="update.phase === 'downloading'"
+          class="update-progress"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-valuenow="updatePercent"
+        >
+          <div class="update-bar" :style="{ width: `${updatePercent}%` }"></div>
+        </div>
+        <p class="hint">
+          当前版本
+          {{ update.currentVersion || appVersion }}。发现新版本会先问你，下载与安装都不会自己做。
+        </p>
+        <div class="btn-row">
+          <button class="btn small" :disabled="updateBusy" @click="runUpdate">
+            {{ updateLabel }}
+          </button>
+        </div>
       </div>
     </section>
   </div>

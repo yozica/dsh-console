@@ -537,6 +537,21 @@ main {
   color: var(--ink-faint);
 }
 
+/* 底栏的更新提示：有新版本或已下载时才出现，点它切到设置页 */
+.update-hint {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.update-hint:hover {
+  text-decoration: underline;
+}
+
 /* ============================================================ 指示灯 */
 
 .lamp {
@@ -1469,6 +1484,49 @@ body[data-immersive='true'] .webview-wrap {
   height: 15px;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+/* 「关于」里的更新卡片：标题与状态一行，进度条只在下载时出现 */
+.update-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.update-title {
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+.update-phase {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.update-phase[data-phase='available'],
+.update-phase[data-phase='downloaded'] {
+  color: var(--accent);
+}
+
+.update-phase[data-phase='error'] {
+  color: var(--rose);
+}
+
+/* 进度条：下沉井当轨道、强调色当填充（不引第三方进度条，也不新增颜色令牌） */
+.update-progress {
+  height: 6px;
+  margin-top: 10px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.update-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width var(--dur) ease;
 }
 
 .panel-block > .hint {

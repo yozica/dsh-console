@@ -29,6 +29,7 @@ import { Settings, type SettingsPatch, type SettingsValues } from './settings';
 import { PtySessions } from './pty-sessions';
 import { DshManager } from './dsh-manager';
 import { SessionArchiveManager } from './session-archive';
+import { createUpdater, type Updater } from './updater';
 import { installFileLogging } from './logger';
 import * as processUtils from './process-utils';
 import type {
@@ -50,6 +51,7 @@ import type {
   SessionOutputEvent,
   ThemeInfo,
   ThemeMode,
+  UpdateState,
 } from '../shared/ipc';
 
 const isDev = process.argv.includes('--dev');
@@ -78,6 +80,7 @@ let settings!: Settings;
 let ptySessions!: PtySessions;
 let dshManager!: DshManager;
 let archiveManager!: SessionArchiveManager;
+let updater!: Updater;
 
 let shellCounter = 0;
 /** 应用自己开的终端会话 id（除 dsh 之外） */
@@ -581,6 +584,7 @@ function registerIpc(): void {
       sessions: ptySessions.list(),
       launch: dshManager.describeLaunch(),
       env,
+      update: updater.snapshot(),
       userData: app.getPath('userData'),
       theme: themeInfo(),
     };
@@ -603,6 +607,8 @@ function registerIpc(): void {
       // 设置页里也能改主题，保持与工具栏开关一致
       if (patch && 'themeMode' in patch) applyThemeSource(next.themeMode);
       dshManager.syncSettings();
+      // 自动检查更新是开关式的：改完要立刻生效（开 → 排定时器，关 → 停）
+      updater.syncSettings();
       dshManager.log('info', '设置已保存');
       broadcastTheme();
       return next;
@@ -756,6 +762,15 @@ function registerIpc(): void {
     return result.response === 1;
   });
 
+  // ---------------------------------------------------------------- 自动更新
+  // 状态机在 main/updater.ts；这里只转发三个动作，状态变化由 updater 广播 app:update。
+
+  ipcMain.handle('app:update-check', (): Promise<UpdateState> => updater.checkNow());
+
+  ipcMain.handle('app:update-download', (): Promise<UpdateState> => updater.download());
+
+  ipcMain.handle('app:update-install', (): boolean => updater.install());
+
   // ---------------------------------------------------------------- 归档会话
   // 这些操作直接读写 DSH 磁盘数据；正在运行的 dsh 会把 workspace.json 读进内存，
   // 所以改动要等 dsh 重启后才同步到界面里 —— 返回里的 dshRunning 让渲染层据此提示。
@@ -873,6 +888,12 @@ async function bootstrap(): Promise<void> {
   ptySessions = new PtySessions();
   dshManager = new DshManager({ settings, ptySessions });
   archiveManager = new SessionArchiveManager();
+  // 自动更新：状态变化统一走 app:update 事件（渲染层底栏与设置页读同一份）
+  updater = createUpdater({
+    settings,
+    sendState: (state: UpdateState) => sendToRenderer('app:update', state),
+    getWindow: () => mainWindow,
+  });
   wireManagerEvents();
   dropLegacySessionFile();
 
@@ -880,6 +901,8 @@ async function bootstrap(): Promise<void> {
   registerIpc();
   wireEmbeddedRequestDiagnostics();
   watchRendererForDevReload();
+  // updater.start() 放在窗口与 IPC 都就绪之后：它可能立刻广播一次 unsupported 状态
+  updater.start();
 
   const theme = themeInfo();
   dshManager.startPolling();
