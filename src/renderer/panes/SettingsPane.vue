@@ -333,7 +333,7 @@ onUnmounted(() => {
         </label>
         <label class="check">
           <input id="s-uiFullscreenOnStart" type="checkbox" v-model="form.uiFullscreenOnStart" />
-          <span>进入该页时自动开启应用内全屏（Esc 退出）</span>
+          <span>进入该页时自动开启应用内全屏（Esc 退出；拿不到令牌、页面不可用时不会全屏）</span>
         </label>
         <label class="check">
           <input id="s-killOnExit" type="checkbox" v-model="form.killOnExit" />

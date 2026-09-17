@@ -14,7 +14,14 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { restartFlow } from '../lib/dsh-actions.js';
-import { currentTab, dsh, immersive, immersiveAutoEntered, settings } from '../lib/store.js';
+import {
+  currentTab,
+  dsh,
+  immersive,
+  immersiveAutoEntered,
+  settings,
+  uiLoadable,
+} from '../lib/store.js';
 import type { WebviewElement, WebviewFailLoadEvent } from '../lib/webview.js';
 
 const api = window.dshConsole;
@@ -230,7 +237,20 @@ onMounted(() => {
     if (currentTab.value === 'ui') maybeLoad(true);
   });
 
-  // 切到本页：刷新提示 + 按需载入 + 第一次进来按设置自动全屏
+  /**
+   * 第一次进本页时按设置自动全屏 —— 但**只有内嵌界面真的能用（或即将能用）才做**：
+   * 外部实例拿不到令牌时这里只有一段说明，为它收起整屏（藏掉左栏与底栏）没有意义。
+   * 用户粘贴了地址也算能用，所以额外看 pastedUrl。
+   */
+  function maybeAutoFullscreen(): void {
+    if (immersiveAutoEntered.value) return;
+    if (!settings.value.uiFullscreenOnStart) return;
+    if (!uiLoadable.value && !pastedUrl.value) return;
+    immersiveAutoEntered.value = true;
+    immersive.value = true;
+  }
+
+  // 切到本页：刷新提示 + 按需载入 + 按设置自动全屏
   watch(
     currentTab,
     (tab) => {
@@ -238,10 +258,7 @@ onMounted(() => {
       updateHint();
       maybeLoad(false);
       refreshViewport();
-      if (!immersiveAutoEntered.value && settings.value.uiFullscreenOnStart) {
-        immersiveAutoEntered.value = true;
-        immersive.value = true;
-      }
+      maybeAutoFullscreen();
     },
     { immediate: true },
   );
@@ -251,7 +268,10 @@ onMounted(() => {
   // 等令牌随快照到达时若不重试，页面就永远停在"还没载入界面"（踩过）。
   watch(dsh, () => {
     updateHint();
-    if (currentTab.value === 'ui') maybeLoad(false);
+    if (currentTab.value !== 'ui') return;
+    maybeLoad(false);
+    // 令牌是后到的（先起服务、后打印地址）：这时补一次自动全屏，别让"进页时还没有令牌"变成永不生效
+    maybeAutoFullscreen();
   });
 });
 </script>
