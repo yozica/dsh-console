@@ -193,7 +193,7 @@ function clearFilters(): void {
       <div class="spacer"></div>
       <span v-if="error" class="bar-note">{{ error }}</span>
       <template v-else-if="data">
-        <span class="bar-note">{{ data.entryCount }} 个条目 · {{ layers.length }} 层</span>
+        <span class="bar-note">{{ data.entryCount }} 个组合条目 · {{ layers.length }} 层</span>
         <span v-if="data.patchReload" class="bar-hint">
           {{ data.patchReload === 'live' ? 'patch 层改动即时生效' : 'patch 层只在启动时应用' }}
         </span>
@@ -367,6 +367,12 @@ function clearFilters(): void {
         </div>
 
         <div v-else class="plugin-config-body">
+          <p class="plugin-scope">
+            口径：这里是 <code>--dump-config</code> 组合出来的<b>行</b>（各 bundle 的 patch + 你的
+            patch 层）。Harness 的「插件列表」数的是<b>运行中的 Loader 条目</b
+            >，它还包含启动时挂上的根 <code>include</code> 行与运行时新增的行 ——
+            两个数字不会相等，它们回答的也不是同一个问题。
+          </p>
           <template v-for="(group, gi) in visibleGroups" :key="`${group.label}-${gi}`">
             <div class="plugin-group" :class="{ overridden: group.patchedBy !== null }">
               <span class="plugin-group-name">{{ group.source }}</span>

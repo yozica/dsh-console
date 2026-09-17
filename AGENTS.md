@@ -361,6 +361,8 @@ dsh 的「插件」有两个层面，界面与代码都得分开看：
 - **层归因直接来自 dump 的注释标签**：`# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app`；profile 自己那一层的标签是**文件全路径**。
 - **「被覆盖」要拆成两种**：真实数据里 `dsh-web-app` 覆盖 base 的 25 条有 23 条是把下层 `disabled: true`（不是改配置）。界面上必须分开标，否则用户以为配置被改了。
 
+**两个口径不要混**（用户已经问过一次"为什么数量对不上"）：本页数的是 `--dump-config` **组合出来的行**（各 bundle 的 patch + 你的 patch 层），而内嵌 Harness 的「插件列表」数的是**运行中的非 group Loader 条目**（`dsh-host-plugin-inventory/lib/index.js` 里 `for (const entry of ctx.loader.entries()) if (entry.options.group) continue`）—— 后者多了启动时由 `mountRootInclude` 挂上去的根 `include` 行（`dsh-app-boot` 的 `id: "include"`，不是 group，所以计数）以及运行时新增的行，所以两个数**天然不相等**（本机实测 152 vs 156）。界面上因此写"组合条目"并且给出一句口径说明，不要写"个条目"。
+
 自检守着：「插件：真实 dump 解析出层归因与全部条目」「插件：未匹配的 patch 行只在 stderr 上」「插件：空输出不算成功；失败时给的是诊断行而不是 Node 的堆栈首行」「插件：只碰 web profile」。夹具是**真实输出**（`test/fixtures/`，含一份 539 行的真 dump），所以上游改格式时这里第一时间变红。
 
 ## 8. 调试手段

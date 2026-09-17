@@ -2416,6 +2416,21 @@ body[data-immersive='true'] .webview-wrap {
   overflow: auto;
 }
 
+/* 口径说明：生效配置数的是"组合出来的行"，与 Harness 那份"运行中的 Loader 条目"不是一个口径 ——
+   用户对着两个数字会问，所以写在数字所在的那一屏里，而不是藏在 tooltip 里。 */
+.plugin-scope {
+  margin: 0;
+  padding: 10px 16px 12px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  line-height: 1.7;
+}
+
+.plugin-scope b {
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
 /* 分组标题：dump 自己是按"源层 / 被谁覆盖"分段的，这里照抄它的语义 */
 .plugin-group {
   display: flex;
