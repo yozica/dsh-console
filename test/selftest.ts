@@ -1385,6 +1385,19 @@ async function main(): Promise<void> {
   );
 
   check(
+    '快捷键：TAB_ORDER 与左栏顺序一致（不一致就会"按 7 打开别的页"）',
+    (() => {
+      const appTs = fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8');
+      const railVue = fs.readFileSync(path.join(rendererDir, 'shell', 'RailNav.vue'), 'utf8');
+      const orderBlock = /TAB_ORDER: TabId\[\] = \[([\s\S]*?)\]/.exec(appTs)?.[1] ?? '';
+      const order = [...orderBlock.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
+      const rail = [...railVue.matchAll(/\{ id: '([a-z]+)'/g)].map((match) => match[1]);
+      return order.length >= 8 && order.join() === rail.join();
+    })(),
+    '左栏顺序 = 快捷键 1..N',
+  );
+
+  check(
     '插件：只碰 web profile（desktop 是 CLI 保留给 Electron 的，传进去直接报错）',
     pluginManager.PLUGIN_PROFILE === 'web' &&
       /PLUGIN_PROFILE/.test(pluginSource) &&

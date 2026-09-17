@@ -52,7 +52,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              八个页面组件
-test/selftest.ts        115 项自检（`npm test`），不需要 Electron
+test/selftest.ts        116 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -89,7 +89,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（115 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（116 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -348,7 +348,7 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 dsh 的「插件」有两个层面，界面与代码都得分开看：
 
 - **运行层**：已经挂载进配置树的条目、它们的启停与设置项。这一层由 dsh 自己的界面管（内嵌 Harness 的 **设置 → 插件**：`插件配置` 改插件暴露的 settings 命名空间，`插件列表` 是只读清单）。console **不重做**，只在插件页给一句跳转提示。
-- **装配层**：装了什么 bundle、哪个版本、从哪来、层序如何、生效配置最后长什么样。没有任何界面管这个 —— 这就是 console 插件页（第 8 页）存在的理由，也是「dsh 因为插件起不来」时唯一的入口。
+- **装配层**：装了什么 bundle、哪个版本、从哪来、层序如何、生效配置最后长什么样。没有任何界面管这个 —— 这就是 console 插件页（左栏第 7 项，快捷键 `7`）存在的理由，也是「dsh 因为插件起不来」时唯一的入口。
 
 术语对应关系（改这块代码前先认清）：**bundle** 是可安装单位（npm 包，manifest 里声明 `dsh.bundle.patch`），**profile** 是 `$DSH_HOME/profiles/<name>` 那份「哪些 bundle、按什么顺序」的清单，**插件**是两者最终装出来的 `apply(ctx)` 模块。层序是：各 bundle 的 patch（按 `dsh.profile.bundles` 顺序）→ profile 自己的 `cordis.patch.yml` → `$DSH_HOME/cordis.patch.yml` → `--patch` 覆盖层；**后面的按 `id` 整条替换前面的条目（替换整个 `config`，不是深合并）**。
 
@@ -390,7 +390,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，115 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，116 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。
