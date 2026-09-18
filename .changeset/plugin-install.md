@@ -1,5 +1,5 @@
 ---
-'dsh-console': minor
+'dsh-console': patch
 ---
 
 插件页能直接装 / 卸 / 升级了（不用再开终端）
