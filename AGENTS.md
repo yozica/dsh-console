@@ -52,7 +52,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              八个页面组件
-test/selftest.ts        129 项自检（`npm test`），不需要 Electron
+test/selftest.ts        131 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -89,7 +89,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（129 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（131 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -322,6 +322,8 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 **页面级内边距由各页自己给**：`.pane` 只负责定位（`position: absolute; inset: 0`），它**没有任何 padding** —— 所以新页面的根容器必须自己写左右与底部各 20px（`.archive-body` 是 `2px 20px 20px`、`.settings` 是 `4px 20px 20px`，工具条 `.bar` 自带 `10px 20px`）。漏了就会像插件页第一版那样整块面板贴到窗口边缘。冒烟里有一条「插件页与归档页的面板内边距必须一致」盯着（比的是两页**第一个面板的左边距 + 最后一个面板的右边距** —— 拿第一个去比右边距会把侧栏宽度当成边距）。
 
+**设置：界面与主进程是两份产物，保存必须对答案。** 两者会各自更新（窗口热重载了、主进程还是旧构建），这时渲染层认得的新设置项在主进程眼里就是"不认识的键"。`Settings.patch` 因此**不静默丢**：patch 里一旦出现 `DEFAULTS` 之外的键就抛错、**一个字都不写**，设置页把这条错误显示出来而不是照旧说"已保存" —— 真机上就这么丢过一次「插件安装源」：填了、点了保存、显示"已保存"，重启后输入框空的，`settings.json` 里连这个键都没有。推论：**加设置项只改契约与 DEFAULTS 两处还不够**，改完要**重启应用**（`npm start`），只重载窗口会正好落进上面那个半新半旧的状态。
+
 ### 7.15 健康判据与令牌掩码
 
 - **健康判据**是 `GET http://host:port/`：dsh 对无令牌请求返回 `401 dsh web authentication required`，这本身就是「服务活着」的强特征；带 `__DSH_BOOT__` 或 `DeepSeek Harness` 的 200 同样判定为 dsh（`process-utils.ts` 的 `isDshResponse`）。所以探测**不需要令牌**，也不会把「401」误判成「服务没起」。
@@ -407,10 +409,10 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，129 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，131 项，不需要 Electron、不启停任何进程
 ```
 
-`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值，以及设置页表单字段与契约对齐 —— 键名写错只会静默不生效）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。
+`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值，以及设置页表单字段与契约对齐 —— 键名写错只会静默不生效、保存被主进程拒了必须说出来）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。
 
 **为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。
 

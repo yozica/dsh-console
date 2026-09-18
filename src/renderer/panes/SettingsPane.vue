@@ -103,9 +103,19 @@ async function save() {
     fill(next);
     announce(next);
     flash('已保存');
+  } catch (cause) {
+    // 主进程拒绝整份 patch（例如它不认识某个键 —— 界面比主进程新的时候）。
+    // 这时**一个字都没写**，绝不能说"已保存"。
+    flash(`没保存上：${errorText(cause)}`);
   } finally {
     busy.value = false;
   }
+}
+
+/** invoke 抛回来的错误带一层 "Error invoking remote method 'x': Error: " 前缀，去掉它 */
+function errorText(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
 async function reload() {

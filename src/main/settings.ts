@@ -116,17 +116,27 @@ export class Settings {
   }
 
   /**
-   * 合并写入。**只认识 DEFAULTS 里有的键**，其余一律忽略 —— 渲染层传来的对象
-   * 形状不可信，这里是唯一的守门处。
+   * 合并写入。**只写 DEFAULTS 里有的键** —— 渲染层传来的对象形状不可信，这里是
+   * 唯一的守门处。但"不认识"不等于"可以悄悄丢掉"：把整份 patch 原样写下去，遇到
+   * 不认识的键就**报错、一个字都不写**。
+   *
+   * 为什么必须报错：界面与主进程是两份产物，会各自更新。渲染层比主进程新时
+   * （典型场景：窗口热重载了、主进程还是旧构建），用户看到的保存会"成功"，实际
+   * 什么都没写 —— 真机上就这么丢过一次「插件安装源」，重启后输入框空了，界面上
+   * 连一条提示都没有。
    */
-  patch(partial: SettingsPatch | null | undefined): SettingsValues {
+  patch(partial: SettingsPatch | Record<string, unknown> | null | undefined): SettingsValues {
     if (!partial || typeof partial !== 'object') return this.all();
+    const unknown = Object.keys(partial).filter((key) => !(key in DEFAULTS));
+    if (unknown.length > 0) {
+      throw new Error(
+        `主进程不认识这些设置项：${unknown.join('、')} —— 应用可能只重载了界面、没有重启进程，完全退出再启动一次。`,
+      );
+    }
     for (const [key, value] of Object.entries(partial)) {
-      if (key in DEFAULTS) {
-        // 保持原有语义：传进来什么就写什么（渲染层那边已经把数字规整过了）。
-        // SettingsValues 是具名接口、没有索引签名，所以这里显式经 unknown 转换。
-        (this.values as unknown as Record<string, unknown>)[key] = value;
-      }
+      // 保持原有语义：传进来什么就写什么（渲染层那边已经把数字规整过了）。
+      // SettingsValues 是具名接口、没有索引签名，所以这里显式经 unknown 转换。
+      (this.values as unknown as Record<string, unknown>)[key] = value;
     }
     this.save();
     return this.all();

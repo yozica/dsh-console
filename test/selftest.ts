@@ -86,6 +86,21 @@ async function main(): Promise<void> {
   // ---------------------------------------------------------- 1. 命令解析
   const settings = new Settings(path.join(sandbox, 'settings.json'));
   settings.patch({ port: 3080, host: '127.0.0.1', extraArgs: '' });
+  check(
+    '设置：不认识的设置项直接报错、一个字都不写（界面比主进程新时不能假装保存成功）',
+    (() => {
+      const before = JSON.stringify(settings.all());
+      let threw = false;
+      try {
+        // 真机上丢过一次「插件安装源」：窗口热重载了、主进程还是旧构建，
+        // 旧的主进程不认识这个键，静默丢掉，界面照样显示"已保存"。
+        settings.patch({ pluginRegistry: 'https://registry.example.com', noSuchSetting: 1 });
+      } catch {
+        threw = true;
+      }
+      return threw && JSON.stringify(settings.all()) === before;
+    })(),
+  );
   const launch = processUtils.resolveDshInvocation(settings.all());
   check(
     '命令解析：拿到可执行文件与参数',
@@ -1213,6 +1228,10 @@ async function main(): Promise<void> {
   check(
     '更新卡片：说明行由 canAutoUpdate 分支决定（Windows 才承诺下载/安装）',
     /const updateNote = computed[\s\S]{0,400}?update\.value\.canAutoUpdate/.test(settingsSource),
+  );
+  check(
+    '设置页：保存被主进程拒了会说出来（不能显示"已保存"）',
+    /catch \(cause\)[\s\S]{0,300}?flash\(/.test(settingsSource),
   );
   check(
     '设置页：表单字段都在设置契约里（键名写错只会静默不生效，看不出来）',
