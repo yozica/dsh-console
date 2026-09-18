@@ -64,8 +64,10 @@ const api: DshConsoleApi = {
   archiveUnarchive: (id) => ipcRenderer.invoke('archive:unarchive', id),
   archiveRemove: (id) => ipcRenderer.invoke('archive:remove', id),
 
-  // 插件装配层（只读）
+  // 插件装配层
   pluginInspect: () => ipcRenderer.invoke('plugin:inspect'),
+  pluginRun: (request) => ipcRenderer.invoke('plugin:run', request),
+  pluginCancel: () => ipcRenderer.invoke('plugin:cancel'),
 
   // 事件
   onState: (handler) => subscribe('dsh:state', handler),
@@ -75,6 +77,7 @@ const api: DshConsoleApi = {
   onUiUrl: (handler) => subscribe('dsh:ui-url', handler),
   onSessionOutput: (handler) => subscribe('session:output', handler),
   onSessionExit: (handler) => subscribe('session:exit', handler),
+  onPluginOutput: (handler) => subscribe('plugin:output', handler),
 };
 
 contextBridge.exposeInMainWorld('dshConsole', api);

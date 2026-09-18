@@ -201,6 +201,52 @@ export function findNodeExe(): string | null {
   return null;
 }
 
+/**
+ * 找 pnpm 可执行文件。
+ *
+ * 为什么必须自己找：`dsh plugin` 内部是 `spawnSync('pnpm', …)`（`stdio: 'inherit'`），
+ * **完全依赖子进程的 PATH**；而 macOS 上从 Finder/Dock 启动的应用 PATH 通常只有
+ * `/usr/bin:/bin:/usr/sbin:/sbin`，nvm / homebrew / `~/Library/pnpm` 都不在里面。
+ * 不补的话用户看到的是 `dsh: pnpm not found on PATH`，退出码 127。
+ */
+export function findPnpm(): string | null {
+  const fromPath = whichSync(isWindows ? 'pnpm.cmd' : 'pnpm');
+  if (fromPath) return fromPath;
+  if (isWindows) return null;
+  const home = homeDir();
+  const candidates = [
+    // pnpm 官方安装脚本在这台机器上就装在这儿（PATH 里没有）
+    path.join(home, 'Library', 'pnpm', 'pnpm'),
+    '/opt/homebrew/bin/pnpm',
+    '/usr/local/bin/pnpm',
+    path.join(home, '.local', 'share', 'pnpm', 'pnpm'),
+    path.join(home, '.npm-global', 'bin', 'pnpm'),
+  ];
+  for (const install of versionManagerInstalls()) candidates.push(path.join(install.bin, 'pnpm'));
+  for (const candidate of candidates) {
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * 给子进程的 PATH 前置已知的 bin 目录（node 与 pnpm 所在目录）。
+ * 只影响我们 spawn 的那一个子进程，不动应用自己的环境。
+ */
+export function pathWithKnownBins(base: string | undefined): string {
+  const extra: string[] = [];
+  const push = (exe: string | null) => {
+    const dir = exe ? path.dirname(exe) : '';
+    if (dir && !extra.includes(dir)) extra.push(dir);
+  };
+  push(findNodeExe());
+  push(findPnpm());
+  const rest = String(base || '')
+    .split(path.delimiter)
+    .filter((dir) => dir && !extra.includes(dir));
+  return [...extra, ...rest].join(path.delimiter);
+}
+
 /** 全局 node_modules 的候选目录（PATH 里没有 shim 时直接来这里找包） */
 function globalNodeModulesRoots(): string[] {
   const home = homeDir();

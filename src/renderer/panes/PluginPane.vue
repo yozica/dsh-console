@@ -18,6 +18,7 @@ import { computed, ref, watch } from 'vue';
 import { currentTab } from '../lib/store.js';
 import type {
   PluginEntry,
+  PluginOpAction,
   PluginInspectResult,
   PluginLayer,
   PluginLiveEntry,
@@ -66,6 +67,97 @@ function refresh(): void {
       say(`插件装配：${data.value.entryCount ?? 0} 个条目 · ${data.value.layers?.length ?? 0} 层`);
     }
   });
+}
+
+// ---------------------------------------------------------------- 装 / 卸 / 升级
+//
+// 全部走主进程的 `dsh plugin --profile web …`（转发给 pnpm），输出边走边推上来贴进输出区。
+// 三条与界面有关的约定：
+//   1. 装 / 卸 / 升级改的是 package.json 与 node_modules → **必须重启 dsh**，所以做完挂一条黄条；
+//   2. 同一时刻只允许一个操作（同一个 profile 目录不能被两个 pnpm 同时改）；
+//   3. 确认框里必须写清"会从网络取代码、git 源可能执行构建脚本"，不能默默装。
+
+const installOpen = ref(false);
+const installSpec = ref('');
+const opBusy = ref(false);
+const opOpen = ref(false);
+const opTitle = ref('');
+const opText = ref('');
+const opStatus = ref<'' | 'running' | 'ok' | 'failed'>('');
+const opSummary = ref('');
+const pendingRestart = ref(false);
+
+const opStateLabel = computed(() => {
+  if (opStatus.value === 'running') return '进行中…';
+  if (opStatus.value === 'ok') return '完成';
+  if (opStatus.value === 'failed') return '失败';
+  return '';
+});
+
+api.onPluginOutput((payload) => {
+  // 只留最近一段，避免一次大安装把内存与 DOM 撑爆
+  opText.value = (opText.value + payload.chunk).slice(-40000);
+});
+
+async function startOp(action: PluginOpAction, spec: string): Promise<void> {
+  if (opBusy.value) return;
+  const target = spec.trim();
+  if (action !== 'update' && target.length === 0) return;
+
+  const titles: Record<PluginOpAction, string> = {
+    add: '安装插件',
+    remove: '移除插件',
+    update: '升级插件',
+  };
+  const details: Record<PluginOpAction, string> = {
+    add: `会把 ${target} 装进 web profile —— 代码从网络取；如果是 git 源，安装时可能执行它的构建脚本（等于允许它的代码在你的机器上跑）。装完要重启 dsh 才生效。`,
+    remove: `会从 web profile 里移除 ${target}，它贡献的条目会一起消失。做完要重启 dsh 才生效。`,
+    update: `会把 ${target || '所有树外插件'} 升到最新版。做完要重启 dsh 才生效。`,
+  };
+  const ok = await api.confirm({
+    type: 'warning',
+    title: titles[action],
+    message: target || '（全部树外插件）',
+    detail: details[action],
+  });
+  if (!ok) return;
+
+  opBusy.value = true;
+  opStatus.value = 'running';
+  opText.value = '';
+  opSummary.value = '';
+  opOpen.value = true;
+  view.value = 'stack';
+  opTitle.value = `dsh plugin --profile web ${action} ${target}`.trimEnd();
+
+  const result = await api.pluginRun({ action, spec: target });
+  opBusy.value = false;
+  opStatus.value = result.ok ? 'ok' : 'failed';
+  opSummary.value = result.summary || result.error || '';
+
+  if (result.ok) {
+    pendingRestart.value = true;
+    installOpen.value = false;
+    installSpec.value = '';
+    await load();
+    say(
+      action === 'add'
+        ? '已安装，重启 dsh 后生效'
+        : action === 'remove'
+          ? '已移除，重启 dsh 后生效'
+          : '已升级，重启 dsh 后生效',
+    );
+  }
+}
+
+async function cancelOp(): Promise<void> {
+  await api.pluginCancel();
+}
+
+async function restartDsh(): Promise<void> {
+  await api.restart();
+  pendingRestart.value = false;
+  say('正在重启 dsh…');
 }
 
 // 这一页要起一个 dsh 子进程（dump-config），所以不在启动时就跑，等真正切过来再读一次
@@ -259,6 +351,14 @@ function clearFilters(): void {
       >
         <svg class="i"><use href="#i-replay" /></svg><span>刷新</span>
       </button>
+      <button
+        id="btn-plugin-install"
+        class="btn small"
+        :disabled="opBusy"
+        @click="installOpen = !installOpen"
+      >
+        + 安装插件
+      </button>
       <div class="plugin-views">
         <button class="plugin-view" :class="{ active: view === 'stack' }" @click="view = 'stack'">
           装配层栈
@@ -290,6 +390,38 @@ function clearFilters(): void {
         </span>
         <span class="bar-hint">{{ data.profileDir }}</span>
       </template>
+    </div>
+
+    <!-- 安装行：不用弹窗，跟 Harness 页「粘贴地址」同一形态 -->
+    <div v-if="installOpen" class="plugin-install">
+      <input
+        id="plugin-install-spec"
+        v-model="installSpec"
+        class="plugin-install-input"
+        placeholder="包名 / ./本地目录 / .tgz / github:owner/repo#sha"
+        @keyup.enter="startOp('add', installSpec)"
+      />
+      <button
+        class="btn small primary"
+        :disabled="opBusy || installSpec.trim().length === 0"
+        @click="startOp('add', installSpec)"
+      >
+        安装
+      </button>
+      <span class="bar-hint">代码从网络取；git 源建议固定 commit sha</span>
+      <span v-if="data?.pnpm && !data.pnpm.found" class="plugin-tag warn">没找到 pnpm</span>
+    </div>
+
+    <!-- 装/卸/升级改的是 package.json 与 node_modules → 必须重启 dsh -->
+    <div v-if="pendingRestart" class="banner">
+      <svg class="i"><use href="#i-warn" /></svg>
+      <span>
+        <b>已改到装配层，重启 dsh 后生效。</b>
+        bundle 列表是启动时读的；改你自己的 <code>cordis.patch.yml</code> 才是即时生效。
+      </span>
+      <span class="spacer"></span>
+      <button class="btn ghost small" @click="pendingRestart = false">稍后</button>
+      <button class="btn small" @click="restartDsh">立即重启 dsh</button>
     </div>
 
     <!-- 空态 / 出错 -->
@@ -434,6 +566,25 @@ function clearFilters(): void {
                 就只会当普通依赖存在，不形成配置层。
               </template>
             </p>
+
+            <!-- 只有树外插件能升级 / 移除：内置的随 dsh 安装目录，动不了也不该动 -->
+            <div v-if="selected.kind === 'out-of-tree'" class="plugin-detail-actions">
+              <button
+                class="btn small"
+                :disabled="opBusy"
+                @click="startOp('update', selected.name)"
+              >
+                升级到最新
+              </button>
+              <span class="spacer"></span>
+              <button
+                class="btn danger small"
+                :disabled="opBusy"
+                @click="startOp('remove', selected.name)"
+              >
+                移除
+              </button>
+            </div>
           </div>
         </section>
       </div>
@@ -539,6 +690,19 @@ function clearFilters(): void {
           </p>
         </div>
       </section>
+
+      <!-- 操作输出：pnpm 的原始输出原样贴出来，不假装进度条（与 dsh 终端同族） -->
+      <div v-if="opStatus && opOpen" class="plugin-op">
+        <div class="plugin-op-head">
+          <span class="plugin-op-cmd">{{ opTitle }}</span>
+          <span class="plugin-op-state" :data-state="opStatus">{{ opStateLabel }}</span>
+          <span class="spacer"></span>
+          <button v-if="opBusy" class="btn tiny" @click="cancelOp">中断</button>
+          <button v-else class="btn tiny" @click="opOpen = false">收起</button>
+        </div>
+        <pre class="plugin-op-out">{{ opText || '（等待输出…）' }}</pre>
+        <p v-if="opSummary" class="plugin-op-summary">{{ opSummary }}</p>
+      </div>
     </template>
   </div>
 </template>

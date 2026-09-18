@@ -47,6 +47,8 @@ import type {
   DshOutputEvent,
   EnvInfo,
   PluginInspectResult,
+  PluginOpAction,
+  PluginOpResult,
   RenameSessionResult,
   ResolvedTheme,
   SessionExitEvent,
@@ -839,6 +841,27 @@ function registerIpc(): void {
       return { ok: false, error: messageOf(error) };
     }
   });
+
+  // 装 / 卸 / 升级：走 `dsh plugin --profile web …`，输出边跑边推给渲染层。
+  // 这三个都改 package.json 与 node_modules，所以做完要重启 dsh 才生效（界面负责提示）。
+  ipcMain.handle(
+    'plugin:run',
+    async (_event: IpcMainInvokeEvent, request: unknown): Promise<PluginOpResult> => {
+      try {
+        const { action, spec } = (request ?? {}) as { action?: PluginOpAction; spec?: string };
+        if (action !== 'add' && action !== 'remove' && action !== 'update') {
+          return { ok: false, error: '不认识的操作' };
+        }
+        return await pluginManager.runOperation(action, String(spec ?? ''), (chunk) =>
+          sendToRenderer('plugin:output', { chunk }),
+        );
+      } catch (error) {
+        return { ok: false, error: messageOf(error) };
+      }
+    },
+  );
+
+  ipcMain.handle('plugin:cancel', (): boolean => pluginManager.cancelOperation());
 }
 
 function wireManagerEvents(): void {

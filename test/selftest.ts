@@ -1397,6 +1397,78 @@ async function main(): Promise<void> {
     '左栏顺序 = 快捷键 1..N',
   );
 
+  // 装 / 卸 / 升级：spec 只用于"确认文案与提示"，命令原样透传给 pnpm；错误归纳要认出常见失败。
+  check(
+    '插件安装：spec 分得清 npm / 本地 / tarball / git，并认得出 git 有没有固定 sha',
+    (() => {
+      const npm = pluginManager.parsePluginSpec('dsh-hello-plugin');
+      const scoped = pluginManager.parsePluginSpec('@scope/name@1.2.3');
+      const local = pluginManager.parsePluginSpec('./hello-plugin');
+      const tarball = pluginManager.parsePluginSpec('./hello-0.1.0.tgz');
+      const pinned = pluginManager.parsePluginSpec('github:you/hello#a1b2c3d4');
+      const floating = pluginManager.parsePluginSpec('github:you/hello');
+      return (
+        npm?.kind === 'npm' &&
+        scoped?.kind === 'npm' &&
+        local?.kind === 'local' &&
+        tarball?.kind === 'tarball' &&
+        pinned?.kind === 'git' &&
+        pinned.pinned === true &&
+        floating?.kind === 'git' &&
+        floating.pinned === false &&
+        pluginManager.parsePluginSpec('   ') === null
+      );
+    })(),
+  );
+  check(
+    '插件安装：常见失败各归纳成一句人话，认不出来返回 null（不编原因）',
+    (() => {
+      const notFound = pluginManager.summarizePluginFailure(
+        'dsh: pnpm not found on PATH — install pnpm to manage profile plugins',
+      );
+      const git = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  Ignored build scripts: dsh-x',
+      );
+      const missing = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found',
+      );
+      const denied = pluginManager.summarizePluginFailure('Error: EPERM: operation not permitted');
+      return (
+        Boolean(notFound && git && missing && denied) &&
+        pluginManager.summarizePluginFailure('Done in 1.4s') === null
+      );
+    })(),
+  );
+  check(
+    '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
+    /spawn\(file, args/.test(pluginSource) &&
+      /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&
+      /stdio: \['ignore', 'pipe', 'pipe'\]/.test(pluginSource) &&
+      !/shell:\s*true/.test(pluginSource) &&
+      /child\.stderr\?\.on\('data', collect\)/.test(pluginSource),
+  );
+  check(
+    '插件安装：pnpm 说"这是 workspace root"时用 -w 重试一次（dsh 模板缺 ignore-workspace-root-check）',
+    /ADDING_TO_ROOT\|workspace root/.test(pluginSource) &&
+      /argsFor\(\['-w'\]\)/.test(pluginSource) &&
+      // 第一次调用不带 -w（只有在 pnpm 明确要求时才加）
+      /argsFor\(\[\]\), env, onOutput\)/.test(pluginSource),
+  );
+  check(
+    '插件安装：契约里有 3 个 API 与操作结果类型',
+    (() => {
+      const ipc = fs.readFileSync(path.join(srcDir, 'shared', 'ipc.ts'), 'utf8');
+      return (
+        /pluginRun: \(request: \{ action: PluginOpAction; spec: string \}\) => Promise<PluginOpResult>/.test(
+          ipc,
+        ) &&
+        /pluginCancel: \(\) => Promise<boolean>/.test(ipc) &&
+        /onPluginOutput:/.test(ipc) &&
+        /export type PluginOpAction = 'add' \| 'remove' \| 'update'/.test(ipc)
+      );
+    })(),
+  );
+
   check(
     '插件：只碰 web profile（desktop 是 CLI 保留给 Electron 的，传进去直接报错）',
     pluginManager.PLUGIN_PROFILE === 'web' &&

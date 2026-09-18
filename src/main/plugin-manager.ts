@@ -24,16 +24,18 @@
  *     与正在运行的 dsh 不冲突；失败时按"profile 不可写"报出来。
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { dshArgsFor, resolveDshLauncher } from './process-utils';
+import { dshArgsFor, findPnpm, pathWithKnownBins, resolveDshLauncher } from './process-utils';
 import { resolveDshHome } from './session-archive';
 import type { Settings, SettingsValues } from './settings';
 import type {
   PluginEntry,
   PluginFiberPhase,
+  PluginOpAction,
+  PluginOpResult,
   PluginInspectResult,
   PluginLayer,
   PluginLiveEntry,
@@ -56,6 +58,10 @@ const DUMP_TIMEOUT_MS = 20_000;
 const LIVE_TIMEOUT_MS = 5_000;
 /** dsh 客户端的 Remote 端点：`<service>/<method>` 就是 /api 后面的路径 */
 const LIVE_ENDPOINT = 'pluginInventory/list';
+/** 装/卸/升级最慢的是 pnpm 拉包；给它一个上限，避免界面永远停在"进行中" */
+const OP_TIMEOUT_MS = 10 * 60 * 1000;
+/** 归纳失败原因时只看尾部这些字节（pnpm 的报错通常在最后） */
+const OP_TAIL_CHARS = 8000;
 /** 本机 web profile 的 dump 约 17 KB；留足余量，异常大时按失败处理 */
 const DUMP_MAX_BUFFER = 8 * 1024 * 1024;
 
@@ -467,6 +473,187 @@ export function missingLayers(
     }));
 }
 
+// ---------------------------------------------------------------- 装 / 卸 / 升级
+//
+// 全部走 `dsh plugin --profile web <pnpm 参数>`：它会在 profile 目录里转发给 pnpm，
+// 然后按"装出来的包有没有声明 dsh.bundle"重算 `dsh.profile.bundles`。我们不自己改
+// package.json、也不自己拼 pnpm 命令 —— 那两个都是 dsh 的职责。
+//
+// 三条必须守住的：
+//   1. spec 是**一个 argv 原样透传**，不经过 shell（不引号、不拼接）—— 拼错一次就是注入；
+//   2. 子进程 PATH 要补上 pnpm（见 pathWithKnownBins），否则 GUI 启动必然 127；
+//   3. 装/卸/升级改的是 package.json 与 node_modules，**必须重启 dsh 才生效**。
+
+/** 用户输入的是哪类来源（只用于确认文案与提示，命令照原样透传） */
+export interface PluginSpec {
+  kind: 'npm' | 'local' | 'tarball' | 'git';
+  /** 给人看的"代码从哪来" */
+  source: string;
+  /** git 源是否已经固定了 commit sha（没固定就该提醒） */
+  pinned: boolean;
+}
+
+/** 认一下 spec 的类型；空值返回 null（界面据此禁用按钮） */
+export function parsePluginSpec(raw: string): PluginSpec | null {
+  const spec = raw.trim();
+  if (spec.length === 0) return null;
+  if (/^github:|^git\+|^git@|\.git(?:#|$)|^https?:\/\/github\.com\//i.test(spec)) {
+    return {
+      kind: 'git',
+      source: 'git 仓库（源码，安装时可能执行它的构建脚本）',
+      pinned: /#[0-9a-f]{7,40}$/i.test(spec),
+    };
+  }
+  // 打包文件要排在"本地路径"前面判：`./x-0.1.0.tgz` 也以 ./ 开头
+  if (spec.endsWith('.tgz') || spec.endsWith('.tar.gz')) {
+    return { kind: 'tarball', source: '本地打包文件', pinned: true };
+  }
+  if (
+    spec.startsWith('./') ||
+    spec.startsWith('../') ||
+    spec.startsWith('/') ||
+    spec.startsWith('file:') ||
+    spec.startsWith('link:')
+  ) {
+    return { kind: 'local', source: '本地目录（pnpm 会 link，改源码即改插件）', pinned: true };
+  }
+  return { kind: 'npm', source: 'npm registry', pinned: false };
+}
+
+/**
+ * 把 dsh / pnpm 的原始输出归纳成一句人话；认不出来就返回 null，
+ * 让界面老老实实显示原文，而不是编一个原因。
+ */
+export function summarizePluginFailure(output: string): string | null {
+  const text = output.slice(-OP_TAIL_CHARS);
+  if (/pnpm not found on PATH/i.test(text)) {
+    return '没找到 pnpm —— `dsh plugin` 通过它管理插件。装一个 pnpm，或在设置里确认 PATH。';
+  }
+  if (/ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED|Ignored build scripts|approve-builds/i.test(text)) {
+    return '它需要在安装时构建（等于执行它的代码），pnpm 默认拦住了。按上面打印的键写进 profile 的 pnpm-workspace.yaml（allowBuilds）再重试。';
+  }
+  if (/ADDING_TO_ROOT|workspace root/i.test(text)) {
+    return 'pnpm 把 profile 当成 workspace root 拒了（加 -w 重试也没成）。可以检查 profile 里的 pnpm-workspace.yaml。';
+  }
+  if (/ERR_PNPM_FETCH_404|404 Not Found/i.test(text)) {
+    return 'registry 上没有这个包（名字或版本可能不对）。';
+  }
+  if (/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network/i.test(text)) {
+    return '网络不通，没能连上 registry。';
+  }
+  if (/EPERM|EACCES/i.test(text)) {
+    return '权限不足（profile 目录或缓存不可写）。';
+  }
+  return null;
+}
+
+/** 一次插件的安装/卸载/升级 */
+class PluginRunner {
+  private child: ChildProcess | null = null;
+
+  constructor(private readonly settings: Settings) {}
+
+  /** 当前是否有操作在跑（界面上按钮据此禁用，也避免两个 pnpm 同时改同一个目录） */
+  get busy(): boolean {
+    return this.child !== null;
+  }
+
+  cancel(): boolean {
+    if (!this.child) return false;
+    this.child.kill();
+    return true;
+  }
+
+  /**
+   * 真跑一次 `dsh plugin --profile web <args>`，把输出边读边推给界面。
+   * 返回退出码与输出尾部（尾部用于归纳失败原因）。
+   */
+  private async spawnOnce(
+    file: string,
+    args: string[],
+    env: NodeJS.ProcessEnv,
+    onOutput: (chunk: string) => void,
+  ): Promise<{ code: number | null; tail: string; error?: string }> {
+    let tail = '';
+    const collect = (chunk: Buffer | string) => {
+      const text = String(chunk);
+      tail = (tail + text).slice(-OP_TAIL_CHARS);
+      onOutput(text);
+    };
+
+    return await new Promise((resolve) => {
+      const child = spawn(file, args, {
+        env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      this.child = child;
+
+      const timer = setTimeout(() => {
+        collect(`\n（超过 ${Math.round(OP_TIMEOUT_MS / 60000)} 分钟，已中断）\n`);
+        child.kill();
+      }, OP_TIMEOUT_MS);
+      timer.unref?.();
+
+      child.stdout?.on('data', collect);
+      child.stderr?.on('data', collect);
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        this.child = null;
+        collect(`\n${error.message}\n`);
+        resolve({ code: null, tail, error: error.message });
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        this.child = null;
+        resolve({ code, tail });
+      });
+    });
+  }
+
+  async run(
+    action: PluginOpAction,
+    spec: string,
+    onOutput: (chunk: string) => void,
+  ): Promise<PluginOpResult> {
+    if (this.busy) return { ok: false, error: '已经有一个插件操作在进行中' };
+    const parsed = parsePluginSpec(spec);
+    if (!parsed) return { ok: false, error: '请填写要安装的包名或路径' };
+
+    const launcher = resolveDshLauncher(this.settings.all());
+    // `dsh plugin --profile web <action> [-w] <spec>`：spec 永远是**一个** argv，不拼 shell。
+    // `-w` 只在 pnpm 自己要求时加（见下面重试）：profile 里那份 pnpm-workspace.yaml 是
+    // dsh 模板写的（`packages: [.]`，没有 ignore-workspace-root-check），pnpm 9 会把它
+    // 当 workspace root，于是 `add` 直接报 ERR_PNPM_ADDING_TO_ROOT。
+    const argsFor = (extra: string[]): string[] =>
+      dshArgsFor(launcher, [
+        'plugin',
+        '--profile',
+        PLUGIN_PROFILE,
+        action,
+        ...extra,
+        ...(action === 'update' && spec.trim() === '' ? [] : [spec]),
+      ]);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: pathWithKnownBins(process.env.PATH),
+    };
+
+    const first = await this.spawnOnce(launcher.file, argsFor([]), env, onOutput);
+    if (first.error) return { ok: false, code: null, error: first.error };
+    if (first.code === 0) return { ok: true, code: first.code };
+
+    if (/ADDING_TO_ROOT|workspace root/i.test(first.tail)) {
+      onOutput('\n（pnpm 说这是 workspace root，加 -w 重试）\n');
+      const retry = await this.spawnOnce(launcher.file, argsFor(['-w']), env, onOutput);
+      if (retry.error) return { ok: false, code: null, error: retry.error };
+      if (retry.code === 0) return { ok: true, code: retry.code };
+      return { ok: false, code: retry.code, summary: summarizePluginFailure(retry.tail) };
+    }
+    return { ok: false, code: first.code, summary: summarizePluginFailure(first.tail) };
+  }
+}
+
 // ---------------------------------------------------------------- 运行中的清单
 //
 // 静态组合（dump）拿不到"运行中"的事实：根 include 行、两个原生目录选择器、HMR
@@ -614,6 +801,7 @@ class LiveClient {
 
 export class PluginManager {
   private readonly live: LiveClient;
+  private readonly runner: PluginRunner;
 
   constructor(
     private readonly settings: Settings,
@@ -621,6 +809,25 @@ export class PluginManager {
     getTokenUrl: () => string | null = () => null,
   ) {
     this.live = new LiveClient(getTokenUrl);
+    this.runner = new PluginRunner(settings);
+  }
+
+  /** 装 / 卸 / 升级：输出边走边推给界面，返回最终结果 */
+  async runOperation(
+    action: PluginOpAction,
+    spec: string,
+    onOutput: (chunk: string) => void,
+  ): Promise<PluginOpResult> {
+    return await this.runner.run(action, spec, onOutput);
+  }
+
+  cancelOperation(): boolean {
+    return this.runner.cancel();
+  }
+
+  /** 操作在跑时界面要禁用另一处入口（同一个 profile 目录不能被两个 pnpm 同时改） */
+  get operationBusy(): boolean {
+    return this.runner.busy;
   }
 
   /** profile 目录（$DSH_HOME/profiles/web） */
@@ -691,6 +898,11 @@ export class PluginManager {
       rawDump: dumpLayers.length === 0 ? run.stdout : null,
       live: liveResult.snapshot,
       liveError: liveResult.error || undefined,
+      // 装/卸/升级要 pnpm；`dsh plugin` 自己是裸 spawn，所以这里先把结论告诉界面
+      pnpm: (() => {
+        const found = findPnpm();
+        return { found: found !== null, path: found };
+      })(),
     };
   }
 }

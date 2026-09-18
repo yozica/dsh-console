@@ -52,7 +52,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              八个页面组件
-test/selftest.ts        116 项自检（`npm test`），不需要 Electron
+test/selftest.ts        121 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -89,7 +89,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（116 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（121 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -363,6 +363,18 @@ dsh 的「插件」有两个层面，界面与代码都得分开看：
 
 **两个口径不要混**（用户已经问过一次"为什么数量对不上"）：本页数的是 `--dump-config` **组合出来的行**（各 bundle 的 patch + 你的 patch 层），而内嵌 Harness 的「插件列表」数的是**运行中的非 group Loader 条目**（`dsh-host-plugin-inventory/lib/index.js` 里 `for (const entry of ctx.loader.entries()) if (entry.options.group) continue`）—— 后者多了启动时由 `mountRootInclude` 挂上去的根 `include` 行（`dsh-app-boot` 的 `id: "include"`，不是 group，所以计数）以及运行时新增的行，所以两个数**天然不相等**（本机实测 152 vs 156）。界面上因此写"组合条目"并且给出一句口径说明，不要写"个条目"。
 
+### 装 / 卸 / 升级：三个必须守住的点
+
+装（`add`）、卸（`remove`）、升级（`update`）全部走 `dsh plugin --profile web …` —— 它把参数转发给 profile 目录里的 pnpm，然后按"装出来的包有没有声明 `dsh.bundle`"**重算** `dsh.profile.bundles`。我们**不自己改 package.json、也不自己解析 pnpm 的输出语义**，那两件事都是 dsh 的职责。
+
+1. **spec 永远是一个 argv，不经过 shell**（`spawn(file, args)` + 数组，没有 `shell: true`）。拼错一次就是命令注入；自检里有一条静态断言盯着（`spawn(file, args` + `stdio: ['ignore','pipe','pipe']` + 没有 `shell: true`）。
+2. **子进程 PATH 必须补上 pnpm**（`pathWithKnownBins`）：`dsh plugin` 内部是裸 `spawnSync('pnpm', …)`，而 GUI 启动的应用 PATH 很窄。不补的话用户看到的是 `dsh: pnpm not found on PATH`（退出码 127）。`findPnpm()` 除了 PATH 还会扫 `~/Library/pnpm`、homebrew、`~/.local/share/pnpm`、nvm 各版本目录。
+3. **`-w` 只在 pnpm 自己要求时加**。这是个上游模板的坑：dsh 写的 `pnpm-workspace.yaml` 是 `packages: [.]` + `nodeLinker: hoisted`，**没有** `ignore-workspace-root-check`，于是 pnpm 9 把 profile 当 workspace root，`add` 直接报 `ERR_PNPM_ADDING_TO_ROOT`（实测：`dsh plugin --profile web add ./x` 必失败）。现在第一次照朴素参数跑，一旦输出里出现 `ADDING_TO_ROOT|workspace root` 就**加 `-w` 重试一次**，并在输出区写一句"pnpm 说这是 workspace root，加 -w 重试"。**不要无条件加 `-w`**：不在 workspace 里的时候那个 flag 是多余的。
+
+另外两条界面约定：同一时刻只允许一个操作（同一个 profile 目录不能被两个 pnpm 同时改，按钮据此禁用，并给「中断」）；装/卸/升级改的是 `package.json` 与 `node_modules` → **必须重启 dsh**，所以做完挂一条黄条 + 「立即重启 dsh」，而 patch 层是即时生效 —— 这两种"生效时机"在界面上必须分开写清。
+
+自检守着：「插件安装：spec 分得清 npm / 本地 / tarball / git」「插件安装：常见失败各归纳成一句人话，认不出来返回 null」「插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收」「插件安装：pnpm 说"这是 workspace root"时用 -w 重试一次」「插件安装：契约里有 3 个 API 与操作结果类型」。失败归纳（`summarizePluginFailure`）只认它认得的四类（pnpm 缺失 / git 构建脚本被拦 / 404 / 网络与权限），认不出来就返回 null —— 界面显示原文，不编原因。
+
 ### 运行中的清单：另一条通道（`pluginInventory/list`）
 
 静态 dump 永远看不到这几行：根 `include` 行、以及**启动时用生成的 id 挂上去**的原生目录选择器（host + client 各一）与 HMR。所以两个数字天然差 4（实测静态 153 / 运行中 157）。要拿运行中的事实，只能问 dsh 自己：
@@ -390,7 +402,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，116 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，121 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。
