@@ -39,9 +39,9 @@ import {
 import { applyBundleEdit, type BundleEditResult } from './profile-bundles';
 import {
   dshArgsFor,
+  envWithKnownBins,
   findPnpm,
   homeDir,
-  pathWithKnownBins,
   resolveDshLauncher,
 } from './process-utils';
 import { resolveDshHome } from './session-archive';
@@ -793,8 +793,8 @@ class PluginRunner {
     // 安装源：设置里填了才覆盖，且只覆盖这一个子进程（见 pluginRegistryEnv）
     const registryOverride = pluginRegistryEnv(this.settings.all().pluginRegistry);
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      PATH: pathWithKnownBins(process.env.PATH),
+      // Windows 上 PATH 这个键叫 `Path`，直接写 `PATH` 会造出两个只差大小写的键（见 envWithKnownBins）
+      ...envWithKnownBins(process.env),
       ...registryOverride,
     };
     const registry = registryOverride.npm_config_registry;

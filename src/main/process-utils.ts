@@ -247,6 +247,21 @@ export function pathWithKnownBins(base: string | undefined): string {
   return [...extra, ...rest].join(path.delimiter);
 }
 
+/**
+ * 复制一份环境变量并把已知 bin 目录补进 PATH。
+ *
+ * **Windows 上这个键通常叫 `Path`**（Node 原样保留系统的大小写）。如果直接写
+ * `{ ...process.env, PATH: patched }`，就会同时存在 `Path` 与 `PATH` 两个只差大小写的键 ——
+ * 哪个生效取决于运行时怎么构造环境块，等于"补了 pnpm 目录却可能白补"。所以这里先找到
+ * 已有的那个键、**原地改它**（没有才新写 `PATH`）。
+ */
+export function envWithKnownBins(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
+  const key = Object.keys(env).find((name) => name.toLowerCase() === 'path') ?? 'PATH';
+  env[key] = pathWithKnownBins(env[key]);
+  return env;
+}
+
 /** 全局 node_modules 的候选目录（PATH 里没有 shim 时直接来这里找包） */
 function globalNodeModulesRoots(): string[] {
   const home = homeDir();

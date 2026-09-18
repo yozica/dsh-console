@@ -306,7 +306,8 @@ async function loadBackups(): Promise<void> {
 /** 用某个备份覆盖当前补丁层；当前内容同样会先备份，所以这一步也可逆 */
 async function restoreBackup(path: string): Promise<void> {
   if (rescueBusy.value) return;
-  const name = path.split('/').pop() ?? path;
+  // Windows 上是反斜杠 —— 只按 '/' 切会拿到整条路径
+  const name = path.split(/[\\/]/).pop() || path;
   const ok = await api.confirm({
     type: 'warning',
     title: `用备份恢复：${name}`,

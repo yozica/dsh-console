@@ -1546,6 +1546,30 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件安装：补 PATH 时保留系统原有的键名（Windows 上叫 `Path`，不能造出两个只差大小写的键）',
+    (() => {
+      const win = processUtils.envWithKnownBins({ Path: 'C:\\Windows\\System32', FOO: '1' });
+      const posix = processUtils.envWithKnownBins({ PATH: '/usr/bin', FOO: '1' });
+      const bare = processUtils.envWithKnownBins({});
+      const pathKeys = (env: NodeJS.ProcessEnv) =>
+        Object.keys(env).filter((key) => key.toLowerCase() === 'path');
+      return (
+        // 只有一个 path 键，而且键名原样（`Path` 还是 `Path`）
+        pathKeys(win).length === 1 &&
+        pathKeys(win)[0] === 'Path' &&
+        // 原有值还在末尾（前面补的是 node / pnpm 的目录），别的变量没动
+        String(win.Path).endsWith('C:\\Windows\\System32') &&
+        win.FOO === '1' &&
+        String(win.Path) !== 'C:\\Windows\\System32' &&
+        pathKeys(posix).length === 1 &&
+        pathKeys(posix)[0] === 'PATH' &&
+        String(posix.PATH).endsWith('/usr/bin') &&
+        pathKeys(bare).length === 1 &&
+        pathKeys(bare)[0] === 'PATH'
+      );
+    })(),
+  );
+  check(
     '插件安装：安装源走子进程环境变量，不写用户的 .npmrc',
     /pluginRegistry: string;/.test(flatIpc) &&
       DEFAULTS.pluginRegistry === '' &&
@@ -1837,7 +1861,8 @@ async function main(): Promise<void> {
   check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
     /spawn\(file, args/.test(pluginSource) &&
-      /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&
+      // 补 PATH 走 envWithKnownBins（保留系统原有的键名，见下一条）
+      /envWithKnownBins\(process\.env\)/.test(pluginSource) &&
       /stdio: \['ignore', 'pipe', 'pipe'\]/.test(pluginSource) &&
       // 相对路径按 cwd 解析，cwd 不能继承（Electron 的启动目录不可预测）
       /cwd: homeDir\(\)/.test(pluginSource) &&
