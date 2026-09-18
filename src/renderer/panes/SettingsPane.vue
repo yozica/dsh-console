@@ -10,8 +10,11 @@
  * 与外壳（app.ts）之间只通过一个 CustomEvent 通信（保存/重载后通知它刷新快照），
  * 不共享可变全局。
  */
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { snapshot, update } from '../lib/store.js';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { settings, snapshot, update } from '../lib/store.js';
+import { isMac } from '../lib/platform.js';
+import { scrollIntoViewEased } from '../lib/scroll.js';
+import { updateCardFocus } from '../lib/update-anchor.js';
 import type { EnvInfo, SettingsValues, UpdatePhase } from '../../shared/ipc';
 
 const api = window.dshConsole;
@@ -34,6 +37,7 @@ const form = reactive({
   openUiOnStart: true,
   uiFullscreenOnStart: true,
   killOnExit: true,
+  closeAction: 'ask',
   autoCheckUpdates: true,
 });
 
@@ -46,6 +50,7 @@ const packaged = ref(false);
 const runtime = reactive({ electron: '—', node: '—', chrome: '—' });
 let statusTimer: ReturnType<typeof setTimeout> | null = null;
 let stopThemeWatch: (() => void) | null = null;
+let stopCloseActionWatch: (() => void) | null = null;
 
 function fill(values: Partial<SettingsValues>): void {
   for (const key of Object.keys(form)) {
@@ -211,6 +216,116 @@ async function runUpdate(): Promise<void> {
   else update.value = await api.checkForUpdates();
 }
 
+// ---------------------------------------------------------------- 底栏点进来的锚点
+
+/** 缓动滚动时长。原生 `behavior: 'smooth'` 的速度由浏览器定、偏快（用户反馈"还没看清就到了"） */
+const SCROLL_MS = 620;
+/**
+ * 切页之后、滚动之前的停顿。
+ *
+ * 这一下是必须的：切页与滚动同时发生的话，界面换了、滚动也开始了，眼睛还没认出新页面
+ * 就已经滚到位 —— 用户的原话是"怪"。停 300ms 让"我到了设置页"先成立，再开始"带你去那儿"。
+ */
+const SETTLE_MS = 300;
+/** 蒙层停留多久后自动收（点一下、按一下键、滚一下滚轮都会提前收） */
+const SPOTLIGHT_HOLD_MS = 2600;
+/** 蒙层淡出时长：与 styles.css 里 .spotlight 的 transition 对齐 */
+const SPOTLIGHT_FADE_MS = 240;
+/** 高亮框比卡片外扩一点：贴着卡片边缘看像描错了框 */
+const SPOTLIGHT_PAD = 6;
+
+/** 等若干毫秒。只用于上面那个停顿；中途重来时由 runToken 兜住，不需要可取消 */
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const aboutCard = ref<HTMLElement | null>(null);
+const spotlightOn = ref(false);
+const spotlightClosing = ref(false);
+const spotlightRect = ref<{ top: number; left: number; width: number; height: number } | null>(
+  null,
+);
+/** 每次请求一个号：中途又点了一次底栏提示时，旧的流程在 await 处自行退出 */
+let runToken = 0;
+let spotlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 内联样式：没量到位置时给 undefined（Vue 会忽略），别给一个空对象去表达"没有" */
+const spotlightStyle = computed<Record<string, string> | undefined>(() => {
+  const rect = spotlightRect.value;
+  if (!rect) return undefined;
+  return {
+    top: `${rect.top}px`,
+    left: `${rect.left}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  };
+});
+
+/** 点一下、按一下键、滚一下滚轮都算"我看过了" —— 这层蒙层不该拦着人 */
+function unwireSpotlightDismiss(): void {
+  window.removeEventListener('pointerdown', dismissSpotlight);
+  window.removeEventListener('keydown', dismissSpotlight);
+  window.removeEventListener('wheel', dismissSpotlight);
+}
+
+function dismissSpotlight(): void {
+  if (!spotlightOn.value || spotlightClosing.value) return;
+  unwireSpotlightDismiss();
+  if (spotlightTimer) clearTimeout(spotlightTimer);
+  spotlightClosing.value = true;
+  spotlightTimer = setTimeout(() => {
+    spotlightOn.value = false;
+    spotlightClosing.value = false;
+    spotlightTimer = null;
+  }, SPOTLIGHT_FADE_MS);
+}
+
+/**
+ * 底栏的「发现新版本」点进来：**先切页并落定，再缓动带到卡片，最后才开蒙层**。
+ *
+ * 三步的先后不能换：蒙层量的是 `getBoundingClientRect()`，滚动途中量会画到半路，
+ * 所以必须等滚动结束再量。切页那一步由 StatusBar 改 currentTab，这里只等一次渲染
+ * （页面是靠 visibility 切换的），再停 SETTLE_MS —— 停顿的理由见那个常量的说明。
+ *
+ * 蒙层本身 `pointer-events: none`：它只是把"看这里"说清楚，用户想直接点卡片上的按钮
+ * 不该被挡住（那一下点击同时也会把蒙层收掉）。
+ */
+async function spotlightUpdateCard(): Promise<void> {
+  const token = ++runToken;
+  const target = aboutCard.value;
+  if (!target) return;
+  await nextTick();
+  if (token !== runToken) return;
+
+  // 停一下再滚：见 SETTLE_MS 的说明
+  await wait(SETTLE_MS);
+  if (token !== runToken) return;
+
+  await scrollIntoViewEased(target, SCROLL_MS);
+  if (token !== runToken) return;
+
+  const rect = target.getBoundingClientRect();
+  spotlightRect.value = {
+    top: rect.top - SPOTLIGHT_PAD,
+    left: rect.left - SPOTLIGHT_PAD,
+    width: rect.width + SPOTLIGHT_PAD * 2,
+    height: rect.height + SPOTLIGHT_PAD * 2,
+  };
+  spotlightOn.value = true;
+  spotlightClosing.value = false;
+  if (spotlightTimer) clearTimeout(spotlightTimer);
+  spotlightTimer = setTimeout(dismissSpotlight, SPOTLIGHT_HOLD_MS);
+  // 监听在蒙层出现的下一拍才可能被同一次点击触发（这里已经 await 过滚动，安全）
+  window.addEventListener('pointerdown', dismissSpotlight);
+  window.addEventListener('keydown', dismissSpotlight);
+  window.addEventListener('wheel', dismissSpotlight, { passive: true });
+}
+
+watch(updateCardFocus, (request) => {
+  if (!request) return;
+  void spotlightUpdateCard();
+});
+
 onMounted(async () => {
   await load();
   // 左下角的主题开关改的是同一个设置：store 已经订阅了 theme:changed，这里跟着同步
@@ -221,11 +336,22 @@ onMounted(async () => {
     },
     { immediate: true },
   );
+  // 关闭询问框里勾了「记住我的选择」时是**主进程**直接写盘的：只跟这一个键，
+  // 不整份 fill —— 否则会把用户还没保存的其它改动一起盖掉
+  stopCloseActionWatch = watch(
+    () => settings.value.closeAction,
+    (action) => {
+      if (action) form.closeAction = action;
+    },
+  );
 });
 
 onUnmounted(() => {
   if (statusTimer) clearTimeout(statusTimer);
+  if (spotlightTimer) clearTimeout(spotlightTimer);
+  unwireSpotlightDismiss();
   if (stopThemeWatch) stopThemeWatch();
+  if (stopCloseActionWatch) stopCloseActionWatch();
 });
 </script>
 
@@ -400,6 +526,23 @@ onUnmounted(() => {
           <input id="s-autoCheckUpdates" type="checkbox" v-model="form.autoCheckUpdates" />
           <span>自动检查更新（启动后检查一次，之后每 6 小时一次）</span>
         </label>
+        <!-- 「关闭窗口时」只在 Windows / Linux 有意义：macOS 上关窗本来就不退出（Dock 常驻、
+             点图标重建窗口），"收起还是退出"这个二选一在那边不存在 —— 摆一个不生效的开关
+             比不摆更糟，所以整行藏掉而不是加一句"macOS 不适用"。 -->
+        <template v-if="!isMac">
+          <div class="form-row">
+            <label for="s-closeAction">关闭窗口时</label>
+            <select id="s-closeAction" v-model="form.closeAction">
+              <option value="ask">询问一次（可记住选择）</option>
+              <option value="tray">收起到系统托盘</option>
+              <option value="quit">直接退出应用</option>
+            </select>
+          </div>
+          <p class="hint">
+            「收起」只隐藏窗口：应用与本应用启动的 dsh 继续在后台跑，点托盘图标能叫回来。
+            「退出」时是否停掉 dsh 由上面那条决定。
+          </p>
+        </template>
       </div>
     </section>
 
@@ -422,7 +565,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section class="panel">
+    <section ref="aboutCard" class="panel">
       <header class="panel-head"><h3>关于</h3></header>
       <div class="panel-block">
         <p class="hint" id="settings-version">
@@ -456,5 +599,15 @@ onUnmounted(() => {
         <p v-if="updateNote" id="update-note" class="hint">{{ updateNote }}</p>
       </div>
     </section>
+
+    <!-- 聚焦蒙层：铺满窗口、在「关于」卡片处开一个洞。
+         用 Teleport 挂到 body 上 —— 挂在页面里的话，它会被 .settings 的滚动容器与
+         各级层叠上下文限制住，盖不到左栏、顶栏和底栏。 -->
+    <Teleport to="body">
+      <div v-if="spotlightOn" class="spotlight" :class="{ 'is-closing': spotlightClosing }">
+        <div class="spotlight-hole" :style="spotlightStyle"></div>
+        <div class="spotlight-ring" :style="spotlightStyle"></div>
+      </div>
+    </Teleport>
   </div>
 </template>

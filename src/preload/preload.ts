@@ -30,6 +30,9 @@ const api: DshConsoleApi = {
   // 渲染层据此取消为它预留的空白
   onFullscreen: (handler) => subscribe('app:fullscreen', handler),
 
+  // 主进程改了设置（目前只有关闭对话框的「记住我的选择」）：界面那份表单要跟着更新
+  onSettings: (handler) => subscribe('settings:changed', handler),
+
   // dsh 进程控制
   start: () => ipcRenderer.invoke('dsh:start'),
   stop: (options) => ipcRenderer.invoke('dsh:stop', options || {}),
@@ -51,6 +54,12 @@ const api: DshConsoleApi = {
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   revealUserData: () => ipcRenderer.invoke('app:revealUserData'),
   confirm: (payload) => ipcRenderer.invoke('app:confirm', payload),
+
+  // 关闭确认：主进程问、渲染层答（卡片在渲染层，见 shell/CloseDialog.vue）
+  // ack 是"卡片已经显示了"：主进程收到它才撤掉兜底时限，之后等用户慢慢选
+  onCloseRequest: (handler) => subscribe('app:close-request', handler),
+  ackClose: () => ipcRenderer.invoke('app:close-ack'),
+  answerClose: (answer) => ipcRenderer.invoke('app:close-answer', answer),
 
   // 自动更新：状态由主进程推（app:update），这里只下命令
   checkForUpdates: () => ipcRenderer.invoke('app:update-check'),

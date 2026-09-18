@@ -10,6 +10,7 @@
 import { computed, onUnmounted, ref } from 'vue';
 import { currentTab, dsh, phaseInfo, snapshot, update } from '../lib/store.js';
 import { shortcutLabel } from '../lib/platform.js';
+import { requestUpdateCardFocus } from '../lib/update-anchor.js';
 
 const MESSAGE_MS = 6000;
 
@@ -60,6 +61,8 @@ const updateHint = computed(() => {
 
 function openUpdateSettings(): void {
   currentTab.value = 'settings';
+  // 光切页不够：设置页有好几屏，更新卡片在「关于」里 —— 让设置页把它滚进视野并亮一次
+  requestUpdateCardFocus();
 }
 </script>
 

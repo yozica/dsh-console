@@ -12,6 +12,7 @@ import {
   app,
   BrowserWindow,
   Menu,
+  Tray,
   ipcMain,
   shell,
   dialog,
@@ -39,6 +40,10 @@ import type {
   ArchiveReadResult,
   ArchiveRemoveResult,
   ArchiveUnarchiveResult,
+  CloseAction,
+  CloseAnswer,
+  CloseAnswerAction,
+  CloseRequest,
   ConfirmRequest,
   CreateShellResult,
   DshActionResult,
@@ -84,6 +89,27 @@ const fileLog = installFileLogging(path.join(app.getPath('userData'), 'logs'));
 // 下面这几个都在 bootstrap() 里赋值；用 `!` 明确"这里不重复判空"——
 // 所有 IPC handler 与事件回调都只在 bootstrap 之后才可能被触发。
 let mainWindow: BrowserWindow | null = null;
+/** 系统托盘：只在真的要"收起"时才建（选了直接退出的用户不该看到一个托盘图标） */
+let tray: Tray | null = null;
+/** 是不是"真的要退出"。before-quit 之后置位，窗口的 close 处理器据此放行 */
+let isQuitting = false;
+/** 关闭询问框是不是已经在显示：连点 X 不该叠出第二个对话框 */
+let closeDialogOpen = false;
+/**
+ * 一次"问渲染层要怎么关闭"的进行中状态。
+ * `ack` = 卡片已经显示了（撤掉握手时限）；`answer` = 用户选完了（传 null 表示问不到）。
+ */
+interface CloseAsk {
+  ack: () => void;
+  answer: (answer: CloseAnswer | null) => void;
+}
+/** 正在等渲染层的那次关闭询问；null = 没人在等 */
+let pendingCloseAsk: CloseAsk | null = null;
+/**
+ * **握手**时限（毫秒）：只限制"渲染层有没有把卡片显示出来"，不限制用户思考多久。
+ * 确认之后计时器就撤了；确认不来才退回原生弹窗 —— 渲染层卡住时不能让窗口关不掉。
+ */
+const CLOSE_ACK_TIMEOUT_MS = 2000;
 let settings!: Settings;
 let ptySessions!: PtySessions;
 let dshManager!: DshManager;
@@ -368,6 +394,9 @@ function createWindow(): void {
     mainWindow = null;
   });
 
+  // 关闭窗口的行为（问一次 / 收起托盘 / 直接退出）：见 wireCloseBehavior
+  wireCloseBehavior(win);
+
   // 把渲染层的 console 转发到主进程 stdout，方便无 GUI 场景排查（CSP 拦截、脚本报错等）
   win.webContents.on('console-message', (...args: unknown[]) => {
     const info = readConsoleMessage(args);
@@ -460,8 +489,8 @@ function wireDevTools(contents: WebContents): void {
  *
  * 为什么需要：键盘焦点在 <webview> 里时，键盘事件只到 guest，渲染层那个
  * window 级 keydown 处理器收不到 —— 于是人在 Harness 页里时，
- * Ctrl+1~8 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构全部失灵
- * （macOS 上对应 Cmd+1~8 / Cmd+R / Cmd+Shift+D）。
+ * Ctrl+1~8 切页、Esc 退全屏、Ctrl+R 重载、Ctrl+Shift+D 导出结构、Ctrl+Shift+U 演示更新相位
+ * 全部失灵（macOS 上对应 Cmd+1~8 / Cmd+R / Cmd+Shift+D / Cmd+Shift+U）。
  *
  * 做法是把同一个按键事件重新注入宿主 webContents，让渲染层原有的处理器照常处理
  * （不在这里复制一份快捷键逻辑，免得两处慢慢走样）。
@@ -479,7 +508,7 @@ function wireGuestShortcuts(guest: WebContents): void {
     const isAppKey =
       (plain && /^[1-8]$/.test(key)) ||
       (plain && lower === 'r') ||
-      (primary && input.shift && !input.alt && lower === 'd');
+      (primary && input.shift && !input.alt && (lower === 'd' || lower === 'u'));
     const isEscape = key === 'Escape';
     if (!isAppKey && !isEscape) return;
 
@@ -500,11 +529,13 @@ function wireGuestShortcuts(guest: WebContents): void {
 }
 
 /**
- * 窗口图标。
+ * 窗口 / 托盘图标。
  *
- * 打包后不用管：electron-builder 会把 `build/icon.png` 转成多尺寸 .ico / .icns
- * 并嵌进 exe / app bundle，系统直接取自可执行文件（所以 `build/` 不需要打进 asar）。
- * 这里只是为了**开发时**也有正确的图标 —— 从仓库里那张源图读。
+ * 打包后 exe 自己的图标不用管：electron-builder 会把 `build/icon.png` 转成多尺寸
+ * .ico / .icns 并嵌进 exe / app bundle，系统直接取自可执行文件。
+ * 但**托盘图标必须能在运行期读到这张源图**（Windows 上托盘没有"取自 exe"这条路径），
+ * 所以 `build/icon.png` 现在也打进 asar（见 package.json 的 build.files）——
+ * 那 31 KB 换的是"打包后托盘图标不是空白"。
  */
 function makeIcon(): NativeImage | undefined {
   try {
@@ -554,6 +585,228 @@ function installApplicationMenu(): void {
       { role: 'windowMenu' },
     ]),
   );
+}
+
+// ---------------------------------------------------------------- 关闭窗口的行为
+
+/**
+ * 点关闭（X）时做什么：问一次、收起到系统托盘，还是直接退出。
+ *
+ * 为什么要有这一块：这个应用的价值是"在后台看着 dsh"。以前 Windows/Linux 上关窗
+ * 就是退出，而默认还会**连带停掉本应用启动的 dsh** —— 点一下 X，正在用的 dsh 就没了，
+ * 且没有任何提示。现在默认**问一次**（其它桌面应用的惯例），勾了「记住我的选择」就把
+ * 结果落到设置项 `closeAction` 上。macOS 不参与：那边关窗不退出、Dock 常驻是系统惯例。
+ *
+ * 时序上有一条必须守住：真正退出时 `before-quit` 会先把 `isQuitting` 置位，这里才放行。
+ * 否则「收起到托盘」会把托盘菜单的退出、更新器的 quitAndInstall()、乃至系统关机
+ * 一起拦下来 —— 界面再也退不掉了。
+ */
+
+/** 把窗口叫回来：最小化的还原、藏起来的显示、已经关掉的就新建 */
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/**
+ * 托盘图标（Windows/Linux）。macOS 用 Dock，不建。
+ * 源图是 512 的，这里缩到 32：100% DPI 的托盘是 16px、150~200% 是 24~32px ——
+ * 给 32 让系统往下缩，比钉死 16 在高分屏上被拉大好得多（放大一定比缩小糊）。
+ */
+function ensureTray(): boolean {
+  if (tray) return true;
+  if (isMac) return false;
+  const icon = makeIcon();
+  if (!icon) {
+    dshManager.log('warn', '找不到 build/icon.png，建不了托盘：「收起到托盘」退化为最小化');
+    return false;
+  }
+  try {
+    tray = new Tray(icon.resize({ width: 32, height: 32, quality: 'best' }));
+    tray.setToolTip('DSH Console');
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: '显示主界面', click: () => showMainWindow() },
+        { type: 'separator' },
+        { label: '退出 DSH Console', click: () => app.quit() },
+      ]),
+    );
+    // 单击托盘图标叫回窗口。托盘菜单里另有一个「退出」，所以这里不承担退出语义
+    tray.on('click', () => showMainWindow());
+    return true;
+  } catch (error) {
+    tray = null;
+    dshManager.log('warn', `托盘图标建立失败：${messageOf(error)}`);
+    return false;
+  }
+}
+
+/**
+ * 收起：窗口藏起来，应用（以及本应用启动的 dsh）继续在后台跑。
+ * 托盘建不起来时退化成最小化 —— 那种情况下藏起来就再也叫不回来了。
+ */
+function hideToTray(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!ensureTray()) {
+    mainWindow.minimize();
+    dshManager.log('warn', '没有托盘图标：改为最小化窗口（应用继续运行）');
+    return;
+  }
+  mainWindow.hide();
+  /**
+   * Windows 的气泡提示（这个平台才有）。
+   * **一台机器上只弹一次**，所以标记写进设置而不是只记在内存里 —— 只记内存的话每次开应用
+   * 收起时都要被提示一遍。弹失败了不记：下次收起再试，别白白吃掉这个提示。
+   */
+  if (tray && process.platform === 'win32' && !settings.get('trayHintShown')) {
+    try {
+      tray.displayBalloon({
+        title: 'DSH Console 仍在运行',
+        content: '窗口已收到托盘，dsh 继续跑着。点托盘图标可以叫回窗口。',
+      });
+      settings.patch({ trayHintShown: true });
+    } catch {
+      // 气泡只是提示，弹不出来不影响收起
+    }
+  }
+  dshManager.log('info', '窗口已收起到托盘：应用与 dsh 继续在后台运行');
+}
+
+/** 「记住我的选择」：写进设置，并推给渲染层（设置页那份表单不能留着旧值，否则下次保存又写回去） */
+function rememberCloseAction(action: CloseAction): void {
+  try {
+    const next = settings.patch({ closeAction: action });
+    sendToRenderer('settings:changed', next);
+    dshManager.log('info', `关闭窗口的行为已记住：${action}`);
+  } catch (error) {
+    dshManager.log('warn', `记住关闭行为失败：${messageOf(error)}`);
+  }
+}
+
+/**
+ * 等渲染层回答"这次关闭怎么办"。
+ *
+ * **只给握手设时限，不给用户思考设时限**：发完请求后等一个"卡片已经显示了"的确认，
+ * 确认一到就撤掉计时器，然后一直等用户选。少了这个区分会踩同一个坑两次 ——
+ * 卡片明明已经显示出来了、用户还在看，两三秒后系统弹窗自己冒出来（第一版就是这样）。
+ * 反过来，确认迟迟不来（渲染层没连上、卡住、已经没了）就返回 null，走原生兜底弹窗，
+ * 免得 X 变成一个关不掉的窗口。
+ */
+function askRendererForCloseAction(): Promise<CloseAnswer | null> {
+  const win = mainWindow;
+  if (!win || win.isDestroyed() || !rendererConnected) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (answer: CloseAnswer | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(handshake);
+      pendingCloseAsk = null;
+      resolve(answer);
+    };
+    const handshake = setTimeout(() => {
+      sendToRenderer('app:close-request', null);
+      dshManager.log('warn', '关闭询问：渲染层没有确认显示卡片，改用原生弹窗');
+      finish(null);
+    }, CLOSE_ACK_TIMEOUT_MS);
+    pendingCloseAsk = {
+      ack: () => clearTimeout(handshake),
+      answer: finish,
+    };
+    const request: CloseRequest = {
+      killOnExit: settings.get('killOnExit'),
+      owned: dshManager.ownProcess,
+      pid: dshManager.ownedPid,
+      phase: dshManager.snapshot().phase,
+    };
+    sendToRenderer('app:close-request', request);
+  });
+}
+
+/**
+ * 询问一次：优先用渲染层自己的确认卡片（跟应用一个样子，还能把"哪个 dsh 会受影响"写清楚），
+ * 问不到才退回原生弹窗。
+ */
+async function askCloseAction(): Promise<void> {
+  if (closeDialogOpen) return;
+  closeDialogOpen = true;
+  try {
+    const answer = await askRendererForCloseAction();
+    if (!answer) {
+      await askCloseActionNative();
+      return;
+    }
+    if (answer.action === 'cancel') return;
+    if (answer.remember) rememberCloseAction(answer.action);
+    if (answer.action === 'tray') hideToTray();
+    else app.quit();
+  } finally {
+    closeDialogOpen = false;
+  }
+}
+
+/** 原生兜底：收起到托盘 / 退出应用 / 取消（可勾「记住我的选择」） */
+async function askCloseActionNative(): Promise<void> {
+  const killOnExit = settings.get('killOnExit');
+  const options: MessageBoxOptions = {
+    type: 'question',
+    buttons: ['收起到托盘', '退出应用', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    title: '关闭 DSH Console',
+    message: '要收起 DSH Console，还是直接退出？',
+    detail:
+      '收起到托盘：应用继续在后台运行，本应用启动的 dsh 不会被停掉，可以从托盘图标再叫回来。\n' +
+      `退出应用：结束 DSH Console${killOnExit ? '，并按当前设置停止本应用启动的 dsh' : '（当前设置不停止 dsh）'}。`,
+    checkboxLabel: '记住我的选择，以后不再询问',
+    checkboxChecked: false,
+  };
+  // 窗口可能已经在关了：退化成不带父窗口的对话框（与 app:confirm 同样的兜法）
+  const result =
+    mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+  if (result.response === 0) {
+    if (result.checkboxChecked) rememberCloseAction('tray');
+    hideToTray();
+  } else if (result.response === 1) {
+    if (result.checkboxChecked) rememberCloseAction('quit');
+    app.quit();
+  }
+  // response === 2（取消）：什么都不做，窗口留在原地
+}
+
+/**
+ * 关窗拦截。
+ * `quit` 直接放行（窗口关掉 → window-all-closed → app.quit()）；
+ * 另外两种都先把这次关闭拦下来，再决定是藏起来还是问。
+ */
+function wireCloseBehavior(win: BrowserWindow): void {
+  win.on('close', (event) => {
+    if (isQuitting || isMac) return;
+    const action = settings.get('closeAction');
+    if (action === 'quit') return;
+    event.preventDefault();
+    if (action === 'tray') {
+      hideToTray();
+      return;
+    }
+    void askCloseAction();
+  });
+
+  /**
+   * 渲染层崩了的时候，已经确认过的那次询问不能一直等下去 —— 用户已经没有界面可点，
+   * 窗口就再也关不掉了。当作"问不到"，退回原生弹窗。
+   */
+  win.webContents.on('render-process-gone', () => {
+    pendingCloseAsk?.answer(null);
+  });
 }
 
 function registerIpc(): void {
@@ -779,6 +1032,33 @@ function registerIpc(): void {
   ipcMain.handle('app:update-download', (): Promise<UpdateState> => updater.download());
 
   ipcMain.handle('app:update-install', (): boolean => updater.install());
+
+  // ---------------------------------------------------------------- 关闭确认
+  // 询问卡片在渲染层（shell/CloseDialog.vue）：主进程把"哪个 dsh 会受影响"这几项事实给它，
+  // 它先回一条"卡片显示了"（撤掉握手时限），再把用户的选择答回来。
+  // 没有进行中的询问时（例如已经被兜底或已回答过）两个 handler 都返回 false。
+
+  ipcMain.handle('app:close-ack', (): boolean => {
+    if (!pendingCloseAsk) return false;
+    pendingCloseAsk.ack();
+    return true;
+  });
+
+  ipcMain.handle(
+    'app:close-answer',
+    (_event: IpcMainInvokeEvent, answer?: CloseAnswer): boolean => {
+      const ask = pendingCloseAsk;
+      if (!ask) return false;
+      // 渲染层传来的形状不可信：只认这三个动作，认不出来的当"取消"
+      const action: CloseAnswerAction =
+        answer &&
+        (answer.action === 'tray' || answer.action === 'quit' || answer.action === 'cancel')
+          ? answer.action
+          : 'cancel';
+      ask.answer({ action, remember: Boolean(answer?.remember) });
+      return true;
+    },
+  );
 
   // ---------------------------------------------------------------- 归档会话
   // 这些操作直接读写 DSH 磁盘数据；正在运行的 dsh 会把 workspace.json 读进内存，
@@ -1041,6 +1321,9 @@ async function bootstrap(): Promise<void> {
   dropLegacySessionFile();
 
   createWindow();
+  // 托盘随应用一起出现（Windows / Linux）：它不只是"收起的落点"，也是**叫回窗口与退出的入口** ——
+  // 等第一次收起才建的话，用户在那之前根本不知道有这个东西。macOS 上不建（Dock 承担这个角色）。
+  ensureTray();
   registerIpc();
   wireEmbeddedRequestDiagnostics();
   watchRendererForDevReload();
@@ -1087,10 +1370,8 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    // 第二次启动只是"把已经开着的那个叫到前面"：藏在托盘里的要先 show 回来
+    showMainWindow();
   });
 
   installApplicationMenu();
@@ -1107,11 +1388,17 @@ if (!gotLock) {
   app.on('window-all-closed', () => {
     // macOS 惯例：关掉窗口后应用留在 Dock 里，点图标由 activate 重建窗口；
     // 其它平台保持"窗口全关即退出"。
+    // 注意「收起到托盘」走不到这里：那条路是把窗口 hide 起来，不是 close。
     if (!isMac) app.quit();
   });
 
   // 退出前收尾：按设置决定是否连带停掉 dsh
   app.on('before-quit', () => {
+    // 先置位：close 处理器据此放行。托盘菜单的退出、更新器的 quitAndInstall()、
+    // 系统关机都从 app.quit() 走，全都要能真的退掉
+    isQuitting = true;
+    tray?.destroy();
+    tray = null;
     if (!settings || !dshManager) return;
     const killOnExit = settings.get('killOnExit');
     if (killOnExit && dshManager.ownProcess) {

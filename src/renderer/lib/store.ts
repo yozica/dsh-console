@@ -127,6 +127,13 @@ export function startStore(): Promise<void> {
       api.onUpdateState((next) => {
         update.value = next;
       });
+      /**
+       * 主进程自己改了设置时（目前只有关闭询问框的「记住我的选择」）要跟着更新：
+       * 设置页的表单是拿快照填的，留着旧值的话用户下次一按保存就把旧值写回去了。
+       */
+      api.onSettings((next) => {
+        if (snapshot.value) snapshot.value.settings = next;
+      });
     })();
   }
   return pending;

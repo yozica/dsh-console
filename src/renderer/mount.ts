@@ -20,6 +20,7 @@ import ShellPane from './panes/ShellPane.vue';
 import TerminalPane from './panes/TerminalPane.vue';
 import UiPane from './panes/UiPane.vue';
 import UsagePane from './panes/UsagePane.vue';
+import CloseDialog from './shell/CloseDialog.vue';
 import RailNav from './shell/RailNav.vue';
 import StatusBar from './shell/StatusBar.vue';
 import TopBar from './shell/TopBar.vue';
@@ -30,6 +31,8 @@ const MOUNTS: readonly MountEntry[] = [
   ['rail-root', RailNav],
   ['topbar-root', TopBar],
   ['statusbar-root', StatusBar],
+  // 关闭确认卡片：它自己 Teleport 到 body，这个挂载点只是个锚
+  ['close-dialog-root', CloseDialog],
   ['dashboard-root', DashboardPane],
   ['terminal-root', TerminalPane],
   ['shell-root', ShellPane],

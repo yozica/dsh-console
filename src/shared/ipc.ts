@@ -13,6 +13,42 @@
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type ResolvedTheme = 'light' | 'dark';
 
+/**
+ * 点窗口关闭（X）时的行为（macOS 不适用：那边关窗就是关窗，Dock 常驻）。
+ *
+ * - `ask`：问一次「收起到托盘 / 退出应用」，对话框里带「记住我的选择」—— 默认值；
+ * - `tray`：直接收起到系统托盘，应用与本应用启动的 dsh 继续在后台运行；
+ * - `quit`：直接退出应用，按 `killOnExit` 决定要不要一并停掉 dsh。
+ */
+export type CloseAction = 'ask' | 'tray' | 'quit';
+
+/** 用户在关闭确认卡片上选了什么（`cancel` = 什么都不做，窗口留着） */
+export type CloseAnswerAction = 'tray' | 'quit' | 'cancel';
+
+/**
+ * 关闭确认卡片要展示的**事实**（主进程给）。
+ *
+ * 界面只负责把这几项写成人话，不自己判断"哪个 dsh 会被停掉" —— 那要看进程归属，
+ * 只有主进程知道（`owned` 一看 pty 会话是否存在，见 7.5）。
+ */
+export interface CloseRequest {
+  /** 退出时会不会一并停掉本应用启动的 dsh（设置 `killOnExit`） */
+  killOnExit: boolean;
+  /** dsh 是不是本应用启动的：只有它会被 `killOnExit` 停掉 */
+  owned: boolean;
+  /** dsh 的 PID；可能还没就绪（PTY 异步） */
+  pid: number | null;
+  /** dsh 当前相位：界面据此写"没在运行"那句话 */
+  phase: DshPhase;
+}
+
+/** 渲染层对关闭询问的回答 */
+export interface CloseAnswer {
+  action: CloseAnswerAction;
+  /** 勾了「记住我的选择」：主进程把它写回 `closeAction`，以后不再问 */
+  remember: boolean;
+}
+
 // ---------------------------------------------------------------- 自动更新
 
 /**
@@ -154,6 +190,13 @@ export interface SettingsValues {
   openUiOnStart: boolean;
   uiFullscreenOnStart: boolean;
   killOnExit: boolean;
+  /** 点窗口关闭（X）时的行为；对话框里勾了「记住我的选择」也会写回这里（见 CloseAction） */
+  closeAction: CloseAction;
+  /**
+   * 内部标记（**不是给用户调的**，设置页里没有控件）：这台机器上是否已经弹过
+   * 「已收起到托盘」的气泡。持久化是必须的 —— 只记在内存里的话每次开应用都会再提示一遍。
+   */
+  trayHintShown: boolean;
   /**
    * 插件装/卸/升级用的 npm registry；留空则跟随系统 npm 配置。
    * 只注入给 `dsh plugin` 那一次子进程（`npm_config_registry`），**不写用户的 .npmrc**。
@@ -585,6 +628,12 @@ export interface DshConsoleApi {
   setTheme: (mode: ThemeMode) => Promise<ThemeInfo>;
   onTheme: (handler: (info: ThemeInfo) => void) => () => void;
   onFullscreen: (handler: (on: boolean) => void) => () => void;
+  /**
+   * 主进程改了设置时推给渲染层。
+   * 目前只有一处：关闭窗口的对话框里勾了「记住我的选择」——主进程直接写盘，
+   * 界面那份表单不跟着更新的话，用户下次一按保存就把旧值写回去了。
+   */
+  onSettings: (handler: (settings: SettingsValues) => void) => () => void;
 
   start: () => Promise<DshActionResult>;
   stop: (options?: { force?: boolean; killExternal?: boolean }) => Promise<DshActionResult>;
@@ -603,6 +652,23 @@ export interface DshConsoleApi {
   openExternal: (url?: string) => Promise<string>;
   revealUserData: () => Promise<string>;
   confirm: (payload: ConfirmRequest) => Promise<boolean>;
+
+  /**
+   * 主进程问「关窗要怎么办」时进来（渲染层弹自己的确认卡片，见 shell/CloseDialog.vue）。
+   * 传 `null` 表示**这次不问了** —— 渲染层没能确认接住，主进程已经退回原生的兜底弹窗，
+   * 界面要把卡片收起来，别让两个弹窗同时挂着。
+   */
+  onCloseRequest: (handler: (request: CloseRequest | null) => void) => () => void;
+  /**
+   * 「卡片已经显示了」——收到请求后**立刻**回这一条。
+   *
+   * 主进程只给这个握手设时限：确认之后就不再计时，**等用户慢慢选**。
+   * 少了它，主进程只能按"多久没回答"来猜，那样连"用户正在想"也会被算成"渲染层卡住"
+   * （踩过：卡片明明已经显示出来，两三秒后就自己冒出系统弹窗）。
+   */
+  ackClose: () => Promise<boolean>;
+  /** 把用户的选择回给主进程；当时没有待回答的询问时返回 false（例如已经兜底过了） */
+  answerClose: (answer: CloseAnswer) => Promise<boolean>;
 
   // 自动更新：状态由主进程持有，渲染层只下命令 + 订阅（见 main/updater.ts）
   checkForUpdates: () => Promise<UpdateState>;

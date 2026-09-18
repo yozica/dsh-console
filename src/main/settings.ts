@@ -43,6 +43,14 @@ export const DEFAULTS: SettingsValues = {
   uiFullscreenOnStart: true,
   /** 关闭应用时是否一并停止本应用启动的 dsh */
   killOnExit: true,
+  /** 点窗口关闭（X）时的行为：ask（问一次，可记住）/ tray（收起到托盘）/ quit（直接退出） */
+  closeAction: 'ask',
+  /**
+   * 内部标记：**这台机器上**是否已经弹过「已收起到托盘」的气泡（只弹一次，别变成骚扰）。
+   * 不是给用户调的东西，设置页里没有对应的控件 —— 但必须持久化：只记在内存里的话，
+   * 每次开应用收起时都会被再提示一遍。
+   */
+  trayHintShown: false,
   /** 插件装/卸/升级用的 npm registry；留空跟随系统 npm 配置（只注入给那一次子进程） */
   pluginRegistry: '',
   /** 自动检查更新：启动后检查一次，之后每 6 小时一次（只提示，下载与安装都要用户点） */

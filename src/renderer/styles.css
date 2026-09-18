@@ -102,6 +102,8 @@
   /* 浮层与那一处阴影 */
   --overlay-bg: rgba(8, 10, 14, 0.94);
   --overlay-fg: #fbc4cd;
+  /* 聚焦蒙层（底栏更新提示 → 设置页「关于」卡片）：遮住整窗、只在目标卡片处开洞 */
+  --scrim: rgba(4, 6, 10, 0.62);
   --shadow-focus: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -24px rgba(0, 0, 0, 0.8);
 }
 
@@ -149,6 +151,8 @@
 
   --overlay-bg: rgba(249, 250, 252, 0.96);
   --overlay-fg: #be123c;
+  /* 亮色下蒙层要更淡：白底上压太重会像"界面坏了"，够把注意力收拢到卡片上就行 */
+  --scrim: rgba(16, 24, 40, 0.34);
   --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
 }
 
@@ -165,6 +169,7 @@
 #rail-root,
 #topbar-root,
 #statusbar-root,
+#close-dialog-root,
 #dashboard-root,
 #terminal-root,
 #shell-root,
@@ -538,7 +543,8 @@ main {
   color: var(--ink-faint);
 }
 
-/* 底栏的更新提示：有新版本或已下载时才出现，点它切到设置页 */
+/* 底栏的更新提示：有新版本或已下载时才出现。
+   点它会切到设置页，并把「关于」里的更新卡片滚进视野、高亮一次（见 update-anchor.ts） */
 .update-hint {
   padding: 0;
   border: 0;
@@ -1503,6 +1509,8 @@ body[data-immersive='true'] .webview-wrap {
   gap: 10px;
 }
 
+/* 底栏点「发现新版本」进来时，这一张卡片会被聚焦蒙层单独亮出来：见后面的「聚焦蒙层」一节 */
+
 .update-title {
   color: var(--ink-dim);
   font-size: var(--t-sm);
@@ -1542,6 +1550,141 @@ body[data-immersive='true'] .webview-wrap {
 
 .panel-block > .hint {
   margin-top: 12px;
+}
+
+/* ============================================================ 聚焦蒙层
+
+   底栏点「发现新版本」进来的最后一步：铺一层盖满窗口的蒙层，在「关于」卡片处开一个洞，
+   把这一张卡片单独亮出来（见 SettingsPane 的 spotlightUpdateCard）。
+
+   两个元素分工：「洞」画那一圈铺满全屏的阴影（box-shadow 的 9999px 展开），「环」负责
+   强调色描边与呼吸。分开是因为环要动阴影扩散，而洞那层带着 9999px 的巨大阴影，
+   拿它做动画既贵又难看。
+   位置与尺寸由 JS 按 getBoundingClientRect 写在内联样式上 —— 蒙层是 fixed，
+   与 rect 正好同一个坐标系。 */
+
+.spotlight {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  /* 不吃鼠标事件：它只是把"看这里"说清楚，用户想直接点卡片上的按钮不该被挡住
+     （那一下点击同时也会把蒙层收掉，见 SettingsPane 的 dismissSpotlight） */
+  pointer-events: none;
+  animation: spotlight-in 220ms ease-out 1;
+  transition: opacity 240ms ease;
+}
+
+/* 淡出：加上这个类，等 transition 走完再由 JS 摘掉节点 */
+.spotlight.is-closing {
+  opacity: 0;
+}
+
+@keyframes spotlight-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.spotlight-hole {
+  position: absolute;
+  border-radius: var(--r-card);
+  box-shadow: 0 0 0 9999px var(--scrim);
+}
+
+.spotlight-ring {
+  position: absolute;
+  border-radius: var(--r-card);
+  animation: spotlight-ring 1.3s ease-in-out 2;
+}
+
+@keyframes spotlight-ring {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 0 0 6px var(--accent-soft);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 0 0 13px var(--accent-soft);
+  }
+}
+
+/* ============================================================ 关闭确认卡片
+
+   关窗时问"收起还是退出"。**有意不用原生 `dialog.showMessageBox`** —— 系统弹窗的长相
+   改不了（字体、配色、间距、动画），是全应用唯一一个不像这个应用的面孔；自己画还顺带
+   能把"哪个 dsh 会被停掉、PID 是多少"写进去（见 shell/CloseDialog.vue）。
+   与上面的聚焦蒙层相反：**这层是模态的**，要挡住点击 —— 不选就不该操作后面的界面。 */
+
+.close-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 96;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--scrim);
+  animation: close-dialog-in 160ms ease-out 1;
+}
+
+@keyframes close-dialog-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.close-card {
+  width: min(440px, 100%);
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  /* 全局唯一那处阴影（--shadow-focus）就是给这种浮起来的卡片用的 */
+  box-shadow: var(--shadow-focus);
+}
+
+.close-title {
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+.close-lead {
+  margin-top: 6px;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+/* "会发生什么"：左强调条 + 下沉井底色，与别处的提示块同一个写法 */
+.close-impact {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-control);
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+}
+
+.close-card .check {
+  margin-top: 14px;
+}
+
+/* 按钮靠右：与系统弹窗的习惯一致，主操作（收起）在最左 */
+.close-card .btn-row {
+  margin-top: 18px;
+  justify-content: flex-end;
 }
 
 /* ============================================================ 启动错误浮层 */
