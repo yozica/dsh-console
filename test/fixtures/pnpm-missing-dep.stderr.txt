@@ -1,0 +1,9 @@
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Progress: resolved 4, reused 4, downloaded 0, added 0
+ ERR_PNPM_FETCH_404  GET https://registry.example.com/@deepseek-ai%2Fdsh-type-meta: Not Found - 404
+
+This error happened while installing a direct dependency of /Users/<user>/.dsh/profiles/web
+
+@deepseek-ai/dsh-type-meta is not in the npm registry, or you have no permission to fetch it.
+
+An authorization header was used: Bearer xxxx[hidden]

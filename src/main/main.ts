@@ -47,6 +47,10 @@ import type {
   DshOutputEvent,
   EnvInfo,
   PluginInspectResult,
+  PluginLayerEditAction,
+  PluginLayerEditResult,
+  PluginOpAction,
+  PluginOpResult,
   RenameSessionResult,
   ResolvedTheme,
   SessionExitEvent,
@@ -839,6 +843,60 @@ function registerIpc(): void {
       return { ok: false, error: messageOf(error) };
     }
   });
+
+  // 装 / 卸 / 升级：走 `dsh plugin --profile web …`，输出边跑边推给渲染层。
+  // 这三个都改 package.json 与 node_modules，所以做完要重启 dsh 才生效（界面负责提示）。
+  ipcMain.handle(
+    'plugin:run',
+    async (_event: IpcMainInvokeEvent, request: unknown): Promise<PluginOpResult> => {
+      try {
+        const { action, spec } = (request ?? {}) as { action?: PluginOpAction; spec?: string };
+        if (action !== 'add' && action !== 'remove' && action !== 'update') {
+          return { ok: false, error: '不认识的操作' };
+        }
+        return await pluginManager.runOperation(action, String(spec ?? ''), (chunk) =>
+          sendToRenderer('plugin:output', { chunk }),
+        );
+      } catch (error) {
+        return { ok: false, error: messageOf(error) };
+      }
+    },
+  );
+
+  ipcMain.handle('plugin:cancel', (): boolean => pluginManager.cancelOperation());
+
+  // 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）：只动 profile 的 cordis.patch.yml，
+  // 写之前备份。这一层是 patchReload: live —— 改完即时生效，不用重启 dsh。
+  ipcMain.handle(
+    'plugin:edit-layer',
+    async (_event: IpcMainInvokeEvent, request: unknown): Promise<PluginLayerEditResult> => {
+      try {
+        const { action, id, name } = (request ?? {}) as {
+          action?: PluginLayerEditAction;
+          id?: string;
+          name?: string;
+        };
+        if (
+          action !== 'disable' &&
+          action !== 'enable' &&
+          action !== 'insert' &&
+          action !== 'remove-insert'
+        ) {
+          return { ok: false, error: '不认识的操作' };
+        }
+        const result = await pluginManager.editLayer({ action, id: String(id ?? ''), name });
+        dshManager.log(
+          'info',
+          result.changed
+            ? `补丁层已更新：${result.detail ?? action}（${result.file ?? ''}）`
+            : `补丁层未改动：${result.detail ?? action}`,
+        );
+        return result;
+      } catch (error) {
+        return { ok: false, error: messageOf(error) };
+      }
+    },
+  );
 }
 
 function wireManagerEvents(): void {

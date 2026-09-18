@@ -24,16 +24,25 @@
  *     与正在运行的 dsh 不冲突；失败时按"profile 不可写"报出来。
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { dshArgsFor, resolveDshLauncher } from './process-utils';
+import { applyPatchEdit, type PatchEditRequest, type PatchEditResult } from './patch-layer';
+import {
+  dshArgsFor,
+  findPnpm,
+  homeDir,
+  pathWithKnownBins,
+  resolveDshLauncher,
+} from './process-utils';
 import { resolveDshHome } from './session-archive';
 import type { Settings, SettingsValues } from './settings';
 import type {
   PluginEntry,
   PluginFiberPhase,
+  PluginOpAction,
+  PluginOpResult,
   PluginInspectResult,
   PluginLayer,
   PluginLiveEntry,
@@ -56,6 +65,10 @@ const DUMP_TIMEOUT_MS = 20_000;
 const LIVE_TIMEOUT_MS = 5_000;
 /** dsh 客户端的 Remote 端点：`<service>/<method>` 就是 /api 后面的路径 */
 const LIVE_ENDPOINT = 'pluginInventory/list';
+/** 装/卸/升级最慢的是 pnpm 拉包；给它一个上限，避免界面永远停在"进行中" */
+const OP_TIMEOUT_MS = 10 * 60 * 1000;
+/** 归纳失败原因时只看尾部这些字节（pnpm 的报错通常在最后） */
+const OP_TAIL_CHARS = 8000;
 /** 本机 web profile 的 dump 约 17 KB；留足余量，异常大时按失败处理 */
 const DUMP_MAX_BUFFER = 8 * 1024 * 1024;
 
@@ -467,6 +480,333 @@ export function missingLayers(
     }));
 }
 
+// ---------------------------------------------------------------- 装 / 卸 / 升级
+//
+// 全部走 `dsh plugin --profile web <pnpm 参数>`：它会在 profile 目录里转发给 pnpm，
+// 然后按"装出来的包有没有声明 dsh.bundle"重算 `dsh.profile.bundles`。我们不自己改
+// package.json、也不自己拼 pnpm 命令 —— 那两个都是 dsh 的职责。
+//
+// 三条必须守住的：
+//   1. spec 是**一个 argv 原样透传**，不经过 shell（不引号、不拼接）—— 拼错一次就是注入；
+//   2. 子进程 PATH 要补上 pnpm（见 pathWithKnownBins），否则 GUI 启动必然 127；
+//   3. 装/卸/升级改的是 package.json 与 node_modules，**必须重启 dsh 才生效**。
+
+/** 用户输入的是哪类来源（只用于确认文案与提示，命令照原样透传） */
+export interface PluginSpec {
+  kind: 'npm' | 'local' | 'tarball' | 'git';
+  /** 给人看的"代码从哪来" */
+  source: string;
+  /** git 源是否已经固定了 commit sha（没固定就该提醒） */
+  pinned: boolean;
+}
+
+/**
+ * 这份 patch 层文本里有没有"插入某个包"？只看 `name:` 的值位置（不比注释、不比别的字面量）。
+ *
+ * 用途：用户在插件页填一个内置包的名字时，得说清他到底想干什么 —— 内置包的分发不经过
+ * registry，"装"这个动作对他通常是"启用"（往 patch 层 insert 一行）。而那些早就自己
+ * 插过一行的用户（真机上就有）看到"请去 insert 一行"只会更困惑：他以为自己已经装过了。
+ */
+export function patchLayerInserts(text: string, packageName: string): boolean {
+  const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^\\s*name:\\s*['"]?${escaped}['"]?\\s*$`, 'm').test(text);
+}
+
+/** profile 目录：`$DSH_HOME/profiles/web`（inspect 与 run 都要用） */
+function pluginProfileDir(): string {
+  return path.join(resolveDshHome(), 'profiles', PLUGIN_PROFILE);
+}
+
+/** 用户的 patch 层里是否已经插入了这个包（读不到文件就算没有） */
+function profilePatchEnables(packageName: string): boolean {
+  try {
+    return patchLayerInserts(
+      fs.readFileSync(path.join(pluginProfileDir(), 'cordis.patch.yml'), 'utf8'),
+      packageName,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** 从 spec 里取出包名（去掉版本/标签）：`@scope/name@1.2.3` → `@scope/name` */ export function packageNameOf(
+  spec: string,
+): string {
+  const trimmed = spec.trim();
+  if (trimmed.startsWith('@')) {
+    const scoped = /^(@[^/]+\/[^@]+)/.exec(trimmed);
+    return scoped ? scoped[1] : trimmed;
+  }
+  const at = trimmed.indexOf('@');
+  return at === -1 ? trimmed : trimmed.slice(0, at);
+}
+
+/**
+ * 给一个内置包起一个条目 id：`@deepseek-ai/dsh-time-context` → `time-context`。
+ * 这是"插进你的层"时那条 insert 的 id（真机上用户自己那条就是这么写的）。
+ */
+export function suggestEntryId(packageName: string): string {
+  const base = packageName.split('/').pop() ?? packageName;
+  return base.replace(/^dsh-/, '');
+}
+
+/**
+ * 把设置里的"插件安装源"变成子进程环境变量；留空或写错都返回空对象（= 跟随系统 npm 配置）。
+ *
+ * 只认 http(s) 的 URL：pnpm 也接受 `registry.npmjs.org` 这种裸主机，但那更容易写错，
+ * 而写错的代价是"装不上"而不是"报错说配置错了" —— 宁可让它退回系统配置。
+ * 注意这是**注入给那一次 `dsh plugin` 子进程**（`npm_config_registry`），
+ * 不碰用户的 `~/.npmrc`，也不影响别的项目。
+ */
+export function pluginRegistryEnv(raw: string | undefined): Record<string, string> {
+  const value = String(raw ?? '').trim();
+  if (value.length === 0) return {};
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return {};
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return {};
+  // 去掉末尾斜杠：pnpm 会把 `//` 拼成 `//`，报错信息里看着像另一个主机
+  const normalized = value.replace(/\/+$/, '');
+  return { npm_config_registry: normalized };
+}
+
+/** 认一下 spec 的类型；空值返回 null（界面据此禁用按钮） */
+export function parsePluginSpec(raw: string): PluginSpec | null {
+  const spec = raw.trim();
+  if (spec.length === 0) return null;
+  if (/^github:|^git\+|^git@|\.git(?:#|$)|^https?:\/\/github\.com\//i.test(spec)) {
+    return {
+      kind: 'git',
+      source: 'git 仓库（源码，安装时可能执行它的构建脚本）',
+      pinned: /#[0-9a-f]{7,40}$/i.test(spec),
+    };
+  }
+  // 打包文件要排在"本地路径"前面判：`./x-0.1.0.tgz` 也以 ./ 开头
+  if (spec.endsWith('.tgz') || spec.endsWith('.tar.gz')) {
+    return { kind: 'tarball', source: '本地打包文件', pinned: true };
+  }
+  if (
+    spec.startsWith('./') ||
+    spec.startsWith('../') ||
+    spec.startsWith('/') ||
+    spec.startsWith('file:') ||
+    spec.startsWith('link:')
+  ) {
+    return { kind: 'local', source: '本地目录（pnpm 会 link，改源码即改插件）', pinned: true };
+  }
+  return { kind: 'npm', source: 'npm registry', pinned: false };
+}
+
+/**
+ * 把 dsh / pnpm 的原始输出归纳成一句人话；认不出来就返回 null，
+ * 让界面老老实实显示原文，而不是编一个原因。
+ *
+ * `requested` 是用户填的 spec（只对 npm 包有意义）：pnpm 404 时缺的常常**不是**用户
+ * 写的那个包，而是它某个依赖 —— 不点破这一层，用户会一直去怀疑自己的包名。
+ */
+export function summarizePluginFailure(output: string, requested?: string): string | null {
+  const text = output.slice(-OP_TAIL_CHARS);
+  if (/pnpm not found on PATH/i.test(text)) {
+    return '没找到 pnpm —— `dsh plugin` 通过它管理插件。装一个 pnpm，或在设置里确认 PATH。';
+  }
+  if (/ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED|Ignored build scripts|approve-builds/i.test(text)) {
+    return '它需要在安装时构建（等于执行它的代码），pnpm 默认拦住了。按上面打印的键写进 profile 的 pnpm-workspace.yaml（allowBuilds）再重试。';
+  }
+  if (/ADDING_TO_ROOT|workspace root/i.test(text)) {
+    return 'pnpm 把 profile 当成 workspace root 拒了（加 -w 重试也没成）。可以检查 profile 里的 pnpm-workspace.yaml。';
+  }
+  // 缺的是哪个包：pnpm 会把「没能取到的那个包」单独打一行。它和用户写的包常常不是
+  // 同一个 —— 这时按"包不存在"去解释会把人引向错的方向（实测：装
+  // @deepseek-ai/dsh-time-context，真正缺的是它依赖链上的 @deepseek-ai/dsh-type-meta，
+  // 而那个包在任何 registry 上都没有）。这条要在"淘宝镜像"之前判：换源救不了这种情况。
+  const missing = /^(@?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?) is not in the npm registry/m.exec(
+    text,
+  )?.[1];
+  const asked = requested ? packageNameOf(requested) : null;
+  if (missing && asked && missing !== asked) {
+    return `缺的不是你写的「${asked}」，而是它依赖的「${missing}」—— registry 上没有它。换源也未必有用。`;
+  }
+  // 淘宝旧镜像既会 404 又不该被说成"包不存在"
+  if (/registry\.npm\.taobao\.org/i.test(text)) {
+    return 'registry 链到了已停服的淘宝旧镜像（registry.npm.taobao.org）—— 换一个能用的源再试，例如 https://registry.npmmirror.com。';
+  }
+  if (/ERR_PNPM_FETCH_404|404 Not Found/i.test(text)) {
+    const host = /GET https?:\/\/([^/\s]+)/i.exec(text)?.[1];
+    return host
+      ? `${host} 上没有这个包（名字或版本可能不对）。`
+      : 'registry 上没有这个包（名字或版本可能不对）。';
+  }
+  if (/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network/i.test(text)) {
+    return '网络不通，没能连上 registry。';
+  }
+  if (/EPERM|EACCES/i.test(text)) {
+    return '权限不足（profile 目录或缓存不可写）。';
+  }
+  return null;
+}
+
+/** 一次插件的安装/卸载/升级 */
+class PluginRunner {
+  private child: ChildProcess | null = null;
+
+  constructor(private readonly settings: Settings) {}
+
+  /** 当前是否有操作在跑（界面上按钮据此禁用，也避免两个 pnpm 同时改同一个目录） */
+  get busy(): boolean {
+    return this.child !== null;
+  }
+
+  cancel(): boolean {
+    if (!this.child) return false;
+    this.child.kill();
+    return true;
+  }
+
+  /**
+   * 真跑一次 `dsh plugin --profile web <args>`，把输出边读边推给界面。
+   * 返回退出码与输出尾部（尾部用于归纳失败原因）。
+   */
+  private async spawnOnce(
+    file: string,
+    args: string[],
+    env: NodeJS.ProcessEnv,
+    onOutput: (chunk: string) => void,
+  ): Promise<{ code: number | null; tail: string; error?: string }> {
+    let tail = '';
+    const collect = (chunk: Buffer | string) => {
+      const text = String(chunk);
+      tail = (tail + text).slice(-OP_TAIL_CHARS);
+      onOutput(text);
+    };
+
+    return await new Promise((resolve) => {
+      const child = spawn(file, args, {
+        env,
+        // cwd 必须固定：相对路径（`./hello-plugin`）由 dsh 按**调用目录**解析，
+        // 而继承来的 cwd 是 Electron 的启动目录（从 Finder 起可能是 /）—— 那样
+        // 用户填的相对路径会莫名其妙地找不到。固定成主目录，界面上也这么写。
+        cwd: homeDir(),
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      this.child = child;
+
+      const timer = setTimeout(() => {
+        collect(`\n（超过 ${Math.round(OP_TIMEOUT_MS / 60000)} 分钟，已中断）\n`);
+        child.kill();
+      }, OP_TIMEOUT_MS);
+      timer.unref?.();
+
+      child.stdout?.on('data', collect);
+      child.stderr?.on('data', collect);
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        this.child = null;
+        collect(`\n${error.message}\n`);
+        resolve({ code: null, tail, error: error.message });
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        this.child = null;
+        resolve({ code, tail });
+      });
+    });
+  }
+
+  async run(
+    action: PluginOpAction,
+    spec: string,
+    onOutput: (chunk: string) => void,
+  ): Promise<PluginOpResult> {
+    if (this.busy) return { ok: false, error: '已经有一个插件操作在进行中' };
+    const parsed = parsePluginSpec(spec);
+    if (!parsed) return { ok: false, error: '请填写要安装的包名或路径' };
+
+    // 归纳失败原因时只对 npm 包带上"用户写的包名"（本地目录 / git 的 spec 不是包名）
+    const requested = parsed.kind === 'npm' ? spec : undefined;
+
+    const launcher = resolveDshLauncher(this.settings.all());
+
+    // 内置包（随 dsh 装好的）装了也白装：它不在"从 registry 取"的路径上，而且
+    // 用户真正想做的通常是**启用**它 —— 那是 patch 层 insert 的事。
+    if (action === 'add' && parsed.kind === 'npm') {
+      const name = packageNameOf(spec);
+      const dshRoot =
+        launcher.kind === 'node-bin' && launcher.prefixArgs.length > 0
+          ? path.dirname(path.dirname(launcher.prefixArgs[0]))
+          : null;
+      if (name && dshRoot && resolveModuleDir(name, [dshRoot]) !== null) {
+        const enabled = profilePatchEnables(name);
+        const id = suggestEntryId(name);
+        return {
+          ok: false,
+          error: enabled
+            ? `「${name}」是随 dsh 一起装好的内置插件，而且你自己的 patch 层里已经 insert 了它 —— 它已经启用了，这里不需要装任何东西（插件页左边「你的层」那一栏就是它）。内置包的分发不经过 registry，所以 registry 上也确实没有"装了就能用"这回事。`
+            : `「${name}」是随 dsh 一起装好的内置插件（已经在 dsh 安装目录里），不需要用 pnpm 再装一遍。要启用它，请在 profile 的 cordis.patch.yml 里 insert 一行 —— 插件页左边「你的层」那一栏就是它。`,
+          // 还没启用时，界面就地给一个「插进我的层」按钮（见 PluginPane 的输出区）
+          ...(enabled ? {} : { needsEnable: { id, name } }),
+        };
+      }
+    }
+
+    // 没装 pnpm 就别起子进程了：`dsh plugin` 内部是裸 spawnSync("pnpm")，只会以
+    // 退出码 127 失败（实测：`dsh: pnpm not found on PATH`），而且它**会先把 profile
+    // 初始化出来**才失败 —— 白改一遍磁盘。这里提前说清怎么办。
+    // `findPnpm()` 查的就是我们等下要塞给子进程的那份 PATH 加几个已知目录，
+    // 所以它说没有，子进程一定找不到。
+    if (findPnpm() === null) {
+      return {
+        ok: false,
+        error:
+          '这台机器上没找到 pnpm —— dsh 通过它管理 profile 里的插件依赖。装一个（`npm i -g pnpm`，或 `corepack enable pnpm`）再回来，插件页会自己认出来。',
+      };
+    }
+
+    // `dsh plugin --profile web <action> [-w] <spec>`：spec 永远是**一个** argv，不拼 shell。
+    // `-w` 只在 pnpm 自己要求时加（见下面重试）：profile 里那份 pnpm-workspace.yaml 是
+    // dsh 模板写的（`packages: [.]`，没有 ignore-workspace-root-check），pnpm 9 会把它
+    // 当 workspace root，于是 `add` 直接报 ERR_PNPM_ADDING_TO_ROOT。
+    const argsFor = (extra: string[]): string[] =>
+      dshArgsFor(launcher, [
+        'plugin',
+        '--profile',
+        PLUGIN_PROFILE,
+        action,
+        ...extra,
+        ...(action === 'update' && spec.trim() === '' ? [] : [spec]),
+      ]);
+    // 安装源：设置里填了才覆盖，且只覆盖这一个子进程（见 pluginRegistryEnv）
+    const registryOverride = pluginRegistryEnv(this.settings.all().pluginRegistry);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: pathWithKnownBins(process.env.PATH),
+      ...registryOverride,
+    };
+    const registry = registryOverride.npm_config_registry;
+    if (registry) onOutput(`（本次操作使用 registry：${registry}）\n`);
+
+    const first = await this.spawnOnce(launcher.file, argsFor([]), env, onOutput);
+    if (first.error) return { ok: false, code: null, error: first.error };
+    if (first.code === 0) return { ok: true, code: first.code };
+
+    if (/ADDING_TO_ROOT|workspace root/i.test(first.tail)) {
+      onOutput('\n（pnpm 说这是 workspace root，加 -w 重试）\n');
+      const retry = await this.spawnOnce(launcher.file, argsFor(['-w']), env, onOutput);
+      if (retry.error) return { ok: false, code: null, error: retry.error };
+      if (retry.code === 0) return { ok: true, code: retry.code };
+      return {
+        ok: false,
+        code: retry.code,
+        summary: summarizePluginFailure(retry.tail, requested),
+      };
+    }
+    return { ok: false, code: first.code, summary: summarizePluginFailure(first.tail, requested) };
+  }
+}
+
 // ---------------------------------------------------------------- 运行中的清单
 //
 // 静态组合（dump）拿不到"运行中"的事实：根 include 行、两个原生目录选择器、HMR
@@ -614,6 +954,7 @@ class LiveClient {
 
 export class PluginManager {
   private readonly live: LiveClient;
+  private readonly runner: PluginRunner;
 
   constructor(
     private readonly settings: Settings,
@@ -621,11 +962,76 @@ export class PluginManager {
     getTokenUrl: () => string | null = () => null,
   ) {
     this.live = new LiveClient(getTokenUrl);
+    this.runner = new PluginRunner(settings);
+  }
+
+  /** 装 / 卸 / 升级：输出边走边推给界面，返回最终结果 */
+  async runOperation(
+    action: PluginOpAction,
+    spec: string,
+    onOutput: (chunk: string) => void,
+  ): Promise<PluginOpResult> {
+    return await this.runner.run(action, spec, onOutput);
+  }
+
+  /**
+   * 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）。
+   *
+   * **只写 profile 的 `cordis.patch.yml`** —— 那是 profile 级的用户层，不影响 `$DSH_HOME`
+   * 级的 `cordis.patch.yml`，也不碰各 bundle。落盘前会备份、原子写；细节见 patch-layer.ts。
+   * 这一层是 `patchReload: live`，所以改完即时生效（界面照实写，不催重启）。
+   */
+  async editLayer(request: PatchEditRequest): Promise<PatchEditResult> {
+    const result = applyPatchEdit(this.profileDir(), request);
+    if (!result.ok || !result.changed || !result.file) return result;
+
+    // 回读验证：这是我们唯一会写的**用户文件**，"dsh 认不认"必须当场知道，不能等用户
+    // 下次打开插件页才发现（真机事故：移除最后一条 insert 之后文件只剩注释，dsh 判它不是
+    // 顶层数组，整个插件页读不出来）。只有失败指向这份 overlay 时才回滚 —— dsh 因为别的
+    // 原因跑不起来（解释器不对等）不该把一次正确的改动撤掉。
+    try {
+      await runDump(this.settings.all());
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // 必须"点名到这份文件"才算我们写坏了：别的 overlay（比如 $DSH_HOME 级那份）坏了，
+      // 不该把这次正确的改动撤掉。
+      const blamed = result.file !== undefined && message.includes(result.file);
+      if (!blamed || !/top-level YAML array|overlay/i.test(message)) return result;
+      const restored = this.rollbackEdit(result);
+      return {
+        ok: false,
+        file: result.file,
+        backup: result.backup,
+        error: `${message}${restored ? ' —— 已经把补丁层回滚到改动前的内容，没有写坏。' : ' —— 回滚也没成功，请从备份文件手工恢复。'}`,
+      };
+    }
+  }
+
+  /** 把上一次改动用备份还原（没有备份说明改动前这个文件不存在，那就删掉它） */
+  private rollbackEdit(result: PatchEditResult): boolean {
+    if (!result.file) return false;
+    try {
+      if (result.backup) fs.copyFileSync(result.backup, result.file);
+      else fs.rmSync(result.file, { force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  cancelOperation(): boolean {
+    return this.runner.cancel();
+  }
+
+  /** 操作在跑时界面要禁用另一处入口（同一个 profile 目录不能被两个 pnpm 同时改） */
+  get operationBusy(): boolean {
+    return this.runner.busy;
   }
 
   /** profile 目录（$DSH_HOME/profiles/web） */
   profileDir(): string {
-    return path.join(resolveDshHome(), 'profiles', PLUGIN_PROFILE);
+    return pluginProfileDir();
   }
 
   /**
@@ -691,6 +1097,13 @@ export class PluginManager {
       rawDump: dumpLayers.length === 0 ? run.stdout : null,
       live: liveResult.snapshot,
       liveError: liveResult.error || undefined,
+      // 装/卸/升级要 pnpm；`dsh plugin` 自己是裸 spawn，所以这里先把结论告诉界面
+      pnpm: (() => {
+        const found = findPnpm();
+        return { found: found !== null, path: found };
+      })(),
+      // 界面上要能看见"这次装会走哪个源"；null = 跟随系统 npm 配置
+      registry: pluginRegistryEnv(this.settings.all().pluginRegistry).npm_config_registry ?? null,
     };
   }
 }

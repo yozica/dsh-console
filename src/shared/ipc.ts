@@ -154,6 +154,11 @@ export interface SettingsValues {
   openUiOnStart: boolean;
   uiFullscreenOnStart: boolean;
   killOnExit: boolean;
+  /**
+   * 插件装/卸/升级用的 npm registry；留空则跟随系统 npm 配置。
+   * 只注入给 `dsh plugin` 那一次子进程（`npm_config_registry`），**不写用户的 .npmrc**。
+   */
+  pluginRegistry: string;
   /** 自动检查更新：启动后检查一次，之后每 6 小时一次（发现新版本仍要用户确认才下载） */
   autoCheckUpdates: boolean;
   pollIntervalMs: number;
@@ -439,6 +444,46 @@ export interface PluginLivePreset {
   rows: number;
 }
 
+/** 装 / 卸 / 升级：add = 安装，remove = 卸载，update = 升级 */
+export type PluginOpAction = 'add' | 'remove' | 'update';
+
+/**
+ * 一次插件操作的结果。
+ * code 是 dsh 的退出码；summary 是我们把 pnpm 输出归纳成的一句人话（认不出来就没有，
+ * 界面显示原始输出），error 是连命令都没跑起来时（例如已经有一个操作在跑）的原因。
+ */
+export interface PluginOpResult {
+  ok: boolean;
+  code?: number | null;
+  error?: string;
+  summary?: string | null;
+  /**
+   * 这个包是随 dsh 装好的内置包、**而且你还没启用它**时给出来：界面据此在现场给一个
+   * 「插进我的层」按钮（而不是让用户自己去翻 cordis.patch.yml）。
+   */
+  needsEnable?: { id: string; name: string };
+}
+
+/** 改「你自己的补丁层」的四个动作：插入 / 禁用 / 启用 / 移除自己的插入 */
+export type PluginLayerEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert';
+
+/** 改完的结果：是否落盘、改了哪个文件、备份到哪、改完的原文 */
+export interface PluginLayerEditResult {
+  ok: boolean;
+  error?: string;
+  changed?: boolean;
+  /** 一句人话：做了什么 / 为什么没做（界面直接显示） */
+  detail?: string;
+  file?: string;
+  backup?: string | null;
+  content?: string;
+}
+
+/** 装/卸/升级时边跑边推的输出片段（界面把它们原样贴进输出区） */
+export interface PluginOutputEvent {
+  chunk: string;
+}
+
 /** 运行中的清单。只有 dsh 由本应用启动（手上有令牌）时才拿得到；拿不到就是 null + 一句原因。 */
 export interface PluginLiveSnapshot {
   entries: PluginLiveEntry[];
@@ -469,6 +514,10 @@ export interface PluginInspectResult {
   /** 运行中的清单；拿不到时是 null（看 liveError 的原因），页面退回纯静态视图 */
   live?: PluginLiveSnapshot | null;
   liveError?: string;
+  /** 装/卸/升级要 pnpm；`dsh plugin` 内部是裸 spawn('pnpm')，所以这里先把结论告诉界面 */
+  pnpm?: { found: boolean; path: string | null };
+  /** 本次装/卸/升级实际走的源（设置里留空时为 null，含义是"跟随系统 npm 配置"） */
+  registry?: string | null;
 }
 
 /**
@@ -513,8 +562,17 @@ export interface DshConsoleApi {
   archiveUnarchive: (id: string) => Promise<ArchiveUnarchiveResult>;
   archiveRemove: (id: string) => Promise<ArchiveRemoveResult>;
 
-  // 插件装配层（只读；装/卸/升级是后续一步）
+  // 插件装配层
   pluginInspect: () => Promise<PluginInspectResult>;
+  pluginRun: (request: { action: PluginOpAction; spec: string }) => Promise<PluginOpResult>;
+  pluginCancel: () => Promise<boolean>;
+  /** 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）；只动 profile 的 cordis.patch.yml */
+  pluginEditLayer: (request: {
+    action: PluginLayerEditAction;
+    id: string;
+    name?: string;
+  }) => Promise<PluginLayerEditResult>;
+  onPluginOutput: (handler: (payload: PluginOutputEvent) => void) => () => void;
 
   onState: (handler: (snapshot: DshSnapshot) => void) => () => void;
   onOutput: (handler: (payload: DshOutputEvent) => void) => () => void;

@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process';
 
 import * as processUtils from '../src/main/process-utils';
 import * as pluginManager from '../src/main/plugin-manager';
+import * as patchLayer from '../src/main/patch-layer';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
 import { PtySessions } from '../src/main/pty-sessions';
@@ -86,6 +87,21 @@ async function main(): Promise<void> {
   // ---------------------------------------------------------- 1. 命令解析
   const settings = new Settings(path.join(sandbox, 'settings.json'));
   settings.patch({ port: 3080, host: '127.0.0.1', extraArgs: '' });
+  check(
+    '设置：不认识的设置项直接报错、一个字都不写（界面比主进程新时不能假装保存成功）',
+    (() => {
+      const before = JSON.stringify(settings.all());
+      let threw = false;
+      try {
+        // 真机上丢过一次「插件安装源」：窗口热重载了、主进程还是旧构建，
+        // 旧的主进程不认识这个键，静默丢掉，界面照样显示"已保存"。
+        settings.patch({ pluginRegistry: 'https://registry.example.com', noSuchSetting: 1 });
+      } catch {
+        threw = true;
+      }
+      return threw && JSON.stringify(settings.all()) === before;
+    })(),
+  );
   const launch = processUtils.resolveDshInvocation(settings.all());
   check(
     '命令解析：拿到可执行文件与参数',
@@ -1214,6 +1230,18 @@ async function main(): Promise<void> {
     '更新卡片：说明行由 canAutoUpdate 分支决定（Windows 才承诺下载/安装）',
     /const updateNote = computed[\s\S]{0,400}?update\.value\.canAutoUpdate/.test(settingsSource),
   );
+  check(
+    '设置页：保存被主进程拒了会说出来（不能显示"已保存"）',
+    /catch \(cause\)[\s\S]{0,300}?flash\(/.test(settingsSource),
+  );
+  check(
+    '设置页：表单字段都在设置契约里（键名写错只会静默不生效，看不出来）',
+    (() => {
+      const block = /const form = reactive\(\{([\s\S]*?)\n\}\)/.exec(settingsSource)?.[1] ?? '';
+      const keys = [...block.matchAll(/^\s{2}([A-Za-z][A-Za-z0-9]*):/gm)].map((m) => m[1]);
+      return keys.length >= 15 && keys.every((key) => key in DEFAULTS);
+    })(),
+  );
 
   // ---------------------------------------------------------- 16. 插件装配层（只读）
   //    这一层全靠"别人写的文件 + 别人打印的文本"：profile 的 package.json 与
@@ -1395,6 +1423,306 @@ async function main(): Promise<void> {
       return order.length >= 8 && order.join() === rail.join();
     })(),
     '左栏顺序 = 快捷键 1..N',
+  );
+
+  // 装 / 卸 / 升级：spec 只用于"确认文案与提示"，命令原样透传给 pnpm；错误归纳要认出常见失败。
+  check(
+    '插件安装：spec 分得清 npm / 本地 / tarball / git，并认得出 git 有没有固定 sha',
+    (() => {
+      const npm = pluginManager.parsePluginSpec('dsh-hello-plugin');
+      const scoped = pluginManager.parsePluginSpec('@scope/name@1.2.3');
+      const local = pluginManager.parsePluginSpec('./hello-plugin');
+      const tarball = pluginManager.parsePluginSpec('./hello-0.1.0.tgz');
+      const pinned = pluginManager.parsePluginSpec('github:you/hello#a1b2c3d4');
+      const floating = pluginManager.parsePluginSpec('github:you/hello');
+      return (
+        npm?.kind === 'npm' &&
+        scoped?.kind === 'npm' &&
+        local?.kind === 'local' &&
+        tarball?.kind === 'tarball' &&
+        pinned?.kind === 'git' &&
+        pinned.pinned === true &&
+        floating?.kind === 'git' &&
+        floating.pinned === false &&
+        pluginManager.parsePluginSpec('   ') === null
+      );
+    })(),
+  );
+  check(
+    '插件安装：常见失败各归纳成一句人话，认不出来返回 null（不编原因）',
+    (() => {
+      const notFound = pluginManager.summarizePluginFailure(
+        'dsh: pnpm not found on PATH — install pnpm to manage profile plugins',
+      );
+      const git = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  Ignored build scripts: dsh-x',
+      );
+      const missing = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/x: Not Found',
+      );
+      const denied = pluginManager.summarizePluginFailure('Error: EPERM: operation not permitted');
+      return (
+        Boolean(notFound && git && missing && denied) &&
+        pluginManager.summarizePluginFailure('Done in 1.4s') === null
+      );
+    })(),
+  );
+  check(
+    '插件安装：从 spec 里取得出包名（带版本/标签也要取对）',
+    pluginManager.packageNameOf('@scope/name@1.2.3') === '@scope/name' &&
+      pluginManager.packageNameOf('@scope/name') === '@scope/name' &&
+      pluginManager.packageNameOf('plain-name@latest') === 'plain-name' &&
+      pluginManager.packageNameOf('plain-name') === 'plain-name',
+  );
+  check(
+    '插件安装：链到已停服的淘宝镜像要单独说，别笼统说"包不存在"（并把失败的主机名带出来）',
+    (() => {
+      const taobao = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_FETCH_404  GET https://registry.npm.taobao.org/@deepseek-ai%2Fdsh-type-meta: Not Found - 404',
+      );
+      const other = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/@x%2Fy: Not Found - 404',
+      );
+      return (
+        Boolean(taobao?.includes('npmmirror')) &&
+        Boolean(other?.includes('registry.npmjs.org')) &&
+        !other?.includes('npmmirror')
+      );
+    })(),
+  );
+  check(
+    '插件安装：404 缺的是依赖、不是你要的那个包时，要指名道姓（夹具是真实输出）',
+    (() => {
+      const real = fixture('pnpm-missing-dep.stderr.txt');
+      const hint = pluginManager.summarizePluginFailure(real, '@deepseek-ai/dsh-time-context');
+      return (
+        Boolean(hint?.includes('@deepseek-ai/dsh-type-meta')) &&
+        Boolean(hint?.includes('@deepseek-ai/dsh-time-context')) &&
+        !hint?.includes('名字或版本可能不对')
+      );
+    })(),
+  );
+  check(
+    '插件安装：缺的正是你要的那个包时，仍按"包不存在"说（并把主机名带出来）',
+    (() => {
+      const real = fixture('pnpm-missing-dep.stderr.txt');
+      const hint = pluginManager.summarizePluginFailure(real, '@deepseek-ai/dsh-type-meta');
+      return Boolean(hint?.includes('registry.example.com')) && !hint?.includes('依赖');
+    })(),
+  );
+  check(
+    '插件安装：安装源留空 / 写错都退回系统配置，填了才覆盖（只认 http(s)，末尾斜杠去掉）',
+    (() => {
+      const env = pluginManager.pluginRegistryEnv;
+      const effective = env(' https://registry.npmmirror.com/ ');
+      return (
+        env('').npm_config_registry === undefined &&
+        env('   ').npm_config_registry === undefined &&
+        // 裸主机名 / 非 http(s) 都当没填：写错的代价是"装不上"，不如退回系统配置
+        env('registry.npmjs.org').npm_config_registry === undefined &&
+        env('ftp://mirror.example.com').npm_config_registry === undefined &&
+        effective.npm_config_registry === 'https://registry.npmmirror.com' &&
+        env('http://127.0.0.1:4873').npm_config_registry === 'http://127.0.0.1:4873'
+      );
+    })(),
+  );
+  check(
+    '插件安装：安装源走子进程环境变量，不写用户的 .npmrc',
+    /pluginRegistry: string;/.test(flatIpc) &&
+      DEFAULTS.pluginRegistry === '' &&
+      /npm_config_registry/.test(pluginSource) &&
+      /pluginRegistryEnv\(this\.settings\.all\(\)\.pluginRegistry\)/.test(pluginSource) &&
+      // 只注入环境；一旦有人改成往磁盘写 .npmrc，就会动到用户全局配置
+      !/\.npmrc/.test(pluginSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')),
+  );
+  check(
+    '插件安装：没装 pnpm 时在起子进程之前拦下（`dsh plugin` 只会退出码 127，还会白建一遍 profile）',
+    (() => {
+      const guard = pluginSource.indexOf('if (findPnpm() === null)');
+      const spawn = pluginSource.indexOf('const first = await this.spawnOnce');
+      return guard !== -1 && spawn !== -1 && guard < spawn;
+    })(),
+  );
+  check(
+    '插件安装：patch 层里"已经插入了某个包"看得出来（注释里提到的不算）',
+    (() => {
+      const real = fixture('profile-cordis.patch.yml');
+      return (
+        pluginManager.patchLayerInserts(real, '@deepseek-ai/dsh-time-context') &&
+        !pluginManager.patchLayerInserts(real, '@deepseek-ai/dsh-other') &&
+        // 只在注释里出现的名字不算：真机上用户会以为"我明明装过了"
+        !pluginManager.patchLayerInserts(
+          '# 提到过 @deepseek-ai/dsh-base，但没有插入它\n[]',
+          '@deepseek-ai/dsh-base',
+        )
+      );
+    })(),
+  );
+  check(
+    '插件安装：内置包要分清"还没启用"与"你已经启用了"（两种话说得不一样）',
+    /profilePatchEnables\(name\)/.test(pluginSource) && /needsEnable/.test(pluginSource),
+  );
+
+  // ---------------------------------------------------------- 补丁层：改你自己的覆盖
+  //    这是唯一会**写用户文件**的地方，所以钉三件事：只动匹配到的那一段（往返一致）、
+  //    找不齐就不写（不猜）、写盘前先备份。夹具是那台机器上真实的 cordis.patch.yml。
+  const realPatch = fixture('profile-cordis.patch.yml');
+  check(
+    '补丁层：禁用 / 启用只动匹配到的那一段（往返之后与原文一字不差）',
+    (() => {
+      const disabled = patchLayer.disableEntry(realPatch, 'time-context');
+      const back = patchLayer.enableEntry(disabled.text, 'time-context');
+      return (
+        disabled.changed &&
+        /^\s+disabled: true$/m.test(disabled.text) &&
+        // 注释与缩进都不能被改没
+        disabled.text.includes('# 想恢复成"什么都不改"') &&
+        disabled.text.includes("name: '@deepseek-ai/dsh-time-context'") &&
+        back.changed &&
+        back.text === realPatch
+      );
+    })(),
+  );
+  check(
+    '补丁层：层里没有那条时，禁用 = 加一条覆盖，启用 = 把它整条删掉（回到原样）',
+    (() => {
+      const disabled = patchLayer.disableEntry(realPatch, 'timer');
+      const back = patchLayer.enableEntry(disabled.text, 'timer');
+      // 另一头：条目是被**下面某一层**关掉的（base 把 hmr 关了）时，启用 = 写一条 disabled: false 盖住它
+      const turnedOn = patchLayer.enableEntry(realPatch, 'hmr');
+      const turnedOff = patchLayer.disableEntry(turnedOn.text, 'hmr');
+      return (
+        disabled.changed &&
+        disabled.text.includes('- id: timer\n  disabled: true') &&
+        back.changed &&
+        // 只为禁用而存在的那条要整条消失，不能留下一条空的 `- id: timer`
+        !back.text.includes('- id: timer') &&
+        back.text === realPatch &&
+        turnedOn.changed &&
+        turnedOn.text.includes('- id: hmr\n  disabled: false') &&
+        turnedOff.changed &&
+        turnedOff.text.includes('- id: hmr\n  disabled: true') &&
+        // 不能因此插出第二条
+        turnedOff.text.split('- id: hmr').length === 2
+      );
+    })(),
+  );
+  check(
+    '补丁层：插入不重复；移除只对自己插入的条目开放（覆盖条目不动它）',
+    (() => {
+      const once = patchLayer.insertPlugin(realPatch, 'hello', 'dsh-hello-plugin');
+      const twice = patchLayer.insertPlugin(once.text, 'hello', 'dsh-hello-plugin');
+      const removed = patchLayer.removeInsert(once.text, 'hello');
+      const refused = patchLayer.removeInsert(
+        patchLayer.disableEntry(realPatch, 'timer').text,
+        'timer',
+      );
+      return (
+        once.changed &&
+        !twice.changed &&
+        removed.changed &&
+        removed.text === realPatch &&
+        // 只为禁用而写的 `- id: timer` 不是 insert，这个动作不碰它
+        !refused.changed &&
+        refused.text.includes('- id: timer')
+      );
+    })(),
+  );
+  check(
+    '补丁层：删完最后一条要留下一个顶层数组（只剩注释 dsh 会直接报错）',
+    (() => {
+      // 真机事故：移除最后一条 insert 之后文件只剩注释，dsh 判它不是顶层数组，
+      // 整个插件页读不出来（overlay … must be a top-level YAML array of loader patch entries）。
+      const only = "- insert:\n    - id: hello\n      name: 'dsh-hello-plugin'\n";
+      const removed = patchLayer.removeInsert(only, 'hello');
+      const inserted = patchLayer.insertPlugin('# 只有注释\n', 'hello', 'dsh-hello-plugin');
+      return (
+        removed.changed &&
+        /^\[\]$/m.test(removed.text) &&
+        !/^- /m.test(removed.text) &&
+        // 从"只有注释"的文件开始插入，也要是合法数组（注释 + 条目，不需要 []）
+        inserted.changed &&
+        /^- insert:/m.test(inserted.text) &&
+        !/^\[\]$/m.test(inserted.text)
+      );
+    })(),
+  );
+  check(
+    '补丁层：写完回读验证，只有失败点名到这份 overlay 时才回滚',
+    /await runDump\(this\.settings\.all\(\)\)/.test(pluginSource) &&
+      /rollbackEdit\(result\)/.test(pluginSource) &&
+      /top-level YAML array\|overlay/.test(pluginSource) &&
+      /message\.includes\(result\.file\)/.test(pluginSource),
+  );
+  check(
+    '补丁层：写盘前先备份、原子写；id 不合法就一个字节都不写',
+    (() => {
+      const dir = path.join(sandbox, 'patch-layer');
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'cordis.patch.yml');
+      fs.writeFileSync(file, realPatch, 'utf8');
+
+      const inserted = patchLayer.applyPatchEdit(dir, {
+        action: 'insert',
+        id: 'hello',
+        name: 'dsh-hello-plugin',
+      });
+      const after = fs.readFileSync(file, 'utf8');
+      const backup = inserted.backup ? fs.readFileSync(inserted.backup, 'utf8') : '';
+      const bad = patchLayer.applyPatchEdit(dir, { action: 'disable', id: 'bad id!' });
+
+      return (
+        inserted.ok &&
+        inserted.changed === true &&
+        Boolean(
+          inserted.backup && path.basename(inserted.backup).startsWith('cordis.patch.yml.bak-'),
+        ) &&
+        after.includes('- id: hello') &&
+        // 备份里必须是改动前的原文
+        backup === realPatch &&
+        bad.ok === false &&
+        fs.readFileSync(file, 'utf8') === after
+      );
+    })(),
+  );
+  check(
+    '插件页：条目上有禁用 / 启用，内置包被拦下时给「插进我的层」',
+    /editLayer\(entry\.disabled \? 'enable' : 'disable', entry\.id\)/.test(vueSource) &&
+      /editLayer\('remove-insert', entry\.id\)/.test(vueSource) &&
+      /opNeedsEnable/.test(vueSource) &&
+      /pluginEditLayer/.test(flatIpc),
+  );
+  check(
+    '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
+    /spawn\(file, args/.test(pluginSource) &&
+      /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&
+      /stdio: \['ignore', 'pipe', 'pipe'\]/.test(pluginSource) &&
+      // 相对路径按 cwd 解析，cwd 不能继承（Electron 的启动目录不可预测）
+      /cwd: homeDir\(\)/.test(pluginSource) &&
+      !/shell:\s*true/.test(pluginSource) &&
+      /child\.stderr\?\.on\('data', collect\)/.test(pluginSource),
+  );
+  check(
+    '插件安装：pnpm 说"这是 workspace root"时用 -w 重试一次（dsh 模板缺 ignore-workspace-root-check）',
+    /ADDING_TO_ROOT\|workspace root/.test(pluginSource) &&
+      /argsFor\(\['-w'\]\)/.test(pluginSource) &&
+      // 第一次调用不带 -w（只有在 pnpm 明确要求时才加）
+      /argsFor\(\[\]\), env, onOutput\)/.test(pluginSource),
+  );
+  check(
+    '插件安装：契约里有 3 个 API 与操作结果类型',
+    (() => {
+      const ipc = fs.readFileSync(path.join(srcDir, 'shared', 'ipc.ts'), 'utf8');
+      return (
+        /pluginRun: \(request: \{ action: PluginOpAction; spec: string \}\) => Promise<PluginOpResult>/.test(
+          ipc,
+        ) &&
+        /pluginCancel: \(\) => Promise<boolean>/.test(ipc) &&
+        /onPluginOutput:/.test(ipc) &&
+        /export type PluginOpAction = 'add' \| 'remove' \| 'update'/.test(ipc)
+      );
+    })(),
   );
 
   check(

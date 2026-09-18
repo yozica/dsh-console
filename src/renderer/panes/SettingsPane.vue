@@ -23,6 +23,7 @@ const form = reactive({
   host: '127.0.0.1',
   port: 3080,
   dshCommand: '',
+  pluginRegistry: '',
   extraArgs: '',
   cwd: '',
   shell: '',
@@ -102,9 +103,19 @@ async function save() {
     fill(next);
     announce(next);
     flash('已保存');
+  } catch (cause) {
+    // 主进程拒绝整份 patch（例如它不认识某个键 —— 界面比主进程新的时候）。
+    // 这时**一个字都没写**，绝不能说"已保存"。
+    flash(`没保存上：${errorText(cause)}`);
   } finally {
     busy.value = false;
   }
+}
+
+/** invoke 抛回来的错误带一层 "Error invoking remote method 'x': Error: " 前缀，去掉它 */
+function errorText(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
 }
 
 async function reload() {
@@ -303,6 +314,27 @@ onUnmounted(() => {
           <label for="s-shell">本地 Shell</label>
           <input id="s-shell" type="text" placeholder="留空则自动选择" v-model.trim="form.shell" />
         </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <header class="panel-head"><h3>插件安装源</h3></header>
+      <div class="panel-block">
+        <div class="form-row">
+          <label for="s-pluginRegistry">registry</label>
+          <input
+            id="s-pluginRegistry"
+            type="text"
+            placeholder="留空则跟随系统 npm 配置"
+            v-model.trim="form.pluginRegistry"
+          />
+        </div>
+        <p class="hint">
+          只作用于插件页的装 / 卸 / 升级：作为子进程环境变量传给那一次 pnpm，<b
+            >不改电脑上的 npm 配置</b
+          >，也不影响别的项目。例如
+          <code>https://registry.npmmirror.com</code>
+        </p>
       </div>
     </section>
 
