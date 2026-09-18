@@ -350,6 +350,9 @@ const treeLayers = computed(() => baseline.value?.treeLayers || data.value?.tree
 /** 当前这一屏读的是哪份数据：基线（救援）还是完整配置 */
 const activeData = computed(() => baseline.value ?? data.value);
 
+/** 会话插件行数（来自运行中的 dsh；基线视图里没有它） */
+const presets = computed(() => (baseline.value ? [] : (data.value?.live?.presets ?? [])));
+
 const selectedIndex = ref(0);
 const selected = computed<PluginLayer | null>(() => layers.value[selectedIndex.value] || null);
 
@@ -535,7 +538,13 @@ function clearFilters(): void {
         + 安装插件
       </button>
       <div class="plugin-views">
-        <button class="plugin-view" :class="{ active: view === 'stack' }" @click="view = 'stack'">
+        <button
+          class="plugin-view"
+          :class="{ active: view === 'stack' }"
+          :disabled="baseline !== null"
+          :title="baseline ? '基线视图里没有层栈（那是你的层才有的东西）' : ''"
+          @click="view = 'stack'"
+        >
           装配层栈
         </button>
         <button class="plugin-view" :class="{ active: view === 'config' }" @click="view = 'config'">
@@ -543,7 +552,8 @@ function clearFilters(): void {
         </button>
       </div>
       <div class="spacer"></div>
-      <span v-if="error" class="bar-note">{{ error }}</span>
+      <span v-if="baseline" class="bar-note">基线：dsh 自带，不含你的层</span>
+      <span v-else-if="error" class="bar-note">{{ error }}</span>
       <template v-else-if="data">
         <span v-if="data.live" class="bar-note">
           运行中 {{ data.live.counts.total }} 条（{{ data.live.counts.active }} 已挂载<template
@@ -652,14 +662,15 @@ function clearFilters(): void {
       </div>
     </div>
 
-    <!-- 空态 / 出错 -->
-    <div v-if="error" class="empty">
+    <!-- 空态 / 出错。注意：基线视图（救援）加载出来之后就不再被这句挡住 ——
+         配置读不出来正是要看内置层的时候。 -->
+    <div v-if="error && !baseline" class="empty">
       <svg class="empty-i"><use href="#i-warn" /></svg>
       <h2>读不出插件装配信息</h2>
       <p>{{ error }}</p>
       <button class="btn small" @click="refresh">重试</button>
     </div>
-    <div v-else-if="!data" class="empty">
+    <div v-else-if="!data && !baseline" class="empty">
       <h2>{{ loading ? '正在读 profile…' : '还没有数据' }}</h2>
     </div>
 
@@ -682,7 +693,7 @@ function clearFilters(): void {
       </section>
 
       <!-- 视图一：装配层栈 -->
-      <div v-if="view === 'stack'" class="plugin-body">
+      <div v-if="view === 'stack' && data" class="plugin-body">
         <section class="panel plugin-side">
           <header class="panel-head">
             <h3>层栈</h3>
@@ -942,9 +953,9 @@ function clearFilters(): void {
             </ul>
           </template>
 
-          <p v-if="!baseline && data.live?.presets.length" class="plugin-presets">
+          <p v-if="presets.length" class="plugin-presets">
             会话插件（Agent 预设按会话组装的行数）：
-            <span v-for="preset in data.live.presets" :key="preset.id" class="plugin-tag mono"
+            <span v-for="preset in presets" :key="preset.id" class="plugin-tag mono"
               >{{ preset.id }}<template v-if="preset.isDefault">（默认）</template>
               {{ preset.rows }} 行</span
             >

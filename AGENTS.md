@@ -55,7 +55,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              八个页面组件
-test/selftest.ts        143 项自检（`npm test`），不需要 Electron
+test/selftest.ts        144 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -92,7 +92,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（143 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（144 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -403,7 +403,7 @@ dsh 的「插件」有两个层面，界面与代码都得分开看：
 - **不硬猜是哪一层**：只有失败那一行里**真的出现了**某个树外 bundle 的名字（`line.includes(layer.name)`）才给它「临时停用」按钮，认不出来就只给「只看内置层」+"到层栈里挑一个"。
 - **生效时机两条路要分开写**：临时停用改的是 bundle 列表 → **必须重启 dsh**；patch 层的改动是即时生效的。
 
-自检守着：「救援：临时停用 / 恢复 bundle 记住原位置（恢复之后与原文一字不差）」「救援：配置坏掉时『只看内置层』这条路还在（`--dump-default-config`，不解析你的层）」「救援：界面有救援条与两个出口，而不是只显示一句错误」。
+自检守着：「救援：临时停用 / 恢复 bundle 记住原位置（恢复之后与原文一字不差）」「救援：配置坏掉时『只看内置层』这条路还在（`--dump-default-config`，不解析你的层）」「救援：基线视图不会被『读不出来』的空态挡住（否则点了按钮什么也看不到）」「救援：界面有救援条与两个出口，而不是只显示一句错误」。
 
 ### 运行中的清单：另一条通道（`pluginInventory/list`）
 
@@ -432,7 +432,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，143 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，144 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值，以及设置页表单字段与契约对齐 —— 键名写错只会静默不生效、保存被主进程拒了必须说出来）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。

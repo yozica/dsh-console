@@ -1730,6 +1730,10 @@ async function main(): Promise<void> {
       /pluginBundleEdit/.test(flatIpc),
   );
   check(
+    '救援：基线视图不会被「读不出来」的空态挡住（否则点了按钮什么也看不到）',
+    /error && !baseline/.test(vueSource) && /data && !baseline/.test(vueSource),
+  );
+  check(
     '救援：界面有救援条与两个出口，而不是只显示一句错误',
     /loadBaseline/.test(vueSource) &&
       /plugin-rescue/.test(vueSource) &&
