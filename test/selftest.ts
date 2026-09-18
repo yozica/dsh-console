@@ -1440,6 +1440,29 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件安装：从 spec 里取得出包名（带版本/标签也要取对）',
+    pluginManager.packageNameOf('@scope/name@1.2.3') === '@scope/name' &&
+      pluginManager.packageNameOf('@scope/name') === '@scope/name' &&
+      pluginManager.packageNameOf('plain-name@latest') === 'plain-name' &&
+      pluginManager.packageNameOf('plain-name') === 'plain-name',
+  );
+  check(
+    '插件安装：链到已停服的淘宝镜像要单独说，别笼统说"包不存在"（并把失败的主机名带出来）',
+    (() => {
+      const taobao = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_FETCH_404  GET https://registry.npm.taobao.org/@deepseek-ai%2Fdsh-type-meta: Not Found - 404',
+      );
+      const other = pluginManager.summarizePluginFailure(
+        'ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/@x%2Fy: Not Found - 404',
+      );
+      return (
+        Boolean(taobao?.includes('npmmirror')) &&
+        Boolean(other?.includes('registry.npmjs.org')) &&
+        !other?.includes('npmmirror')
+      );
+    })(),
+  );
+  check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
     /spawn\(file, args/.test(pluginSource) &&
       /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&

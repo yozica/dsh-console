@@ -499,6 +499,17 @@ export interface PluginSpec {
   pinned: boolean;
 }
 
+/** 从 spec 里取出包名（去掉版本/标签）：`@scope/name@1.2.3` → `@scope/name` */
+export function packageNameOf(spec: string): string {
+  const trimmed = spec.trim();
+  if (trimmed.startsWith('@')) {
+    const scoped = /^(@[^/]+\/[^@]+)/.exec(trimmed);
+    return scoped ? scoped[1] : trimmed;
+  }
+  const at = trimmed.indexOf('@');
+  return at === -1 ? trimmed : trimmed.slice(0, at);
+}
+
 /** 认一下 spec 的类型；空值返回 null（界面据此禁用按钮） */
 export function parsePluginSpec(raw: string): PluginSpec | null {
   const spec = raw.trim();
@@ -541,8 +552,15 @@ export function summarizePluginFailure(output: string): string | null {
   if (/ADDING_TO_ROOT|workspace root/i.test(text)) {
     return 'pnpm 把 profile 当成 workspace root 拒了（加 -w 重试也没成）。可以检查 profile 里的 pnpm-workspace.yaml。';
   }
+  // 顺序要紧：淘宝旧镜像既会 404 又不该被说成"包不存在"
+  if (/registry\.npm\.taobao\.org/i.test(text)) {
+    return 'registry 链到了已停服的淘宝旧镜像（registry.npm.taobao.org）—— 换一个能用的源再试，例如 https://registry.npmmirror.com。';
+  }
   if (/ERR_PNPM_FETCH_404|404 Not Found/i.test(text)) {
-    return 'registry 上没有这个包（名字或版本可能不对）。';
+    const host = /GET https?:\/\/([^/\s]+)/i.exec(text)?.[1];
+    return host
+      ? `${host} 上没有这个包（名字或版本可能不对）。`
+      : 'registry 上没有这个包（名字或版本可能不对）。';
   }
   if (/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network/i.test(text)) {
     return '网络不通，没能连上 registry。';
@@ -631,6 +649,23 @@ class PluginRunner {
     if (!parsed) return { ok: false, error: '请填写要安装的包名或路径' };
 
     const launcher = resolveDshLauncher(this.settings.all());
+
+    // 内置包（随 dsh 装好的）装了也白装：它不在"从 registry 取"的路径上，而且
+    // 用户真正想做的通常是**启用**它 —— 那是 patch 层 insert 的事。
+    if (action === 'add' && parsed.kind === 'npm') {
+      const name = packageNameOf(spec);
+      const dshRoot =
+        launcher.kind === 'node-bin' && launcher.prefixArgs.length > 0
+          ? path.dirname(path.dirname(launcher.prefixArgs[0]))
+          : null;
+      if (name && dshRoot && resolveModuleDir(name, [dshRoot]) !== null) {
+        return {
+          ok: false,
+          error: `「${name}」是随 dsh 一起装好的内置插件（已经在 dsh 安装目录里），不需要用 pnpm 再装一遍。要启用它，请在 profile 的 cordis.patch.yml 里 insert 一行 —— 插件页左边「你的层」那一栏就是它。`,
+        };
+      }
+    }
+
     // `dsh plugin --profile web <action> [-w] <spec>`：spec 永远是**一个** argv，不拼 shell。
     // `-w` 只在 pnpm 自己要求时加（见下面重试）：profile 里那份 pnpm-workspace.yaml 是
     // dsh 模板写的（`packages: [.]`，没有 ignore-workspace-root-check），pnpm 9 会把它
