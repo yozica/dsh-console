@@ -1,0 +1,12 @@
+# 真机上的 ~/.dsh/profiles/web/cordis.patch.yml（原样）。
+# 用来钉"这一层里有没有插入某个包"的判据：注释里出现的包名不算，只有 name: 的值算。
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# a top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+#
+# 由 DSH Console 插件页引导插入：把官方随包、默认不启用的插件挂进来。
+# web 是 patchReload: live —— 改完即时生效，不用重启。
+# 想恢复成"什么都不改"：删掉下面这段，确认文件里只剩注释和一个 []。
+- insert:
+    - id: time-context
+      name: '@deepseek-ai/dsh-time-context'

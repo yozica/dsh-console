@@ -1543,6 +1543,25 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件安装：patch 层里"已经插入了某个包"看得出来（注释里提到的不算）',
+    (() => {
+      const real = fixture('profile-cordis.patch.yml');
+      return (
+        pluginManager.patchLayerInserts(real, '@deepseek-ai/dsh-time-context') &&
+        !pluginManager.patchLayerInserts(real, '@deepseek-ai/dsh-other') &&
+        // 只在注释里出现的名字不算：真机上用户会以为"我明明装过了"
+        !pluginManager.patchLayerInserts(
+          '# 提到过 @deepseek-ai/dsh-base，但没有插入它\n[]',
+          '@deepseek-ai/dsh-base',
+        )
+      );
+    })(),
+  );
+  check(
+    '插件安装：内置包要分清"还没启用"与"你已经启用了"（两种话说得不一样）',
+    /profilePatchEnables\(name\)/.test(pluginSource),
+  );
+  check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
     /spawn\(file, args/.test(pluginSource) &&
       /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&

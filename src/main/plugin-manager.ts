@@ -499,6 +499,35 @@ export interface PluginSpec {
   pinned: boolean;
 }
 
+/**
+ * 这份 patch 层文本里有没有"插入某个包"？只看 `name:` 的值位置（不比注释、不比别的字面量）。
+ *
+ * 用途：用户在插件页填一个内置包的名字时，得说清他到底想干什么 —— 内置包的分发不经过
+ * registry，"装"这个动作对他通常是"启用"（往 patch 层 insert 一行）。而那些早就自己
+ * 插过一行的用户（真机上就有）看到"请去 insert 一行"只会更困惑：他以为自己已经装过了。
+ */
+export function patchLayerInserts(text: string, packageName: string): boolean {
+  const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^\\s*name:\\s*['"]?${escaped}['"]?\\s*$`, 'm').test(text);
+}
+
+/** profile 目录：`$DSH_HOME/profiles/web`（inspect 与 run 都要用） */
+function pluginProfileDir(): string {
+  return path.join(resolveDshHome(), 'profiles', PLUGIN_PROFILE);
+}
+
+/** 用户的 patch 层里是否已经插入了这个包（读不到文件就算没有） */
+function profilePatchEnables(packageName: string): boolean {
+  try {
+    return patchLayerInserts(
+      fs.readFileSync(path.join(pluginProfileDir(), 'cordis.patch.yml'), 'utf8'),
+      packageName,
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** 从 spec 里取出包名（去掉版本/标签）：`@scope/name@1.2.3` → `@scope/name` */
 export function packageNameOf(spec: string): string {
   const trimmed = spec.trim();
@@ -701,7 +730,9 @@ class PluginRunner {
       if (name && dshRoot && resolveModuleDir(name, [dshRoot]) !== null) {
         return {
           ok: false,
-          error: `「${name}」是随 dsh 一起装好的内置插件（已经在 dsh 安装目录里），不需要用 pnpm 再装一遍。要启用它，请在 profile 的 cordis.patch.yml 里 insert 一行 —— 插件页左边「你的层」那一栏就是它。`,
+          error: profilePatchEnables(name)
+            ? `「${name}」是随 dsh 一起装好的内置插件，而且你自己的 patch 层里已经 insert 了它 —— 它已经启用了，这里不需要装任何东西（插件页左边「你的层」那一栏就是它）。内置包的分发不经过 registry，所以 registry 上也确实没有"装了就能用"这回事。`
+            : `「${name}」是随 dsh 一起装好的内置插件（已经在 dsh 安装目录里），不需要用 pnpm 再装一遍。要启用它，请在 profile 的 cordis.patch.yml 里 insert 一行 —— 插件页左边「你的层」那一栏就是它。`,
         };
       }
     }
@@ -939,7 +970,7 @@ export class PluginManager {
 
   /** profile 目录（$DSH_HOME/profiles/web） */
   profileDir(): string {
-    return path.join(resolveDshHome(), 'profiles', PLUGIN_PROFILE);
+    return pluginProfileDir();
   }
 
   /**
