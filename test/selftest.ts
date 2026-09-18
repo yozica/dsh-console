@@ -1104,6 +1104,26 @@ async function main(): Promise<void> {
       !/^import\s*\{[^}]*\}\s*from\s*'electron-updater'/m.test(updaterSource),
   );
 
+  // 关闭询问改成渲染层自己画的卡片（shell/CloseDialog.vue）之后，多了两处**只会静默坏掉**的点：
+  //   1. 渲染层没接住时必须退回原生弹窗 —— 不然渲染层一卡，窗口就再也关不掉了。
+  //      注意**只给握手设时限**：卡片显示出来之后就不能再计时，否则用户多想两秒都会被判成
+  //      "卡住"，系统弹窗自己冒出来（第一版就是这么错的）；
+  //   2. 真正退出（托盘菜单 / 自动更新的 quitAndInstall / 系统关机）都走 before-quit，
+  //      那里**先**置 isQuitting，close 处理器才敢放行 —— 不置位的话「收起」会把退出一起拦下来。
+  // 两条都是"只有用户撞上才发现"的类型，所以在这里钉住（同 7.19 的说明）。
+  const mainCloseCode = fs
+    .readFileSync(path.join(repoRoot, 'src', 'main', 'main.ts'), 'utf8')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  check(
+    '关闭询问：只给"卡片显示出来"设时限（用户想多久都行），且真正退出不被拦',
+    /const CLOSE_ACK_TIMEOUT_MS = \d+;/.test(mainCloseCode) &&
+      /ack: \(\) => clearTimeout\(handshake\)/.test(mainCloseCode) &&
+      /sendToRenderer\('app:close-request', null\);/.test(mainCloseCode) &&
+      /askCloseActionNative\(\);/.test(mainCloseCode) &&
+      /app\.on\('before-quit'[\s\S]{0,200}?isQuitting = true;/.test(mainCloseCode),
+  );
+
   // ---------------------------------------------------------- 11. 产物命名与更新源
   //    electron-updater 按 latest.yml / latest-mac.yml 里的文件名去 Releases 下载。名字一旦对不上
   //    就是"能检查到新版本、下载 404"。而 productName 里带空格时三个阶段会各改一次（磁盘保留空格、

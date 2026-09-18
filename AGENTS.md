@@ -32,7 +32,7 @@ npm start          # = npm run build && electron .
 ```
 src/
   main/                 Electron 主进程，tsc 编成 CJS 到 dist/main/
-    main.ts             窗口、IPC、生命周期、退出清理、开发工具快捷键、内嵌页诊断
+    main.ts             窗口、IPC、生命周期、退出清理、关闭窗口行为（询问 / 收起托盘 / 直接退出）、开发工具快捷键、内嵌页诊断
     dsh-manager.ts      dsh 进程状态机：启动 / 停止 / 接管 / 健康轮询 / 令牌 URL 捕获
     pty-sessions.ts     node-pty 会话注册表（dsh 终端 + 本地 Shell 共用）
     process-utils.ts    命令探测、端口占用、进程名、结束进程树、HTTP 探测、ANSI 清理
@@ -53,7 +53,7 @@ src/
     mount.ts            挂载清单：外壳三块 + 全部页面
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
-    shell/              外壳组件：RailNav / TopBar / StatusBar
+    shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）
     panes/              八个页面组件
 test/selftest.ts        154 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
@@ -441,6 +441,37 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 自检守着：「插件：真实 dump 解析出层归因与全部条目」「插件：未匹配的 patch 行只在 stderr 上」「插件：空输出不算成功；失败时给的是诊断行而不是 Node 的堆栈首行」「插件：只碰 web profile」「插件：真实应答能解出运行中的条目与预设行数」「插件：运行中的 id 带 include: 前缀，剥掉才和配置里的 id 对得上」「插件：令牌地址解析（没有令牌、地址不是 URL、空值都要老实返回 null）」「插件：调用信封与应答解包（ok:false / 非 JSON / 不是 server-response 都算失败）」。夹具都是**真实输出**（`test/fixtures/`：一份 539 行的真 dump + 一份真接口应答），上游改格式或改协议时这里第一时间变红。
 
+### 7.19 关闭窗口：问一次 / 收起托盘 / 直接退出
+
+**现象**：Windows 上点 X 就是退出，而默认设置 `killOnExit` 还会**连带停掉本应用启动的 dsh** —— 用户点一下关闭，正在用的 dsh 就没了，且应用一句话都没说（这个应用的价值恰恰是"在后台看着 dsh"）。
+
+**现在的做法**（`main.ts` 的 `wireCloseBehavior` / `askCloseAction` / `hideToTray` / `ensureTray`）：
+
+- 设置项 `closeAction` 三态：`ask`（默认，问一次）/ `tray`（直接收起）/ `quit`（直接退出）。设置页那一行**只在 Windows / Linux 显示**（`v-if="!isMac"`）—— macOS 上这个二选一根本不存在，摆一个不生效的开关比不摆更糟（早先的写法是留着它、只在说明里写一句"macOS 不适用"）。
+- `ask` 时问「收起到托盘 / 退出应用 / 取消」，带「记住我的选择，以后不再询问」；勾了就写回 `closeAction`。**问的那张卡片是渲染层自己画的**（`shell/CloseDialog.vue` + `CloseDialog` 挂载点），不是原生弹窗：原生 `dialog.showMessageBox` 的长相改不了（字体、配色、间距、动画全归系统），是全应用唯一一个不像这个应用的面孔；自己画还顺带能把真实状态写进去（哪个 dsh 会被停掉、PID 多少、是不是外部实例）。
+- 主进程与渲染层之间是**一问一答**：`app:close-request`（带 `CloseRequest` 那几项事实）→ `app:close-ack`（"卡片已经显示了"）→ `app:close-answer`（`{ action, remember }`，动作只认 tray/quit/cancel，认不出来当取消）。原生弹窗没有被删掉，`askCloseActionNative` 是兜底。
+- 「收起」= `win.hide()` + 托盘图标；托盘菜单是「显示主界面 / 退出 DSH Console」，单击图标也叫回窗口。
+- 托盘图标**随应用一起建**（`bootstrap()` 里调 `ensureTray()`，仅 Windows / Linux）—— 它不只是"收起的落点"，也是**叫回窗口与退出的入口**；等第一次收起才建的话，用户在那之前根本不知道有这东西。`ensureTray()` 幂等，收起时再调一次只是兜底。
+- 「已收起到托盘」的气泡**一台机器上只弹一次**：标记是设置里的 `trayHintShown`（内部标记，设置页没有对应控件），不是内存变量 —— 只记内存的话每次开应用收起都要被提示一遍。弹失败时不记，下次再试。
+- **macOS 完全不参与**：那边关窗不退出、Dock 常驻是系统惯例（7.3），`wireCloseBehavior` 第一行就 return。
+- 托盘图标读的是 `build/icon.png`，运行期缩到 **32**（100% DPI 的托盘是 16px、150~~200% 是 24~~32px；给 32 让系统往下缩，比钉死 16 在高分屏上被拉大好）。因此 **`build/icon.png` 现在必须打进 asar**（`package.json` 的 `build.files` 里那一行）—— 打包后 exe 的图标可以取自可执行文件，托盘没有这条路径。自检里没有钉这一行，但删了它打包版的托盘图标就是空白。
+
+**三条必须守住的时序/边界**：
+
+1. **`before-quit` 里先置 `isQuitting`，close 处理器据此放行**。不置位的话，「收起」会把托盘菜单的退出、`updater.quitAndInstall()`、乃至系统关机一起拦下来 —— 界面再也退不掉了。托盘对象的销毁也放在这里（放在别处会留下一个幽灵图标）。
+2. **只给握手设时限，不给用户思考设时限**（`CLOSE_ACK_TIMEOUT_MS = 2000`）。主进程发完请求等一个 `app:close-ack`，确认一到就 `clearTimeout`，然后**一直等**用户选 —— 第一版把"多久没回答"当判据，结果卡片明明已经显示出来、用户还在看，两三秒后系统弹窗自己冒出来了。确认迟迟不来（渲染层没连上、卡住、崩了）才退回 `askCloseActionNative`，并 `sendToRenderer('app:close-request', null)` 让卡片收起来；`render-process-gone` 也会把挂着的询问答成"问不到"，免得渲染层崩了之后窗口再也关不掉。自检「关闭询问：只给"卡片显示出来"设时限（用户想多久都行），且真正退出不被拦」钉着这一条与下一条。
+3. **托盘建不起来就退化成最小化**（`ensureTray()` 返回 false，例如读不到图标）：藏起来而没有任何入口叫回来，比最小化糟得多。
+
+**主进程改设置要推给渲染层**：`ask` 对话框里勾「记住我的选择」是**主进程直接写盘**的，走 `sendToRenderer('settings:changed', next)`（契约 `DshConsoleApi.onSettings`，store 里订阅）。不推的话设置页那份表单还留着旧值，用户下次一按保存就把它写回去了。设置页只跟 `closeAction` 这一个键，不整份 `fill` —— 那会顺手盖掉用户没保存的其它改动。
+
+**底栏「发现新版本」点进来要落到更新卡片上，而且要有"被带过去"的过程**：只切页不够（设置页好几屏，卡片在「关于」里）。这条流程分三步，顺序不能换（`SettingsPane.spotlightUpdateCard`）：
+
+1. **切页并落定**：`StatusBar` 改 `currentTab`，设置页等一次 `nextTick`（页面靠 visibility 切换）**再停 300ms**（`SETTLE_MS`）。这一停不能省：切页与滚动同时发生的话，界面换了、滚动也开始了，眼睛还没认出新页面就已经滚到位（用户反馈"怪"）；
+2. **缓动滚动**：`lib/scroll.ts` 的 `scrollIntoViewEased(el, 620)`。**不用原生 `scrollIntoView({ behavior: 'smooth' })`** —— 它的时长与曲线由浏览器定、偏快（用户反馈"还没看清就到了"）；自写的曲线是缓入缓出三次方，时长在调用处给，系统开了「减弱动效」就直接跳过去；
+3. **聚焦蒙层**：必须**等滚动结束**再量 `getBoundingClientRect()`（滚动途中量会把洞画到半路），然后在整张「关于」卡片处开洞。`.spotlight` 是 `position: fixed; inset: 0` 的全窗口蒙层，靠 `box-shadow: 0 0 0 9999px var(--scrim)` 铺满、只留卡片那个洞；另一个元素「环」做强调色呼吸（环要动扩散，而洞那层带着 9999px 的巨大阴影，拿它做动画既贵又难看）。蒙层 `pointer-events: none`：不挡用户点卡片上的按钮；点一下 / 按一下键 / 滚一下滚轮 / 2.6 秒到点都会收掉。它用 `Teleport` 挂到 `body` —— 挂在页面里会被 `.settings` 的滚动容器与各级层叠上下文限制住，盖不到左栏、顶栏和底栏。
+
+信号放在 `lib/update-anchor.ts`：**递增的请求号**而不是布尔量（第二次没有变化，watch 不触发，看起来就像"点了没反应"）；每次请求带一个 token，中途又点一次时旧流程在 `await` 处自行退出。
+
 ## 8. 调试手段
 
 ### 自检
@@ -468,10 +499,13 @@ npm test     # tsx test/selftest.ts，154 项，不需要 Electron、不启停�
 
 ### 开发期诊断（非打包运行时才装）
 
-| 快捷键                                 | 作用                                                                                         |
-| -------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `F12` / `Ctrl+Shift+I`（macOS：`⌘⌥I`） | 打开开发者工具（主进程处理，内嵌页也能单独开）。**detach 模式**，因为贴边停靠会改变布局      |
-| `Ctrl+Shift+D`（macOS：`⌘⇧D`）         | 把当前界面的元素结构导出到日志：尺寸 / 位置 / 背景 / display / overflow / z-index + 当前状态 |
+| 快捷键                                 | 作用                                                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `F12` / `Ctrl+Shift+I`（macOS：`⌘⌥I`） | 打开开发者工具（主进程处理，内嵌页也能单独开）。**detach 模式**，因为贴边停靠会改变布局                               |
+| `Ctrl+Shift+D`（macOS：`⌘⇧D`）         | 把当前界面的元素结构导出到日志：尺寸 / 位置 / 背景 / display / overflow / z-index + 当前状态                          |
+| `Ctrl+Shift+U`（macOS：`⌘⇧U`）         | 循环伪造更新相位（`available` → `downloaded` → `downloading` → 回到真实状态），用来体验底栏的更新提示与设置页更新卡片 |
+
+**为什么要有 `Ctrl+Shift+U`**：底栏那句「发现新版本 x.y.z，点此查看」只在 `available` / `downloaded` 两个相位出现，而更新状态机只在**打包后的 Windows** 上才可能进入这两个相位（7.17）—— 开发态一律 `unsupported`，于是这条提示、以及它点下去的「滚到更新卡片 + 高亮一次」（7.19），在开发时根本看不见、也点不到。伪造的是渲染层那份镜像，消息里带「（开发态演示）」；点设置页的「下载 / 重启并安装」会去问主进程，那次往返会把状态换回真实的 unsupported，想接着看再按一次即可。走完一圈会把按下之前的真实状态原样放回。
 
 `npx electron . --dev`（需先 `npm run build`）会在启动时直接打开开发者工具。焦点在内嵌页里时这些键也要能用：主进程在 guest 的 `before-input-event` 里把应用快捷键**重新注入宿主窗口**（`sendInputEvent`），复用渲染层原有的处理器，不复制一份逻辑。
 

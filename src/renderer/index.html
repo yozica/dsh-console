@@ -166,6 +166,9 @@
 
     <div id="statusbar-root"></div>
 
+    <!-- 关闭确认卡片的挂载点：组件自己 Teleport 到 body，这个 div 只是个锚 -->
+    <div id="close-dialog-root"></div>
+
     <!-- 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住标题栏以下的所有内容。
          标题栏（顶栏）不锁，窗口还能拖动和关闭。 -->
     <div class="boot-lock hidden" id="boot-lock">

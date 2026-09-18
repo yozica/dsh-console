@@ -113,7 +113,8 @@
       "!**/*.map",
       "!**/*.md",
       "!**/test/**",
-      "!**/tests/**"
+      "!**/tests/**",
+      "build/icon.png"
     ],
     "directories": {
       "output": "release"
