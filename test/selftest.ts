@@ -1516,6 +1516,14 @@ async function main(): Promise<void> {
       !/\.npmrc/.test(pluginSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')),
   );
   check(
+    '插件安装：没装 pnpm 时在起子进程之前拦下（`dsh plugin` 只会退出码 127，还会白建一遍 profile）',
+    (() => {
+      const guard = pluginSource.indexOf('if (findPnpm() === null)');
+      const spawn = pluginSource.indexOf('const first = await this.spawnOnce');
+      return guard !== -1 && spawn !== -1 && guard < spawn;
+    })(),
+  );
+  check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
     /spawn\(file, args/.test(pluginSource) &&
       /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&

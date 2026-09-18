@@ -706,6 +706,19 @@ class PluginRunner {
       }
     }
 
+    // 没装 pnpm 就别起子进程了：`dsh plugin` 内部是裸 spawnSync("pnpm")，只会以
+    // 退出码 127 失败（实测：`dsh: pnpm not found on PATH`），而且它**会先把 profile
+    // 初始化出来**才失败 —— 白改一遍磁盘。这里提前说清怎么办。
+    // `findPnpm()` 查的就是我们等下要塞给子进程的那份 PATH 加几个已知目录，
+    // 所以它说没有，子进程一定找不到。
+    if (findPnpm() === null) {
+      return {
+        ok: false,
+        error:
+          '这台机器上没找到 pnpm —— dsh 通过它管理 profile 里的插件依赖。装一个（`npm i -g pnpm`，或 `corepack enable pnpm`）再回来，插件页会自己认出来。',
+      };
+    }
+
     // `dsh plugin --profile web <action> [-w] <spec>`：spec 永远是**一个** argv，不拼 shell。
     // `-w` 只在 pnpm 自己要求时加（见下面重试）：profile 里那份 pnpm-workspace.yaml 是
     // dsh 模板写的（`packages: [.]`，没有 ignore-workspace-root-check），pnpm 9 会把它
