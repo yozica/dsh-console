@@ -1588,13 +1588,22 @@ async function main(): Promise<void> {
     (() => {
       const disabled = patchLayer.disableEntry(realPatch, 'timer');
       const back = patchLayer.enableEntry(disabled.text, 'timer');
+      // 另一头：条目是被**下面某一层**关掉的（base 把 hmr 关了）时，启用 = 写一条 disabled: false 盖住它
+      const turnedOn = patchLayer.enableEntry(realPatch, 'hmr');
+      const turnedOff = patchLayer.disableEntry(turnedOn.text, 'hmr');
       return (
         disabled.changed &&
         disabled.text.includes('- id: timer\n  disabled: true') &&
         back.changed &&
         // 只为禁用而存在的那条要整条消失，不能留下一条空的 `- id: timer`
         !back.text.includes('- id: timer') &&
-        back.text === realPatch
+        back.text === realPatch &&
+        turnedOn.changed &&
+        turnedOn.text.includes('- id: hmr\n  disabled: false') &&
+        turnedOff.changed &&
+        turnedOff.text.includes('- id: hmr\n  disabled: true') &&
+        // 不能因此插出第二条
+        turnedOff.text.split('- id: hmr').length === 2
       );
     })(),
   );

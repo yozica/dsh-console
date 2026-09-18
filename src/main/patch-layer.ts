@@ -196,7 +196,16 @@ export function disableEntry(text: string, id: string): PatchEditOutcome {
 export function enableEntry(text: string, id: string): PatchEditOutcome {
   const lines = splitLines(text);
   const item = findItem(lines, id);
-  if (!item) return done(text, false, `你的层里没有 id 为「${id}」的条目（它本来就没被禁过）。`);
+  if (!item) {
+    // 层里没有它的条目：它的 disabled 来自下面某一层（bundle 的 patch，比如 base 把 hmr 关了）。
+    // 那就写一条覆盖把开关扳回来 —— 实测 `- id: hmr` + `disabled: false` 能盖住 base 的 disabled。
+    const next = appendBlock(lines, [`- id: ${id}`, '  disabled: false']);
+    return done(
+      joinLines(next),
+      true,
+      `你的层里写了一条 disabled: false，用来盖住下面各层对「${id}」的禁用`,
+    );
+  }
   if (!itemLines(lines, item).some((line) => DISABLED_TRUE_RE.test(line))) {
     return done(text, false, `你的层里「${id}」不是禁用状态。`);
   }
