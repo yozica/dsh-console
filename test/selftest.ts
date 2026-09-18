@@ -1314,6 +1314,31 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件：巡检里"指向了不存在的 id"只有本页能改的那份层才给动作（机器级那层不给）',
+    (() => {
+      const text = fixture('unmatched-patch.stderr.txt');
+      // 夹具里 dsh 打的就是它自己那份 profile 层的真实全路径 —— 拿它当 ownPatchFile，
+      // 应当判成"能改"（这条同时钉住路径比较不被真机上的绝对路径绕过去）
+      const own = /\[(.+?)\]/.exec(text)?.[1] ?? '';
+      const mine = pluginManager.parseProblems(text, own)[0];
+      // 同一个文件名、但在别的目录（机器级的 $DSH_HOME/cordis.patch.yml 就是这种）
+      const elsewhere = pluginManager.parseProblems(
+        text,
+        path.join('/tmp', 'other-home', 'profiles', 'web', 'cordis.patch.yml'),
+      )[0];
+      // 老调用方不传 ownPatchFile：一律不给动作，绝不能默认成"能改"
+      const none = pluginManager.parseProblems(text)[0];
+      return (
+        own.endsWith('cordis.patch.yml') &&
+        mine?.kind === 'unmatched-patch' &&
+        mine?.entryId === '这个条目不存在' &&
+        mine?.editable === true &&
+        elsewhere?.editable === false &&
+        none?.editable === false
+      );
+    })(),
+  );
+  check(
     '插件：patch 解析失败也来自 stderr，归到 parse-error 并点名文件',
     (() => {
       const problems = pluginManager.parseProblems(fixture('broken-patch.stderr.txt'));
@@ -1348,7 +1373,7 @@ async function main(): Promise<void> {
     })(),
   );
   check(
-    '插件：装进来却没形成层的依赖、以及什么都没贡献的 bundle 都会被列出来',
+    '插件：装进来却没形成层的依赖、以及什么都没贡献的 bundle 都会被列出来（普通依赖带包名）',
     (() => {
       const plain = pluginManager.plainDependencies({
         name: null,
@@ -1368,6 +1393,8 @@ async function main(): Promise<void> {
       return (
         plain.length === 1 &&
         plain[0].kind === 'plain-dependency' &&
+        // 包名要单独带出来：界面靠它给「卸掉它」，不解析那句人话
+        plain[0].packageName === 'some-lib' &&
         missing.length === 1 &&
         missing[0].kind === 'missing-layer'
       );
@@ -1709,6 +1736,38 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '补丁层：巡检给的"删掉这一行"只删那一条（覆盖条目 / insert 块里的都认，删完仍留顶层数组）',
+    (() => {
+      // 覆盖/禁用形状的条目（`- id: ghost` 那一层）——removeInsert 不碰它，dropEntry 要能删
+      const ghostOverride = `${realPatch}- id: ghost\n  disabled: true\n`;
+      const dropped = patchLayer.dropEntry(ghostOverride, 'ghost');
+      // 嵌套形状的：insert 块里只剩它一条 → 连块一起删，不能留一个空的 `- insert:`
+      const onlyNested = "# 注释\n- insert:\n    - id: ghost\n      name: 'dsh-ghost'\n";
+      const droppedNested = patchLayer.dropEntry(onlyNested, 'ghost');
+      // 块里还有别的条目时，只删那一条
+      const siblings = `${onlyNested}    - id: keep\n      name: 'dsh-keep'\n`;
+      const droppedOne = patchLayer.dropEntry(siblings, 'ghost');
+      const missing = patchLayer.dropEntry(realPatch, '没有这条');
+      return (
+        dropped.changed &&
+        !dropped.text.includes('ghost') &&
+        // 别动夹具里原有的注释与那条 time-context
+        dropped.text.includes('# 想恢复成"什么都不改"') &&
+        dropped.text.includes("name: '@deepseek-ai/dsh-time-context'") &&
+        droppedNested.changed &&
+        !droppedNested.text.includes('- insert:') &&
+        // 只剩注释时必须补 `[]`，dsh 否则读不出来
+        /^\[\]$/m.test(droppedNested.text) &&
+        droppedOne.changed &&
+        !droppedOne.text.includes('ghost') &&
+        droppedOne.text.includes('- id: keep') &&
+        // 找不到就一个字节都不写
+        !missing.changed &&
+        missing.text === realPatch
+      );
+    })(),
+  );
+  check(
     '补丁层：删完最后一条要留下一个顶层数组（只剩注释 dsh 会直接报错）',
     (() => {
       // 真机事故：移除最后一条 insert 之后文件只剩注释，dsh 判它不是顶层数组，
@@ -1886,6 +1945,13 @@ async function main(): Promise<void> {
   check(
     '救援：基线视图不会被「读不出来」的空态挡住（否则点了按钮什么也看不到）',
     /error && !baseline/.test(vueSource) && /data && !baseline/.test(vueSource),
+  );
+  check(
+    '救援：基线视图里不给作用于真实配置的动作（条目上的、以及巡检那块的两个按钮）',
+    // 条目上的动作
+    /v-if="!baseline"/.test(vueSource) &&
+      // 巡检那块整块藏掉：它说的都是真实配置，而这一屏明说"不是你现在生效的配置"
+      /problems\.length && !baseline/.test(vueSource),
   );
   check(
     '救援：界面有救援条与两个出口，而不是只显示一句错误',

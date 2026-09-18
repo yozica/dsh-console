@@ -419,6 +419,14 @@ export interface PluginProblem {
   entryId?: string;
   /** parse-error：dsh 报的层标签（overlay / bundle 名） */
   layer?: string;
+  /** plain-dependency：装进来却不形成层的那个包名（界面据此给「卸掉它」） */
+  packageName?: string;
+  /**
+   * unmatched-patch：这一条所在的文件**是不是本页能改的那份**（profile 的
+   * `cordis.patch.yml`）。机器级的 `$DSH_HOME/cordis.patch.yml` 不在本页的能力范围里 ——
+   * 界面据此决定给不给「删掉这一行」，不给时要说明文件在哪。
+   */
+  editable?: boolean;
 }
 
 /** 运行中的 Loader 条目的 fiber 阶段（null = 没有存活的根 fiber，多半是被禁用/被覆盖了） */
@@ -465,7 +473,8 @@ export interface PluginOpResult {
 }
 
 /** 改「你自己的补丁层」的四个动作：插入 / 禁用 / 启用 / 移除自己的插入 */
-export type PluginLayerEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert';
+/** 涉及 patch 层的改动动作。`drop` = 删掉一条指向了不存在 id 的条目（巡检给的出路） */
+export type PluginLayerEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert' | 'drop';
 
 /** 改完的结果：是否落盘、改了哪个文件、备份到哪、改完的原文 */
 export interface PluginLayerEditResult {
@@ -611,7 +620,10 @@ export interface DshConsoleApi {
   pluginInspect: () => Promise<PluginInspectResult>;
   pluginRun: (request: { action: PluginOpAction; spec: string }) => Promise<PluginOpResult>;
   pluginCancel: () => Promise<boolean>;
-  /** 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）；只动 profile 的 cordis.patch.yml */
+  /**
+   * 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入 / 删掉指向不存在 id 的条目）；
+   * 只动 profile 的 cordis.patch.yml
+   */
   pluginEditLayer: (request: {
     action: PluginLayerEditAction;
     id: string;

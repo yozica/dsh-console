@@ -2150,6 +2150,14 @@ body[data-immersive='true'] .webview-wrap {
   overflow-wrap: anywhere;
 }
 
+/* 本页改不了的那一层（机器级的 $DSH_HOME/cordis.patch.yml）：不给按钮，但把文件指出来 */
+.plugin-problem-where {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  overflow-wrap: anywhere;
+}
+
 /* ---- 视图一：层栈 + 详情 ---- */
 .plugin-body {
   display: flex;

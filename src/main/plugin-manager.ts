@@ -32,6 +32,7 @@ import {
   applyEmptyArrayRepair,
   applyPatchEdit,
   listPatchBackups,
+  PATCH_FILE,
   restorePatchBackup,
   type PatchEditRequest,
   type PatchEditResult,
@@ -247,8 +248,13 @@ export function firstMeaningfulLine(stderr: string): string {
  *
  * 未匹配的 patch 行退出码是 0，所以这些**必须**单独看；解析失败则是抛异常（退出码 1）
  * 外加一坨堆栈。堆栈不进 problems（那是日志的事），这里只留能指着某个文件的那几行。
+ *
+ * `ownPatchFile` 是 profile 那份 `cordis.patch.yml` 的全路径：dsh 在 stderr 上打的层文件
+ * 可能是它、也可能是机器级的 `$DSH_HOME/cordis.patch.yml`，而本页只能改前者 —— 所以这里就
+ * 把结论（`editable`）算好，别让界面自己去比路径。
  */
-export function parseProblems(stderr: string): PluginProblem[] {
+export function parseProblems(stderr: string, ownPatchFile?: string): PluginProblem[] {
+  const own = ownPatchFile ? path.resolve(ownPatchFile) : '';
   const problems: PluginProblem[] = [];
   for (const rawLine of stderr.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -259,6 +265,7 @@ export function parseProblems(stderr: string): PluginProblem[] {
         kind: 'unmatched-patch',
         file: unmatched[1],
         entryId: unmatched[2],
+        editable: own !== '' && samePath(unmatched[1], own),
         detail: `patch 里指向的条目 "${unmatched[2]}" 不存在，这一行被忽略了`,
       });
       continue;
@@ -470,8 +477,26 @@ export function plainDependencies(manifest: ProfileManifest): PluginProblem[] {
     .filter((name) => !bundles.has(name))
     .map((name) => ({
       kind: 'plain-dependency' as const,
+      packageName: name,
       detail: `${name} 装成了普通依赖，但它没有声明 dsh.bundle，所以不形成配置层`,
     }));
+}
+
+/**
+ * 两个路径是不是同一个文件。dsh 打出来的是它自己解析过的路径，可能经过 realpath
+ * （macOS 上 `/var` → `/private/var`、以及软链接），所以先比 resolve、再比 realpath。
+ */
+function samePath(a: string, b: string): boolean {
+  if (path.resolve(a) === path.resolve(b)) return true;
+  const real = (value: string): string => {
+    try {
+      return fs.realpathSync(value);
+    } catch {
+      return '';
+    }
+  };
+  const resolved = real(a);
+  return resolved !== '' && resolved === real(b);
 }
 
 /** 列在 bundles 里却在 dump 里没有任何条目：dsh 启动时会明确失败 */
@@ -1149,7 +1174,7 @@ export class PluginManager {
     }
     const dumpLayers = parseDump(run.stdout);
     const problems = [
-      ...parseProblems(run.stderr),
+      ...parseProblems(run.stderr, path.join(profileDir, PATCH_FILE)),
       ...plainDependencies(manifest),
       ...missingLayers(manifest, dumpLayers),
     ];

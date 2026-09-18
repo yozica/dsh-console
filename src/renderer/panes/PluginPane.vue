@@ -373,6 +373,7 @@ const LAYER_ACTIONS: Record<PluginLayerEditAction, string> = {
   disable: '禁用',
   enable: '启用',
   'remove-insert': '移除我的插入',
+  drop: '删掉这一行',
 };
 
 /** 你自己那张补丁层的文件路径（层栈里 kind 是 profile-patch）；拿不到就没法改 */
@@ -391,7 +392,9 @@ async function editLayer(action: PluginLayerEditAction, id: string, name?: strin
   const detail =
     action === 'insert'
       ? `会往你自己的补丁层加一条 insert（id: ${id}，name: ${name ?? ''}）。写之前先备份原文件，只改这一处；这一层是即时生效的，不用重启 dsh。`
-      : `会改你自己的补丁层 ${where}。写之前先备份原文件（.bak-时间戳），只改匹配到的那一段；这一层是即时生效的，不用重启 dsh。`;
+      : action === 'drop'
+        ? `会从你自己的补丁层里删掉指向「${id}」的那一条 —— 它指向的条目不存在，dsh 每次启动都会忽略它，留着只会让人以为配置生效了。写之前先备份原文件（.bak-时间戳），只改匹配到的那一段。`
+        : `会改你自己的补丁层 ${where}。写之前先备份原文件（.bak-时间戳），只改匹配到的那一段；这一层是即时生效的，不用重启 dsh。`;
   const ok = await api.confirm({
     type: 'warning',
     title: `${LAYER_ACTIONS[action]}：${id}`,
@@ -556,6 +559,31 @@ function problemLabel(kind: PluginProblem['kind']): string {
   if (kind === 'plain-dependency') return '不形成层';
   if (kind === 'missing-layer') return '没有贡献';
   return '提示';
+}
+
+// 巡检这一块原来只能看。三种"悄悄不生效"里，两种有明确的、安全的出路：
+//   1. patch 指向了不存在的 id → 删掉那一行（**只在它能改的那份层上**，见下面 editable）；
+//   2. 装成了普通依赖、不形成层 → 卸掉它（走 dsh plugin remove，所以要重启 dsh）。
+// 第三种（列在 bundles 里却一条都没贡献）没有通用的修法，只把话说清楚。
+
+/** 这条能不能就地删掉：必须是 profile 那份补丁层里的、而且主进程认得那个文件是它 */
+function canDrop(item: PluginProblem): boolean {
+  return item.kind === 'unmatched-patch' && item.editable === true && Boolean(item.entryId);
+}
+
+function dropProblem(item: PluginProblem): void {
+  if (!item.entryId) return;
+  void editLayer('drop', item.entryId);
+}
+
+/** 这条能不能就地卸掉：普通依赖有包名就行 */
+function canRemove(item: PluginProblem): boolean {
+  return item.kind === 'plain-dependency' && Boolean(item.packageName);
+}
+
+function removeProblem(item: PluginProblem): void {
+  if (!item.packageName) return;
+  void startOp('remove', item.packageName);
 }
 
 /** 这一层在生效配置里的条目（自己插入的 + 它覆盖掉的） */
@@ -791,8 +819,10 @@ function clearFilters(): void {
     </div>
 
     <template v-else>
-      <!-- "没报错的错"：不会让命令失败，但会让改动悄悄不生效 -->
-      <section v-if="problems.length" class="panel plugin-problems">
+      <!-- "没报错的错"：不会让命令失败，但会让改动悄悄不生效。
+           基线视图里不显示它：那一屏明说"这不是你真正生效的配置"，而这几种问题说的都是
+           真实配置 —— 跟「禁用 / 启用」「移除我的插入」在基线里被藏掉是同一条规则。 -->
+      <section v-if="problems.length && !baseline" class="panel plugin-problems">
         <header class="panel-head">
           <h3>需要注意的 {{ problems.length }} 处</h3>
           <div class="spacer"></div>
@@ -804,6 +834,26 @@ function clearFilters(): void {
               {{ problemLabel(item.kind) }}
             </span>
             <span class="plugin-problem-text">{{ item.detail }}</span>
+            <div v-if="canDrop(item) || canRemove(item)" class="spacer"></div>
+            <button
+              v-if="canDrop(item)"
+              class="btn tiny"
+              :disabled="opBusy"
+              @click="dropProblem(item)"
+            >
+              删掉这一行
+            </button>
+            <button
+              v-else-if="canRemove(item)"
+              class="btn tiny"
+              :disabled="opBusy"
+              @click="removeProblem(item)"
+            >
+              卸掉它
+            </button>
+            <span v-else-if="item.kind === 'unmatched-patch'" class="plugin-problem-where">
+              这一层不归本页改：{{ item.file }}
+            </span>
           </li>
         </ul>
       </section>
