@@ -194,14 +194,21 @@ function lastDshOutput(): string {
   return '';
 }
 
-/** 从失败那一行里认出一个树外 bundle；认不出就 null —— 不硬猜是哪一层 */
-const blamedLayer = computed<PluginLayer | null>(() => {
+/**
+ * 从失败那一行里认出一个**可以临时停用**的 bundle；认不出就 null —— 不硬猜。
+ *
+ * 两条路：层栈还在（正常情况）就用层栈里的名字；dump 都读不出来时（比如某个 bundle
+ * 解析不到、dsh 因此起不来）层栈是空的，只能退到 profile 的 bundle 清单 —— 但必须
+ * 排除内置包：停用 `@deepseek-ai/dsh-base` 等于把 dsh 拆了。
+ */
+const blamedName = computed<string | null>(() => {
   const line = bootFailure.value?.line || error.value || '';
-  if (!line || !data.value?.layers) return null;
-  return (
-    data.value.layers.find((layer) => layer.kind === 'out-of-tree' && line.includes(layer.name)) ??
-    null
+  if (!line) return null;
+  const layer = data.value?.layers?.find(
+    (item) => item.kind === 'out-of-tree' && line.includes(item.name),
   );
+  if (layer) return layer.name;
+  return data.value?.bundles?.find((item) => !item.inBox && line.includes(item.name))?.name ?? null;
 });
 
 /** 救援条出现条件：dsh 起不来、装配信息读不出来、或基线也读不出来 */
@@ -712,8 +719,8 @@ function clearFilters(): void {
           {{ bootFailure?.line || error || baselineError }}
         </p>
         <p class="plugin-rescue-hint">
-          <template v-if="blamedLayer">
-            看起来是「{{ blamedLayer.name }}」这一层的问题（它出现在上面那行里）。
+          <template v-if="blamedName">
+            看起来是「{{ blamedName }}」这一层的问题（它出现在上面那行里）。
           </template>
           <template v-else-if="baseline">
             现在显示的是 dsh 自带的组合结果，不是你真正生效的配置。
@@ -734,12 +741,12 @@ function clearFilters(): void {
         </button>
         <button v-else class="btn small" @click="backToFull">回到完整配置</button>
         <button
-          v-if="blamedLayer && !suspended"
+          v-if="blamedName && !suspended"
           class="btn danger small"
           :disabled="opBusy"
-          @click="editBundle('suspend', blamedLayer.name)"
+          @click="editBundle('suspend', blamedName)"
         >
-          临时停用 {{ blamedLayer.name }}
+          临时停用 {{ blamedName }}
         </button>
         <button
           v-if="suspended"

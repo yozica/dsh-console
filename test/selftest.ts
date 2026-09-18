@@ -1800,6 +1800,14 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '救援：dump 读不出来时也带上 bundle 清单，且只有非内置的才给「临时停用」',
+    /bundles\?: \{ name: string; inBox: boolean \}\[\]/.test(flatIpc) &&
+      /inBox: dshRoot !== null/.test(pluginSource) &&
+      // 失败时提前返回也要带着它（否则"bundle 解析不到"这种救援场景无从下手）
+      /bundles,\n\s*\};/.test(pluginSource) &&
+      /!item\.inBox && line\.includes\(item\.name\)/.test(vueSource),
+  );
+  check(
     '救援：界面上有「修成空配置」与「从备份恢复」，契约里有 pluginRescue',
     /repairLayer/.test(vueSource) &&
       /restoreBackup/.test(vueSource) &&

@@ -1112,18 +1112,41 @@ export class PluginManager {
         ? path.dirname(path.dirname(launcher.prefixArgs[0]))
         : null;
     const moduleDirs = [profileDir, ...(dshRoot ? [dshRoot] : []), path.join(home, 'profiles')];
+    // profile 里列了哪些 bundle，以及哪些是 dsh 自带的（内置的不能停用 —— 那是 dsh 的骨架）。
+    // dump 读不出来时页面要靠这份清单救援，所以要跟着结果一起回。
+    const bundles = manifest.bundles.map((name) => ({
+      name,
+      inBox: dshRoot !== null && resolveModuleDir(name, [dshRoot]) !== null,
+    }));
 
     // dump（静态组合）与运行中清单互不依赖，并行取；运行中清单是"尽力而为"，失败不影响页面
-    const [run, liveResult] = await Promise.all([
-      runDump(this.settings.all()),
-      this.live
-        .fetchInventory()
-        .then((snapshot) => ({ snapshot, error: '' }))
-        .catch((error: unknown) => ({
-          snapshot: null,
-          error: error instanceof Error ? error.message : String(error),
-        })),
-    ]);
+    let run: DumpRun;
+    let liveResult: { snapshot: PluginLiveSnapshot | null; error: string };
+    try {
+      [run, liveResult] = await Promise.all([
+        runDump(this.settings.all()),
+        this.live
+          .fetchInventory()
+          .then((snapshot) => ({ snapshot, error: '' }))
+          .catch((error: unknown) => ({
+            snapshot: null,
+            error: error instanceof Error ? error.message : String(error),
+          })),
+      ]);
+    } catch (error) {
+      // 配置读不出来（overlay 坏了、某个 bundle 解析不到…）：这不是"页面失败"，而是**救援场景**。
+      // 带上 bundle 清单，界面才能指着那个把 dsh 弄挂的层说"临时停用它"。
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        profile: PLUGIN_PROFILE,
+        home,
+        profileDir,
+        profileName: manifest.name,
+        patchReload: manifest.patchReload,
+        bundles,
+      };
+    }
     const dumpLayers = parseDump(run.stdout);
     const problems = [
       ...parseProblems(run.stderr),
@@ -1150,6 +1173,7 @@ export class PluginManager {
       profileDir,
       profileName: manifest.name,
       patchReload: manifest.patchReload,
+      bundles,
       layers: buildLayers({ manifest, profileDir, home, dumpLayers, moduleDirs }),
       treeLayers,
       problems,

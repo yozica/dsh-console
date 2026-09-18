@@ -519,6 +519,12 @@ export interface PluginInspectResult {
   /** 本次装/卸/升级实际走的源（设置里留空时为 null，含义是"跟随系统 npm 配置"） */
   registry?: string | null;
   /**
+   * profile 的 bundle 列表（带"是不是内置"）。**`ok: false` 时也给** —— dump 读不出来
+   * （比如某个 bundle 解析不到、dsh 因此起不来）时，救援条只能靠它点名"可以停用哪个"。
+   * 内置包不能停用（那是 dsh 自己的骨架），所以这里就把 `inBox` 标出来。
+   */
+  bundles?: { name: string; inBox: boolean }[];
+  /**
    * true = 这份结果来自 `--dump-default-config`（dsh 自带的组合，**不含你的层**）。
    * 配置被改坏时的救援视图，界面上必须写明"这不是你现在真正生效的配置"。
    */
