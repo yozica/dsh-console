@@ -55,7 +55,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              八个页面组件
-test/selftest.ts        150 项自检（`npm test`），不需要 Electron
+test/selftest.ts        151 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -92,7 +92,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（150 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（151 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -373,7 +373,7 @@ dsh 的「插件」有两个层面，界面与代码都得分开看：
 装（`add`）、卸（`remove`）、升级（`update`）全部走 `dsh plugin --profile web …` —— 它把参数转发给 profile 目录里的 pnpm，然后按"装出来的包有没有声明 `dsh.bundle`"**重算** `dsh.profile.bundles`。我们**不自己改 package.json、也不自己解析 pnpm 的输出语义**，那两件事都是 dsh 的职责。
 
 1. **spec 永远是一个 argv，不经过 shell**（`spawn(file, args)` + 数组，没有 `shell: true`）。拼错一次就是命令注入；自检里有一条静态断言盯着（`spawn(file, args` + `stdio: ['ignore','pipe','pipe']` + 没有 `shell: true`）。
-2. **子进程 PATH 必须补上 pnpm**（`envWithKnownBins` → `pathWithKnownBins`）：**Windows 上这个键叫 `Path`**，直接写 `{ ...process.env, PATH }` 会造出两个只差大小写的键、哪个生效看运行时 —— 所以 `envWithKnownBins` 先找已有的那个键原地改（没有才新写 `PATH`）；自检钉着键名原样保留、且只有一个 path 键。同理别在渲染层按 `'/'` 切路径（Windows 是 `\`）。`dsh plugin` 内部是裸 `spawnSync('pnpm', …)`，而 GUI 启动的应用 PATH 很窄。不补的话用户看到的是 `dsh: pnpm not found on PATH`（退出码 127）。`findPnpm()` 除了 PATH 还会扫 `~/Library/pnpm`、homebrew、`~/.local/share/pnpm`、nvm 各版本目录。**机器上压根没装 pnpm 时干脆不起子进程**：`findPnpm()` 查的就是我们要塞给子进程的那份 PATH（再加那几个已知目录），它说没有、子进程一定找不到 —— 所以 `run()` 里提前返回一句"装一个再来"（实测 `dsh plugin add` 会**先把 profile 初始化出来**再以 127 失败，等于白改一遍磁盘）。只读的层栈 / 清单不经过 pnpm，没装也能看。
+2. **子进程 PATH 必须补上 pnpm**（`envWithKnownBins` → `pathWithKnownBins`）：**Windows 上这个键叫 `Path`**，直接写 `{ ...process.env, PATH }` 会造出两个只差大小写的键、哪个生效看运行时 —— 所以 `envWithKnownBins` 先找已有的那个键原地改（没有才新写 `PATH`）；自检钉着键名原样保留、且只有一个 path 键。同理别在渲染层按 `'/'` 切路径（Windows 是 `\`）。`dsh plugin` 内部是裸 `spawnSync('pnpm', …)`，而 GUI 启动的应用 PATH 很窄。不补的话用户看到的是 `dsh: pnpm not found on PATH`（退出码 127）。`findPnpm()` 除了 PATH 还会扫已知目录 —— POSIX 是 `~/Library/pnpm`、homebrew、`~/.local/share/pnpm`、nvm 各版本目录；**Windows 上不要写死 `pnpm.cmd`**：`whichSync('pnpm')` 按 `PATHEXT` 展开（独立安装包装的是 `pnpm.exe`、`npm i -g` 装的是 `pnpm.cmd`，只找 `.cmd` 会漏掉前者），PATH 里没有时再扫 `PNPM_HOME` / `%APPDATA%\npm` / `%LOCALAPPDATA%\pnpm` / `%ProgramFiles%\nodejs` / `NVM_SYMLINK` / `~/.volta/bin`（Windows 上 GUI 应用拿到的是**启动那一刻**的环境块，刚装完 pnpm 还没重新登录时终端里能用、应用里找不到）。这条的纯函数版本是 `windowsBinCandidates`：按小写索引变量名（`LocalAppData` / `LOCALAPPDATA` 两种写法都见过）、用 `path.win32` 拼路径，所以在 macOS 上也能测。**机器上压根没装 pnpm 时干脆不起子进程**：`findPnpm()` 查的就是我们要塞给子进程的那份 PATH（再加那几个已知目录），它说没有、子进程一定找不到 —— 所以 `run()` 里提前返回一句"装一个再来"（实测 `dsh plugin add` 会**先把 profile 初始化出来**再以 127 失败，等于白改一遍磁盘）。只读的层栈 / 清单不经过 pnpm，没装也能看。
 3. **`-w` 只在 pnpm 自己要求时加**。这是个上游模板的坑：dsh 写的 `pnpm-workspace.yaml` 是 `packages: [.]` + `nodeLinker: hoisted`，**没有** `ignore-workspace-root-check`，于是 pnpm 9 把 profile 当 workspace root，`add` 直接报 `ERR_PNPM_ADDING_TO_ROOT`（实测：`dsh plugin --profile web add ./x` 必失败）。现在第一次照朴素参数跑，一旦输出里出现 `ADDING_TO_ROOT|workspace root` 就**加 `-w` 重试一次**，并在输出区写一句"pnpm 说这是 workspace root，加 -w 重试"。**不要无条件加 `-w`**：不在 workspace 里的时候那个 flag 是多余的。
 
 4. **内置包直接拦下，而且要分清「还没启用」与「你已经启用了」**。`@deepseek-ai/dsh-*` 这些是随 dsh 装好的（在 dsh 安装目录里），分发不经过 registry，所以「从 registry 再装一遍」没有意义；用户真正想做的是**启用**它 —— 那是 patch 层 `insert` 的事。所以 `add` 之前先解析包名（`packageNameOf`，带版本/标签也要取对）并在 dsh 安装目录里找一下，找到就直接拒绝。话要分两种说：`profilePatchEnables()` 看一眼他自己的 `cordis.patch.yml`（只认 `name:` 的值，注释里提到不算），已经插过就说「它已经启用了，这里不用装任何东西」，没插过才指路「插件页左边『你的层』那一栏」。两句话都来自真机：第一次是「想装内置包」撞墙，第二次是用户拿着**已经启用**的插件来问「我这个不是装过了吗」。
@@ -391,7 +391,7 @@ dsh 的「插件」有两个层面，界面与代码都得分开看：
 
 另外两条界面约定：同一时刻只允许一个操作（同一个 profile 目录不能被两个 pnpm 同时改，按钮据此禁用，并给「中断」）；装/卸/升级改的是 `package.json` 与 `node_modules` → **必须重启 dsh**，所以做完挂一条黄条 + 「立即重启 dsh」，而 patch 层是即时生效 —— 这两种"生效时机"在界面上必须分开写清。
 
-自检守着：「插件安装：spec 分得清 npm / 本地 / tarball / git」「插件安装：常见失败各归纳成一句人话，认不出来返回 null」「插件安装：从 spec 里取得出包名（带版本/标签也要取对）」「插件安装：链到已停服的淘宝镜像要单独说，别笼统说"包不存在"（并把失败的主机名带出来）」「插件安装：404 缺的是依赖、不是你要的那个包时，要指名道姓（夹具是真实输出）」「插件安装：缺的正是你要的那个包时，仍按"包不存在"说（并把主机名带出来）」「插件安装：安装源留空 / 写错都退回系统配置，填了才覆盖」「插件安装：安装源走子进程环境变量，不写用户的 .npmrc」「插件安装：补 PATH 时保留系统原有的键名（Windows 上叫 `Path`）」「插件安装：没装 pnpm 时在起子进程之前拦下」「插件安装：patch 层里『已经插入了某个包』看得出来（注释里提到的不算）」「插件安装：内置包要分清『还没启用』与『你已经启用了』」「补丁层：禁用 / 启用只动匹配到的那一段（往返之后与原文一字不差）」「补丁层：层里没有那条时，禁用 = 加一条覆盖，启用 = 整条删掉」「补丁层：插入不重复；移除只对自己插入的条目开放」「补丁层：写盘前先备份、原子写；id 不合法就一个字节都不写」「插件页：条目上有禁用 / 启用，内置包被拦下时给『插进我的层』」「补丁层：删完最后一条要留下一个顶层数组（只剩注释 dsh 会直接报错）」「补丁层：写完回读验证，只有失败点名到这份 overlay 时才回滚」「插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收」「插件安装：pnpm 说"这是 workspace root"时用 -w 重试一次」「插件安装：契约里有 3 个 API 与操作结果类型」。失败归纳（`summarizePluginFailure`）只认它认得的几类（pnpm 缺失 / git 构建脚本被拦 / 缺的是依赖还是它自己 / 淘宝旧镜像 / 网络与权限），认不出来就返回 null —— 界面显示原文，不编原因。
+自检守着：「插件安装：spec 分得清 npm / 本地 / tarball / git」「插件安装：常见失败各归纳成一句人话，认不出来返回 null」「插件安装：从 spec 里取得出包名（带版本/标签也要取对）」「插件安装：链到已停服的淘宝镜像要单独说，别笼统说"包不存在"（并把失败的主机名带出来）」「插件安装：404 缺的是依赖、不是你要的那个包时，要指名道姓（夹具是真实输出）」「插件安装：缺的正是你要的那个包时，仍按"包不存在"说（并把主机名带出来）」「插件安装：安装源留空 / 写错都退回系统配置，填了才覆盖」「插件安装：安装源走子进程环境变量，不写用户的 .npmrc」「插件安装：补 PATH 时保留系统原有的键名（Windows 上叫 `Path`）」「插件安装：Windows 上找 pnpm / node 不写死 .cmd（独立安装包是 pnpm.exe），并有已知目录兜底」「插件安装：没装 pnpm 时在起子进程之前拦下」「插件安装：patch 层里『已经插入了某个包』看得出来（注释里提到的不算）」「插件安装：内置包要分清『还没启用』与『你已经启用了』」「补丁层：禁用 / 启用只动匹配到的那一段（往返之后与原文一字不差）」「补丁层：层里没有那条时，禁用 = 加一条覆盖，启用 = 整条删掉」「补丁层：插入不重复；移除只对自己插入的条目开放」「补丁层：写盘前先备份、原子写；id 不合法就一个字节都不写」「插件页：条目上有禁用 / 启用，内置包被拦下时给『插进我的层』」「补丁层：删完最后一条要留下一个顶层数组（只剩注释 dsh 会直接报错）」「补丁层：写完回读验证，只有失败点名到这份 overlay 时才回滚」「插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收」「插件安装：pnpm 说"这是 workspace root"时用 -w 重试一次」「插件安装：契约里有 3 个 API 与操作结果类型」。失败归纳（`summarizePluginFailure`）只认它认得的几类（pnpm 缺失 / git 构建脚本被拦 / 缺的是依赖还是它自己 / 淘宝旧镜像 / 网络与权限），认不出来就返回 null —— 界面显示原文，不编原因。
 
 ### 救援：dsh 起不来 / 配置被改坏（P2）
 
@@ -434,7 +434,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，150 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，151 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值，以及设置页表单字段与契约对齐 —— 键名写错只会静默不生效、保存被主进程拒了必须说出来）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。

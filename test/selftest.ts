@@ -1570,6 +1570,43 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件安装：Windows 上找 pnpm / node 不写死 .cmd（独立安装包是 pnpm.exe），并有已知目录兜底',
+    (() => {
+      const source = fs.readFileSync('src/main/process-utils.ts', 'utf8');
+      // 写死 `pnpm.cmd` 会漏掉 pnpm 官方安装包装的 `pnpm.exe`；交给 whichSync 按 PATHEXT 展开
+      const viaPathext = /whichSync\('pnpm'\)/.test(source) && /whichSync\('node'\)/.test(source);
+      // 键名大小写不统一（LocalAppData / LOCALAPPDATA 都见过），按小写索引后两种写法都要认
+      const upper = processUtils.windowsBinCandidates(
+        {
+          PNPM_HOME: 'C:\\pnpm-home',
+          APPDATA: 'C:\\AppData',
+          LOCALAPPDATA: 'C:\\LocalAppData',
+          ProgramFiles: 'C:\\Program Files',
+          NVM_SYMLINK: 'C:\\Program Files\\nodejs',
+        },
+        'C:\\Users\\x',
+      );
+      const mixed = processUtils.windowsBinCandidates(
+        { Pnpm_Home: 'C:\\pnpm-home', AppData: 'C:\\AppData', LocalAppData: 'C:\\LocalAppData' },
+        'C:\\Users\\x',
+      );
+      const empty = processUtils.windowsBinCandidates({}, 'C:\\Users\\x');
+      return (
+        viaPathext &&
+        upper.includes('C:\\pnpm-home') &&
+        upper.includes('C:\\AppData\\npm') &&
+        upper.includes('C:\\LocalAppData\\pnpm') &&
+        upper.includes('C:\\Program Files\\nodejs') &&
+        upper.includes('C:\\Users\\x\\.volta\\bin') &&
+        // 大小写不同的同一组变量 → 同一组目录，顺序也一样
+        mixed.slice(0, 3).join('|') === upper.slice(0, 3).join('|') &&
+        // 一个变量都没有时也不炸（只留 volta 那条固定路径）
+        empty.length === 1 &&
+        empty[0] === 'C:\\Users\\x\\.volta\\bin'
+      );
+    })(),
+  );
+  check(
     '插件安装：安装源走子进程环境变量，不写用户的 .npmrc',
     /pluginRegistry: string;/.test(flatIpc) &&
       DEFAULTS.pluginRegistry === '' &&

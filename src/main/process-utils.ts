@@ -181,11 +181,56 @@ function versionManagerInstalls(): VersionManagerInstall[] {
   return installs;
 }
 
+/**
+ * Windows 上 node / pnpm 的已知安装位置（给"PATH 里没有"兜底）。
+ *
+ * 为什么要它：Windows 上 GUI 启动的应用拿到的是**启动那一刻**的环境块，而 npm / pnpm 的
+ * 安装脚本改的是注册表里的 PATH —— 刚装完还没重新登录时，终端里能用、应用里找不到。
+ * 键名大小写不统一（`LocalAppData` / `LOCALAPPDATA` 都见过），所以这里先按小写建索引。
+ *
+ * 纯函数（不读 process.env、不碰磁盘）—— Windows 分支在 macOS 上也要能测。
+ */
+export function windowsBinCandidates(env: NodeJS.ProcessEnv, home: string): string[] {
+  const lower = new Map<string, string>();
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === 'string' && value !== '') lower.set(key.toLowerCase(), value);
+  }
+  const at = (name: string): string => lower.get(name) ?? '';
+  // 这些是 **Windows** 路径：用 path.win32 拼，不受跑测试的这台机器的分隔符影响
+  const under = (base: string, child: string): string => (base ? path.win32.join(base, child) : '');
+  const dirs: string[] = [];
+  const push = (dir: string) => {
+    if (dir !== '' && !dirs.includes(dir)) dirs.push(dir);
+  };
+  // pnpm 独立安装包自己写的变量（`%LOCALAPPDATA%\pnpm` 那份 pnpm.exe 就在这儿）
+  push(at('pnpm_home'));
+  // `npm i -g pnpm` 的全局 bin（pnpm.cmd）
+  push(under(at('appdata'), 'npm'));
+  push(under(at('localappdata'), 'pnpm'));
+  // 官方 node 安装包与 nvm-windows 的软链目录（都放 node.exe）
+  push(under(at('programfiles'), 'nodejs'));
+  push(at('nvm_symlink'));
+  push(path.win32.join(home, '.volta', 'bin'));
+  return dirs;
+}
+
+/** 在候选目录里找一个可执行文件（按顺序，先到先得） */
+function firstExisting(dirs: string[], names: string[]): string | null {
+  for (const dir of dirs) {
+    for (const name of names) {
+      const full = path.join(dir, name);
+      if (isExecutableFile(full)) return full;
+    }
+  }
+  return null;
+}
+
 /** 找 node 可执行文件：PATH 优先，其次常见安装位置（GUI 启动时 PATH 很窄） */
 export function findNodeExe(): string | null {
-  const fromPath = whichSync(isWindows ? 'node.exe' : 'node');
+  // Windows 上不写死 `node.exe`：交给 whichSync 按 PATHEXT 展开（`pnpm.exe` / `node.exe` 都可能）
+  const fromPath = whichSync('node');
   if (fromPath) return fromPath;
-  if (isWindows) return null;
+  if (isWindows) return firstExisting(windowsBinCandidates(process.env, homeDir()), ['node.exe']);
   const home = homeDir();
   const candidates = [
     '/opt/homebrew/bin/node',
@@ -207,12 +252,16 @@ export function findNodeExe(): string | null {
  * 为什么必须自己找：`dsh plugin` 内部是 `spawnSync('pnpm', …)`（`stdio: 'inherit'`），
  * **完全依赖子进程的 PATH**；而 macOS 上从 Finder/Dock 启动的应用 PATH 通常只有
  * `/usr/bin:/bin:/usr/sbin:/sbin`，nvm / homebrew / `~/Library/pnpm` 都不在里面。
+ * Windows 上 GUI 启动的应用拿到的是启动那一刻的环境块，刚装完 pnpm 还没重新登录时同理。
  * 不补的话用户看到的是 `dsh: pnpm not found on PATH`，退出码 127。
  */
 export function findPnpm(): string | null {
-  const fromPath = whichSync(isWindows ? 'pnpm.cmd' : 'pnpm');
+  // Windows 上不写死 `pnpm.cmd`：独立安装包装的是 `pnpm.exe`，交给 whichSync 按 PATHEXT 展开
+  const fromPath = whichSync('pnpm');
   if (fromPath) return fromPath;
-  if (isWindows) return null;
+  if (isWindows) {
+    return firstExisting(windowsBinCandidates(process.env, homeDir()), ['pnpm.exe', 'pnpm.cmd']);
+  }
   const home = homeDir();
   const candidates = [
     // pnpm 官方安装脚本在这台机器上就装在这儿（PATH 里没有）
