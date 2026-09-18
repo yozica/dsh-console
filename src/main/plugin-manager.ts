@@ -28,7 +28,13 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { dshArgsFor, findPnpm, pathWithKnownBins, resolveDshLauncher } from './process-utils';
+import {
+  dshArgsFor,
+  findPnpm,
+  homeDir,
+  pathWithKnownBins,
+  resolveDshLauncher,
+} from './process-utils';
 import { resolveDshHome } from './session-archive';
 import type { Settings, SettingsValues } from './settings';
 import type {
@@ -584,6 +590,10 @@ class PluginRunner {
     return await new Promise((resolve) => {
       const child = spawn(file, args, {
         env,
+        // cwd 必须固定：相对路径（`./hello-plugin`）由 dsh 按**调用目录**解析，
+        // 而继承来的 cwd 是 Electron 的启动目录（从 Finder 起可能是 /）—— 那样
+        // 用户填的相对路径会莫名其妙地找不到。固定成主目录，界面上也这么写。
+        cwd: homeDir(),
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

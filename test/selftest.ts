@@ -1444,6 +1444,8 @@ async function main(): Promise<void> {
     /spawn\(file, args/.test(pluginSource) &&
       /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&
       /stdio: \['ignore', 'pipe', 'pipe'\]/.test(pluginSource) &&
+      // 相对路径按 cwd 解析，cwd 不能继承（Electron 的启动目录不可预测）
+      /cwd: homeDir\(\)/.test(pluginSource) &&
       !/shell:\s*true/.test(pluginSource) &&
       /child\.stderr\?\.on\('data', collect\)/.test(pluginSource),
   );

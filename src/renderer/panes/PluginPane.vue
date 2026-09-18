@@ -408,7 +408,7 @@ function clearFilters(): void {
       >
         安装
       </button>
-      <span class="bar-hint">代码从网络取；git 源建议固定 commit sha</span>
+      <span class="bar-hint">代码从网络取；本地目录的相对路径按主目录解析，建议写绝对路径</span>
       <span v-if="data?.pnpm && !data.pnpm.found" class="plugin-tag warn">没找到 pnpm</span>
     </div>
 
