@@ -1,7 +1,7 @@
 {
   "name": "dsh-console",
   "productName": "DSH Console",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Desktop console for DeepSeek Harness (Windows / macOS): start/stop dsh, monitor its service health, and watch it in a real terminal.",
   "main": "dist/main/main.js",
