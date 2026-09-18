@@ -457,6 +457,26 @@ export interface PluginOpResult {
   code?: number | null;
   error?: string;
   summary?: string | null;
+  /**
+   * 这个包是随 dsh 装好的内置包、**而且你还没启用它**时给出来：界面据此在现场给一个
+   * 「插进我的层」按钮（而不是让用户自己去翻 cordis.patch.yml）。
+   */
+  needsEnable?: { id: string; name: string };
+}
+
+/** 改「你自己的补丁层」的四个动作：插入 / 禁用 / 启用 / 移除自己的插入 */
+export type PluginLayerEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert';
+
+/** 改完的结果：是否落盘、改了哪个文件、备份到哪、改完的原文 */
+export interface PluginLayerEditResult {
+  ok: boolean;
+  error?: string;
+  changed?: boolean;
+  /** 一句人话：做了什么 / 为什么没做（界面直接显示） */
+  detail?: string;
+  file?: string;
+  backup?: string | null;
+  content?: string;
 }
 
 /** 装/卸/升级时边跑边推的输出片段（界面把它们原样贴进输出区） */
@@ -546,6 +566,12 @@ export interface DshConsoleApi {
   pluginInspect: () => Promise<PluginInspectResult>;
   pluginRun: (request: { action: PluginOpAction; spec: string }) => Promise<PluginOpResult>;
   pluginCancel: () => Promise<boolean>;
+  /** 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）；只动 profile 的 cordis.patch.yml */
+  pluginEditLayer: (request: {
+    action: PluginLayerEditAction;
+    id: string;
+    name?: string;
+  }) => Promise<PluginLayerEditResult>;
   onPluginOutput: (handler: (payload: PluginOutputEvent) => void) => () => void;
 
   onState: (handler: (snapshot: DshSnapshot) => void) => () => void;

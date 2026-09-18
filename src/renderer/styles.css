@@ -2399,6 +2399,24 @@ body[data-immersive='true'] .webview-wrap {
   line-height: 1.7;
 }
 
+/* 输出区里的动作（内置包被拦下时的「插进我的层」） */
+.plugin-op-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* 生效配置每行右侧的「禁用 / 启用 / 移除我的插入」：不抢条目宽度，靠右对齐 */
+.plugin-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
 /* 运行状态：只有在拿到运行中清单时才出现（拿不到就什么都不标，不猜） */
 .plugin-state {
   display: inline-flex;

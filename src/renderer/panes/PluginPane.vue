@@ -18,6 +18,7 @@ import { computed, ref, watch } from 'vue';
 import { currentTab } from '../lib/store.js';
 import type {
   PluginEntry,
+  PluginLayerEditAction,
   PluginOpAction,
   PluginInspectResult,
   PluginLayer,
@@ -85,6 +86,8 @@ const opTitle = ref('');
 const opText = ref('');
 const opStatus = ref<'' | 'running' | 'ok' | 'failed'>('');
 const opSummary = ref('');
+/** 内置包被拦下时的"插进我的层"（主进程给的 id + 包名） */
+const opNeedsEnable = ref<{ id: string; name: string } | null>(null);
 const pendingRestart = ref(false);
 
 const opStateLabel = computed(() => {
@@ -126,6 +129,7 @@ async function startOp(action: PluginOpAction, spec: string): Promise<void> {
   opStatus.value = 'running';
   opText.value = '';
   opSummary.value = '';
+  opNeedsEnable.value = null;
   opOpen.value = true;
   view.value = 'stack';
   opTitle.value = `dsh plugin --profile web ${action} ${target}`.trimEnd();
@@ -134,6 +138,8 @@ async function startOp(action: PluginOpAction, spec: string): Promise<void> {
   opBusy.value = false;
   opStatus.value = result.ok ? 'ok' : 'failed';
   opSummary.value = result.summary || result.error || '';
+  // 内置包、而且还没启用：就地给一个「插进我的层」，别让人自己去翻 cordis.patch.yml
+  opNeedsEnable.value = result.needsEnable ?? null;
 
   if (result.ok) {
     pendingRestart.value = true;
@@ -147,6 +153,63 @@ async function startOp(action: PluginOpAction, spec: string): Promise<void> {
           ? '已移除，重启 dsh 后生效'
           : '已升级，重启 dsh 后生效',
     );
+  }
+}
+
+// ---------------------------------------------------------------- 改你自己的补丁层
+//
+// 三个动作都只写 profile 的 `cordis.patch.yml`（用户层），主进程会先备份再原子写；
+// 这一层是 patchReload: live，所以改完即时生效、不需要重启 dsh —— 界面上不能写成"要重启"。
+
+const LAYER_ACTIONS: Record<PluginLayerEditAction, string> = {
+  insert: '插进我的层',
+  disable: '禁用',
+  enable: '启用',
+  'remove-insert': '移除我的插入',
+};
+
+/** 你自己那张补丁层的文件路径（层栈里 kind 是 profile-patch）；拿不到就没法改 */
+const myPatchPath = computed(
+  () => data.value?.layers?.find((layer) => layer.kind === 'profile-patch')?.name ?? '',
+);
+
+/** 这一组条目是不是你自己那张补丁层插入的（是的话可以整条移除） */
+function isMyLayer(source: string): boolean {
+  return myPatchPath.value !== '' && source === myPatchPath.value;
+}
+
+async function editLayer(action: PluginLayerEditAction, id: string, name?: string): Promise<void> {
+  if (opBusy.value) return;
+  const where = myPatchPath.value || 'profile 的 cordis.patch.yml';
+  const detail =
+    action === 'insert'
+      ? `会往你自己的补丁层加一条 insert（id: ${id}，name: ${name ?? ''}）。写之前先备份原文件，只改这一处；这一层是即时生效的，不用重启 dsh。`
+      : `会改你自己的补丁层 ${where}。写之前先备份原文件（.bak-时间戳），只改匹配到的那一段；这一层是即时生效的，不用重启 dsh。`;
+  const ok = await api.confirm({
+    type: 'warning',
+    title: `${LAYER_ACTIONS[action]}：${id}`,
+    message: where,
+    detail,
+  });
+  if (!ok) return;
+
+  const result = await api.pluginEditLayer({ action, id, name });
+  opNeedsEnable.value = null;
+  opOpen.value = true;
+  opTitle.value = `${LAYER_ACTIONS[action]}：${id}`;
+  opStatus.value = result.ok ? 'ok' : 'failed';
+  opText.value = result.content ?? '';
+  const wrote =
+    result.changed && result.file
+      ? `写到 ${result.file}${result.backup ? `（改动前的原文已备份到 ${result.backup}）` : ''}`
+      : '';
+  opSummary.value = result.ok
+    ? [result.detail, wrote].filter(Boolean).join('—— ')
+    : result.error || '改不了你的补丁层';
+  if (result.ok) {
+    await load();
+    view.value = 'config';
+    say(result.detail ?? '补丁层已更新');
   }
 }
 
@@ -659,6 +722,26 @@ function clearFilters(): void {
                   :data-phase="liveState(entry.id)?.fiberPhase"
                   >{{ stateLabel(liveState(entry.id)?.fiberPhase ?? null) }}</span
                 >
+                <!-- 改你自己的补丁层：禁用/启用是"写一条覆盖"，移除只对自己插入的条目开放 -->
+                <span class="plugin-entry-actions">
+                  <button
+                    class="btn tiny"
+                    :disabled="opBusy"
+                    :title="`在你自己的补丁层里${entry.disabled ? '去掉' : '加上'} disabled`"
+                    @click="editLayer(entry.disabled ? 'enable' : 'disable', entry.id)"
+                  >
+                    {{ entry.disabled ? '启用' : '禁用' }}
+                  </button>
+                  <button
+                    v-if="isMyLayer(group.source)"
+                    class="btn tiny"
+                    :disabled="opBusy"
+                    title="从你的补丁层里删掉这条插入"
+                    @click="editLayer('remove-insert', entry.id)"
+                  >
+                    移除我的插入
+                  </button>
+                </span>
               </li>
             </ul>
           </template>
@@ -705,6 +788,20 @@ function clearFilters(): void {
         </div>
         <pre class="plugin-op-out">{{ opText || '（等待输出…）' }}</pre>
         <p v-if="opSummary" class="plugin-op-summary">{{ opSummary }}</p>
+        <!-- 内置包被拦下、而且还没启用：就地给一个按钮，不用自己去翻 cordis.patch.yml -->
+        <div v-if="opNeedsEnable" class="plugin-op-actions">
+          <button
+            class="btn small primary"
+            :disabled="opBusy"
+            @click="editLayer('insert', opNeedsEnable.id, opNeedsEnable.name)"
+          >
+            插进我的层
+          </button>
+          <span class="bar-hint">
+            往你的补丁层加一条 insert（id:
+            {{ opNeedsEnable.id }}），写之前备份原文件；这一层即时生效
+          </span>
+        </div>
       </div>
     </template>
   </div>

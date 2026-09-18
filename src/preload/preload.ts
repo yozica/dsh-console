@@ -68,6 +68,7 @@ const api: DshConsoleApi = {
   pluginInspect: () => ipcRenderer.invoke('plugin:inspect'),
   pluginRun: (request) => ipcRenderer.invoke('plugin:run', request),
   pluginCancel: () => ipcRenderer.invoke('plugin:cancel'),
+  pluginEditLayer: (request) => ipcRenderer.invoke('plugin:edit-layer', request),
 
   // 事件
   onState: (handler) => subscribe('dsh:state', handler),

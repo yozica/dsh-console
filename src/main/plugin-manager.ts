@@ -28,6 +28,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { applyPatchEdit, type PatchEditRequest, type PatchEditResult } from './patch-layer';
 import {
   dshArgsFor,
   findPnpm,
@@ -528,8 +529,9 @@ function profilePatchEnables(packageName: string): boolean {
   }
 }
 
-/** 从 spec 里取出包名（去掉版本/标签）：`@scope/name@1.2.3` → `@scope/name` */
-export function packageNameOf(spec: string): string {
+/** 从 spec 里取出包名（去掉版本/标签）：`@scope/name@1.2.3` → `@scope/name` */ export function packageNameOf(
+  spec: string,
+): string {
   const trimmed = spec.trim();
   if (trimmed.startsWith('@')) {
     const scoped = /^(@[^/]+\/[^@]+)/.exec(trimmed);
@@ -537,6 +539,15 @@ export function packageNameOf(spec: string): string {
   }
   const at = trimmed.indexOf('@');
   return at === -1 ? trimmed : trimmed.slice(0, at);
+}
+
+/**
+ * 给一个内置包起一个条目 id：`@deepseek-ai/dsh-time-context` → `time-context`。
+ * 这是"插进你的层"时那条 insert 的 id（真机上用户自己那条就是这么写的）。
+ */
+export function suggestEntryId(packageName: string): string {
+  const base = packageName.split('/').pop() ?? packageName;
+  return base.replace(/^dsh-/, '');
 }
 
 /**
@@ -728,11 +739,15 @@ class PluginRunner {
           ? path.dirname(path.dirname(launcher.prefixArgs[0]))
           : null;
       if (name && dshRoot && resolveModuleDir(name, [dshRoot]) !== null) {
+        const enabled = profilePatchEnables(name);
+        const id = suggestEntryId(name);
         return {
           ok: false,
-          error: profilePatchEnables(name)
+          error: enabled
             ? `「${name}」是随 dsh 一起装好的内置插件，而且你自己的 patch 层里已经 insert 了它 —— 它已经启用了，这里不需要装任何东西（插件页左边「你的层」那一栏就是它）。内置包的分发不经过 registry，所以 registry 上也确实没有"装了就能用"这回事。`
             : `「${name}」是随 dsh 一起装好的内置插件（已经在 dsh 安装目录里），不需要用 pnpm 再装一遍。要启用它，请在 profile 的 cordis.patch.yml 里 insert 一行 —— 插件页左边「你的层」那一栏就是它。`,
+          // 还没启用时，界面就地给一个「插进我的层」按钮（见 PluginPane 的输出区）
+          ...(enabled ? {} : { needsEnable: { id, name } }),
         };
       }
     }
@@ -957,6 +972,17 @@ export class PluginManager {
     onOutput: (chunk: string) => void,
   ): Promise<PluginOpResult> {
     return await this.runner.run(action, spec, onOutput);
+  }
+
+  /**
+   * 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）。
+   *
+   * **只写 profile 的 `cordis.patch.yml`** —— 那是 profile 级的用户层，不影响 `$DSH_HOME`
+   * 级的 `cordis.patch.yml`，也不碰各 bundle。落盘前会备份、原子写；细节见 patch-layer.ts。
+   * 这一层是 `patchReload: live`，所以改完即时生效（界面照实写，不催重启）。
+   */
+  editLayer(request: PatchEditRequest): PatchEditResult {
+    return applyPatchEdit(this.profileDir(), request);
   }
 
   cancelOperation(): boolean {

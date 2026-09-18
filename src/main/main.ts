@@ -47,6 +47,8 @@ import type {
   DshOutputEvent,
   EnvInfo,
   PluginInspectResult,
+  PluginLayerEditAction,
+  PluginLayerEditResult,
   PluginOpAction,
   PluginOpResult,
   RenameSessionResult,
@@ -862,6 +864,39 @@ function registerIpc(): void {
   );
 
   ipcMain.handle('plugin:cancel', (): boolean => pluginManager.cancelOperation());
+
+  // 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）：只动 profile 的 cordis.patch.yml，
+  // 写之前备份。这一层是 patchReload: live —— 改完即时生效，不用重启 dsh。
+  ipcMain.handle(
+    'plugin:edit-layer',
+    (_event: IpcMainInvokeEvent, request: unknown): PluginLayerEditResult => {
+      try {
+        const { action, id, name } = (request ?? {}) as {
+          action?: PluginLayerEditAction;
+          id?: string;
+          name?: string;
+        };
+        if (
+          action !== 'disable' &&
+          action !== 'enable' &&
+          action !== 'insert' &&
+          action !== 'remove-insert'
+        ) {
+          return { ok: false, error: '不认识的操作' };
+        }
+        const result = pluginManager.editLayer({ action, id: String(id ?? ''), name });
+        dshManager.log(
+          'info',
+          result.changed
+            ? `补丁层已更新：${result.detail ?? action}（${result.file ?? ''}）`
+            : `补丁层未改动：${result.detail ?? action}`,
+        );
+        return result;
+      } catch (error) {
+        return { ok: false, error: messageOf(error) };
+      }
+    },
+  );
 }
 
 function wireManagerEvents(): void {

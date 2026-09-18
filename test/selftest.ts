@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process';
 
 import * as processUtils from '../src/main/process-utils';
 import * as pluginManager from '../src/main/plugin-manager';
+import * as patchLayer from '../src/main/patch-layer';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
 import { PtySessions } from '../src/main/pty-sessions';
@@ -1559,7 +1560,103 @@ async function main(): Promise<void> {
   );
   check(
     '插件安装：内置包要分清"还没启用"与"你已经启用了"（两种话说得不一样）',
-    /profilePatchEnables\(name\)/.test(pluginSource),
+    /profilePatchEnables\(name\)/.test(pluginSource) && /needsEnable/.test(pluginSource),
+  );
+
+  // ---------------------------------------------------------- 补丁层：改你自己的覆盖
+  //    这是唯一会**写用户文件**的地方，所以钉三件事：只动匹配到的那一段（往返一致）、
+  //    找不齐就不写（不猜）、写盘前先备份。夹具是那台机器上真实的 cordis.patch.yml。
+  const realPatch = fixture('profile-cordis.patch.yml');
+  check(
+    '补丁层：禁用 / 启用只动匹配到的那一段（往返之后与原文一字不差）',
+    (() => {
+      const disabled = patchLayer.disableEntry(realPatch, 'time-context');
+      const back = patchLayer.enableEntry(disabled.text, 'time-context');
+      return (
+        disabled.changed &&
+        /^\s+disabled: true$/m.test(disabled.text) &&
+        // 注释与缩进都不能被改没
+        disabled.text.includes('# 想恢复成"什么都不改"') &&
+        disabled.text.includes("name: '@deepseek-ai/dsh-time-context'") &&
+        back.changed &&
+        back.text === realPatch
+      );
+    })(),
+  );
+  check(
+    '补丁层：层里没有那条时，禁用 = 加一条覆盖，启用 = 把它整条删掉（回到原样）',
+    (() => {
+      const disabled = patchLayer.disableEntry(realPatch, 'timer');
+      const back = patchLayer.enableEntry(disabled.text, 'timer');
+      return (
+        disabled.changed &&
+        disabled.text.includes('- id: timer\n  disabled: true') &&
+        back.changed &&
+        // 只为禁用而存在的那条要整条消失，不能留下一条空的 `- id: timer`
+        !back.text.includes('- id: timer') &&
+        back.text === realPatch
+      );
+    })(),
+  );
+  check(
+    '补丁层：插入不重复；移除只对自己插入的条目开放（覆盖条目不动它）',
+    (() => {
+      const once = patchLayer.insertPlugin(realPatch, 'hello', 'dsh-hello-plugin');
+      const twice = patchLayer.insertPlugin(once.text, 'hello', 'dsh-hello-plugin');
+      const removed = patchLayer.removeInsert(once.text, 'hello');
+      const refused = patchLayer.removeInsert(
+        patchLayer.disableEntry(realPatch, 'timer').text,
+        'timer',
+      );
+      return (
+        once.changed &&
+        !twice.changed &&
+        removed.changed &&
+        removed.text === realPatch &&
+        // 只为禁用而写的 `- id: timer` 不是 insert，这个动作不碰它
+        !refused.changed &&
+        refused.text.includes('- id: timer')
+      );
+    })(),
+  );
+  check(
+    '补丁层：写盘前先备份、原子写；id 不合法就一个字节都不写',
+    (() => {
+      const dir = path.join(sandbox, 'patch-layer');
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'cordis.patch.yml');
+      fs.writeFileSync(file, realPatch, 'utf8');
+
+      const inserted = patchLayer.applyPatchEdit(dir, {
+        action: 'insert',
+        id: 'hello',
+        name: 'dsh-hello-plugin',
+      });
+      const after = fs.readFileSync(file, 'utf8');
+      const backup = inserted.backup ? fs.readFileSync(inserted.backup, 'utf8') : '';
+      const bad = patchLayer.applyPatchEdit(dir, { action: 'disable', id: 'bad id!' });
+
+      return (
+        inserted.ok &&
+        inserted.changed === true &&
+        Boolean(
+          inserted.backup && path.basename(inserted.backup).startsWith('cordis.patch.yml.bak-'),
+        ) &&
+        after.includes('- id: hello') &&
+        // 备份里必须是改动前的原文
+        backup === realPatch &&
+        bad.ok === false &&
+        fs.readFileSync(file, 'utf8') === after
+      );
+    })(),
+  );
+  check(
+    '插件页：条目上有禁用 / 启用，内置包被拦下时给「插进我的层」',
+    /editLayer\(entry\.disabled \? 'enable' : 'disable', entry\.id\)/.test(vueSource) &&
+      /editLayer\('remove-insert', entry\.id\)/.test(vueSource) &&
+      /opNeedsEnable/.test(vueSource) &&
+      /pluginEditLayer/.test(flatIpc),
   );
   check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
