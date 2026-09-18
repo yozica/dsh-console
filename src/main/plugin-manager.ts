@@ -981,8 +981,43 @@ export class PluginManager {
    * 级的 `cordis.patch.yml`，也不碰各 bundle。落盘前会备份、原子写；细节见 patch-layer.ts。
    * 这一层是 `patchReload: live`，所以改完即时生效（界面照实写，不催重启）。
    */
-  editLayer(request: PatchEditRequest): PatchEditResult {
-    return applyPatchEdit(this.profileDir(), request);
+  async editLayer(request: PatchEditRequest): Promise<PatchEditResult> {
+    const result = applyPatchEdit(this.profileDir(), request);
+    if (!result.ok || !result.changed || !result.file) return result;
+
+    // 回读验证：这是我们唯一会写的**用户文件**，"dsh 认不认"必须当场知道，不能等用户
+    // 下次打开插件页才发现（真机事故：移除最后一条 insert 之后文件只剩注释，dsh 判它不是
+    // 顶层数组，整个插件页读不出来）。只有失败指向这份 overlay 时才回滚 —— dsh 因为别的
+    // 原因跑不起来（解释器不对等）不该把一次正确的改动撤掉。
+    try {
+      await runDump(this.settings.all());
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // 必须"点名到这份文件"才算我们写坏了：别的 overlay（比如 $DSH_HOME 级那份）坏了，
+      // 不该把这次正确的改动撤掉。
+      const blamed = result.file !== undefined && message.includes(result.file);
+      if (!blamed || !/top-level YAML array|overlay/i.test(message)) return result;
+      const restored = this.rollbackEdit(result);
+      return {
+        ok: false,
+        file: result.file,
+        backup: result.backup,
+        error: `${message}${restored ? ' —— 已经把补丁层回滚到改动前的内容，没有写坏。' : ' —— 回滚也没成功，请从备份文件手工恢复。'}`,
+      };
+    }
+  }
+
+  /** 把上一次改动用备份还原（没有备份说明改动前这个文件不存在，那就删掉它） */
+  private rollbackEdit(result: PatchEditResult): boolean {
+    if (!result.file) return false;
+    try {
+      if (result.backup) fs.copyFileSync(result.backup, result.file);
+      else fs.rmSync(result.file, { force: true });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   cancelOperation(): boolean {

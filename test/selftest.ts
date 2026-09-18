@@ -1629,6 +1629,32 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '补丁层：删完最后一条要留下一个顶层数组（只剩注释 dsh 会直接报错）',
+    (() => {
+      // 真机事故：移除最后一条 insert 之后文件只剩注释，dsh 判它不是顶层数组，
+      // 整个插件页读不出来（overlay … must be a top-level YAML array of loader patch entries）。
+      const only = "- insert:\n    - id: hello\n      name: 'dsh-hello-plugin'\n";
+      const removed = patchLayer.removeInsert(only, 'hello');
+      const inserted = patchLayer.insertPlugin('# 只有注释\n', 'hello', 'dsh-hello-plugin');
+      return (
+        removed.changed &&
+        /^\[\]$/m.test(removed.text) &&
+        !/^- /m.test(removed.text) &&
+        // 从"只有注释"的文件开始插入，也要是合法数组（注释 + 条目，不需要 []）
+        inserted.changed &&
+        /^- insert:/m.test(inserted.text) &&
+        !/^\[\]$/m.test(inserted.text)
+      );
+    })(),
+  );
+  check(
+    '补丁层：写完回读验证，只有失败点名到这份 overlay 时才回滚',
+    /await runDump\(this\.settings\.all\(\)\)/.test(pluginSource) &&
+      /rollbackEdit\(result\)/.test(pluginSource) &&
+      /top-level YAML array\|overlay/.test(pluginSource) &&
+      /message\.includes\(result\.file\)/.test(pluginSource),
+  );
+  check(
     '补丁层：写盘前先备份、原子写；id 不合法就一个字节都不写',
     (() => {
       const dir = path.join(sandbox, 'patch-layer');

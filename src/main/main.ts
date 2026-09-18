@@ -869,7 +869,7 @@ function registerIpc(): void {
   // 写之前备份。这一层是 patchReload: live —— 改完即时生效，不用重启 dsh。
   ipcMain.handle(
     'plugin:edit-layer',
-    (_event: IpcMainInvokeEvent, request: unknown): PluginLayerEditResult => {
+    async (_event: IpcMainInvokeEvent, request: unknown): Promise<PluginLayerEditResult> => {
       try {
         const { action, id, name } = (request ?? {}) as {
           action?: PluginLayerEditAction;
@@ -884,7 +884,7 @@ function registerIpc(): void {
         ) {
           return { ok: false, error: '不认识的操作' };
         }
-        const result = pluginManager.editLayer({ action, id: String(id ?? ''), name });
+        const result = await pluginManager.editLayer({ action, id: String(id ?? ''), name });
         dshManager.log(
           'info',
           result.changed

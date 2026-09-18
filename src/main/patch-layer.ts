@@ -61,6 +61,8 @@ const ID_RE = /^(\s*)(?:-\s*)?id:\s*['"]?([^'"\s]+)['"]?\s*$/;
 const DISABLED_TRUE_RE = /^\s*disabled:\s*true\s*$/;
 const DISABLED_FALSE_RE = /^\s*disabled:\s*false\s*$/;
 const COMMENT_RE = /^\s*#/;
+/** 空的顶层数组：`[]`（dsh 要求这份文件是数组，不能只有注释） */
+const EMPTY_ARRAY_RE = /^\s*\[\s*\]\s*$/;
 /** id 允许的字符：跟 dump 里的 id 一致，也避免往 YAML 里写进奇怪的东西 */
 const ID_PATTERN = /^[A-Za-z0-9_$.-]+$/;
 /** 包名允许的字符（比 npm 的规范更严一点，够用且安全） */
@@ -81,11 +83,25 @@ function splitLines(text: string): string[] {
   return text.length === 0 ? [] : text.replace(/\r\n/g, '\n').split('\n');
 }
 
-/** 统一收尾：末尾恰好一个换行（空文件就是空串） */
+/**
+ * 统一收尾，两件事：
+ *
+ *   1. 末尾恰好一个换行；
+ *   2. **保证文件里有一个顶层数组**。dsh 对这份文件的判据是"顶层 YAML 数组"，只剩注释
+ *      （或什么都没有）会被解析成 null，直接报 `overlay … must be a top-level YAML array of
+ *      loader patch entries` —— 真机上就这么把插件页读挂过一次（移除最后一条 insert 之后）。
+ *      所以没有条目时必须留一个 `[]`，dsh 自己的模板注释里也是这么写的。
+ */
 function joinLines(lines: string[]): string {
   const kept = [...lines];
   while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
-  return kept.length === 0 ? '' : `${kept.join('\n')}\n`;
+  const hasItem = kept.some((line) => ITEM_RE.test(line));
+  const hasEmptyArray = kept.some((line) => EMPTY_ARRAY_RE.test(line));
+  if (!hasItem && !hasEmptyArray) {
+    if (kept.length > 0) kept.push('');
+    kept.push('[]');
+  }
+  return `${kept.join('\n')}\n`;
 }
 
 /** 拆出所有条目（嵌套的也算），并标出各自的范围 */
