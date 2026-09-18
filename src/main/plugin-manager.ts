@@ -540,8 +540,11 @@ export function parsePluginSpec(raw: string): PluginSpec | null {
 /**
  * 把 dsh / pnpm 的原始输出归纳成一句人话；认不出来就返回 null，
  * 让界面老老实实显示原文，而不是编一个原因。
+ *
+ * `requested` 是用户填的 spec（只对 npm 包有意义）：pnpm 404 时缺的常常**不是**用户
+ * 写的那个包，而是它某个依赖 —— 不点破这一层，用户会一直去怀疑自己的包名。
  */
-export function summarizePluginFailure(output: string): string | null {
+export function summarizePluginFailure(output: string, requested?: string): string | null {
   const text = output.slice(-OP_TAIL_CHARS);
   if (/pnpm not found on PATH/i.test(text)) {
     return '没找到 pnpm —— `dsh plugin` 通过它管理插件。装一个 pnpm，或在设置里确认 PATH。';
@@ -552,7 +555,18 @@ export function summarizePluginFailure(output: string): string | null {
   if (/ADDING_TO_ROOT|workspace root/i.test(text)) {
     return 'pnpm 把 profile 当成 workspace root 拒了（加 -w 重试也没成）。可以检查 profile 里的 pnpm-workspace.yaml。';
   }
-  // 顺序要紧：淘宝旧镜像既会 404 又不该被说成"包不存在"
+  // 缺的是哪个包：pnpm 会把「没能取到的那个包」单独打一行。它和用户写的包常常不是
+  // 同一个 —— 这时按"包不存在"去解释会把人引向错的方向（实测：装
+  // @deepseek-ai/dsh-time-context，真正缺的是它依赖链上的 @deepseek-ai/dsh-type-meta，
+  // 而那个包在任何 registry 上都没有）。这条要在"淘宝镜像"之前判：换源救不了这种情况。
+  const missing = /^(@?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?) is not in the npm registry/m.exec(
+    text,
+  )?.[1];
+  const asked = requested ? packageNameOf(requested) : null;
+  if (missing && asked && missing !== asked) {
+    return `缺的不是你写的「${asked}」，而是它依赖的「${missing}」—— registry 上没有它。换源也未必有用。`;
+  }
+  // 淘宝旧镜像既会 404 又不该被说成"包不存在"
   if (/registry\.npm\.taobao\.org/i.test(text)) {
     return 'registry 链到了已停服的淘宝旧镜像（registry.npm.taobao.org）—— 换一个能用的源再试，例如 https://registry.npmmirror.com。';
   }
@@ -648,6 +662,9 @@ class PluginRunner {
     const parsed = parsePluginSpec(spec);
     if (!parsed) return { ok: false, error: '请填写要安装的包名或路径' };
 
+    // 归纳失败原因时只对 npm 包带上"用户写的包名"（本地目录 / git 的 spec 不是包名）
+    const requested = parsed.kind === 'npm' ? spec : undefined;
+
     const launcher = resolveDshLauncher(this.settings.all());
 
     // 内置包（随 dsh 装好的）装了也白装：它不在"从 registry 取"的路径上，而且
@@ -693,9 +710,13 @@ class PluginRunner {
       const retry = await this.spawnOnce(launcher.file, argsFor(['-w']), env, onOutput);
       if (retry.error) return { ok: false, code: null, error: retry.error };
       if (retry.code === 0) return { ok: true, code: retry.code };
-      return { ok: false, code: retry.code, summary: summarizePluginFailure(retry.tail) };
+      return {
+        ok: false,
+        code: retry.code,
+        summary: summarizePluginFailure(retry.tail, requested),
+      };
     }
-    return { ok: false, code: first.code, summary: summarizePluginFailure(first.tail) };
+    return { ok: false, code: first.code, summary: summarizePluginFailure(first.tail, requested) };
   }
 }
 

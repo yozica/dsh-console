@@ -1463,6 +1463,26 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件安装：404 缺的是依赖、不是你要的那个包时，要指名道姓（夹具是真实输出）',
+    (() => {
+      const real = fixture('pnpm-missing-dep.stderr.txt');
+      const hint = pluginManager.summarizePluginFailure(real, '@deepseek-ai/dsh-time-context');
+      return (
+        Boolean(hint?.includes('@deepseek-ai/dsh-type-meta')) &&
+        Boolean(hint?.includes('@deepseek-ai/dsh-time-context')) &&
+        !hint?.includes('名字或版本可能不对')
+      );
+    })(),
+  );
+  check(
+    '插件安装：缺的正是你要的那个包时，仍按"包不存在"说（并把主机名带出来）',
+    (() => {
+      const real = fixture('pnpm-missing-dep.stderr.txt');
+      const hint = pluginManager.summarizePluginFailure(real, '@deepseek-ai/dsh-type-meta');
+      return Boolean(hint?.includes('registry.example.com')) && !hint?.includes('依赖');
+    })(),
+  );
+  check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
     /spawn\(file, args/.test(pluginSource) &&
       /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&
