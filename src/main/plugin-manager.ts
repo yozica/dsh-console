@@ -510,6 +510,29 @@ export function packageNameOf(spec: string): string {
   return at === -1 ? trimmed : trimmed.slice(0, at);
 }
 
+/**
+ * 把设置里的"插件安装源"变成子进程环境变量；留空或写错都返回空对象（= 跟随系统 npm 配置）。
+ *
+ * 只认 http(s) 的 URL：pnpm 也接受 `registry.npmjs.org` 这种裸主机，但那更容易写错，
+ * 而写错的代价是"装不上"而不是"报错说配置错了" —— 宁可让它退回系统配置。
+ * 注意这是**注入给那一次 `dsh plugin` 子进程**（`npm_config_registry`），
+ * 不碰用户的 `~/.npmrc`，也不影响别的项目。
+ */
+export function pluginRegistryEnv(raw: string | undefined): Record<string, string> {
+  const value = String(raw ?? '').trim();
+  if (value.length === 0) return {};
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return {};
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return {};
+  // 去掉末尾斜杠：pnpm 会把 `//` 拼成 `//`，报错信息里看着像另一个主机
+  const normalized = value.replace(/\/+$/, '');
+  return { npm_config_registry: normalized };
+}
+
 /** 认一下 spec 的类型；空值返回 null（界面据此禁用按钮） */
 export function parsePluginSpec(raw: string): PluginSpec | null {
   const spec = raw.trim();
@@ -696,10 +719,15 @@ class PluginRunner {
         ...extra,
         ...(action === 'update' && spec.trim() === '' ? [] : [spec]),
       ]);
+    // 安装源：设置里填了才覆盖，且只覆盖这一个子进程（见 pluginRegistryEnv）
+    const registryOverride = pluginRegistryEnv(this.settings.all().pluginRegistry);
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PATH: pathWithKnownBins(process.env.PATH),
+      ...registryOverride,
     };
+    const registry = registryOverride.npm_config_registry;
+    if (registry) onOutput(`（本次操作使用 registry：${registry}）\n`);
 
     const first = await this.spawnOnce(launcher.file, argsFor([]), env, onOutput);
     if (first.error) return { ok: false, code: null, error: first.error };
@@ -969,6 +997,8 @@ export class PluginManager {
         const found = findPnpm();
         return { found: found !== null, path: found };
       })(),
+      // 界面上要能看见"这次装会走哪个源"；null = 跟随系统 npm 配置
+      registry: pluginRegistryEnv(this.settings.all().pluginRegistry).npm_config_registry ?? null,
     };
   }
 }

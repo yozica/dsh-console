@@ -20,3 +20,9 @@
 `ERR_PNPM_ADDING_TO_ROOT` 拒掉（dsh 模板的 pnpm-workspace.yaml 缺少
 ignore-workspace-root-check），现在被拒时自动加 `-w` 重试一次；以及子进程的 PATH 补上了
 pnpm 所在目录（GUI 启动的应用 PATH 很窄）。
+
+还能单独指定安装源：「设置 → 插件安装源」填一个 registry（比如
+`https://registry.npmmirror.com`），它只作为环境变量传给那一次 pnpm —— **不改你电脑上的
+npm 配置，也不影响别的项目**；留空就跟随系统。当前生效的源显示在插件页的安装框旁边。
+另外 404 的提示不再笼统说"包不存在"：缺的是依赖而不是你写的那个包时会直接指名道姓，
+内置包也会在调用 pnpm 之前就被拦下并指路 patch 层。

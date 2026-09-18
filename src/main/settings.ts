@@ -43,6 +43,8 @@ export const DEFAULTS: SettingsValues = {
   uiFullscreenOnStart: true,
   /** 关闭应用时是否一并停止本应用启动的 dsh */
   killOnExit: true,
+  /** 插件装/卸/升级用的 npm registry；留空跟随系统 npm 配置（只注入给那一次子进程） */
+  pluginRegistry: '',
   /** 自动检查更新：启动后检查一次，之后每 6 小时一次（只提示，下载与安装都要用户点） */
   autoCheckUpdates: true,
   /** 状态轮询间隔（毫秒） */

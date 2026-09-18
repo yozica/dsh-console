@@ -23,6 +23,7 @@ const form = reactive({
   host: '127.0.0.1',
   port: 3080,
   dshCommand: '',
+  pluginRegistry: '',
   extraArgs: '',
   cwd: '',
   shell: '',
@@ -303,6 +304,27 @@ onUnmounted(() => {
           <label for="s-shell">本地 Shell</label>
           <input id="s-shell" type="text" placeholder="留空则自动选择" v-model.trim="form.shell" />
         </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <header class="panel-head"><h3>插件安装源</h3></header>
+      <div class="panel-block">
+        <div class="form-row">
+          <label for="s-pluginRegistry">registry</label>
+          <input
+            id="s-pluginRegistry"
+            type="text"
+            placeholder="留空则跟随系统 npm 配置"
+            v-model.trim="form.pluginRegistry"
+          />
+        </div>
+        <p class="hint">
+          只作用于插件页的装 / 卸 / 升级：作为子进程环境变量传给那一次 pnpm，<b
+            >不改电脑上的 npm 配置</b
+          >，也不影响别的项目。例如
+          <code>https://registry.npmmirror.com</code>
+        </p>
       </div>
     </section>
 

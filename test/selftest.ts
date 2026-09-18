@@ -1214,6 +1214,14 @@ async function main(): Promise<void> {
     '更新卡片：说明行由 canAutoUpdate 分支决定（Windows 才承诺下载/安装）',
     /const updateNote = computed[\s\S]{0,400}?update\.value\.canAutoUpdate/.test(settingsSource),
   );
+  check(
+    '设置页：表单字段都在设置契约里（键名写错只会静默不生效，看不出来）',
+    (() => {
+      const block = /const form = reactive\(\{([\s\S]*?)\n\}\)/.exec(settingsSource)?.[1] ?? '';
+      const keys = [...block.matchAll(/^\s{2}([A-Za-z][A-Za-z0-9]*):/gm)].map((m) => m[1]);
+      return keys.length >= 15 && keys.every((key) => key in DEFAULTS);
+    })(),
+  );
 
   // ---------------------------------------------------------- 16. 插件装配层（只读）
   //    这一层全靠"别人写的文件 + 别人打印的文本"：profile 的 package.json 与
@@ -1481,6 +1489,31 @@ async function main(): Promise<void> {
       const hint = pluginManager.summarizePluginFailure(real, '@deepseek-ai/dsh-type-meta');
       return Boolean(hint?.includes('registry.example.com')) && !hint?.includes('依赖');
     })(),
+  );
+  check(
+    '插件安装：安装源留空 / 写错都退回系统配置，填了才覆盖（只认 http(s)，末尾斜杠去掉）',
+    (() => {
+      const env = pluginManager.pluginRegistryEnv;
+      const effective = env(' https://registry.npmmirror.com/ ');
+      return (
+        env('').npm_config_registry === undefined &&
+        env('   ').npm_config_registry === undefined &&
+        // 裸主机名 / 非 http(s) 都当没填：写错的代价是"装不上"，不如退回系统配置
+        env('registry.npmjs.org').npm_config_registry === undefined &&
+        env('ftp://mirror.example.com').npm_config_registry === undefined &&
+        effective.npm_config_registry === 'https://registry.npmmirror.com' &&
+        env('http://127.0.0.1:4873').npm_config_registry === 'http://127.0.0.1:4873'
+      );
+    })(),
+  );
+  check(
+    '插件安装：安装源走子进程环境变量，不写用户的 .npmrc',
+    /pluginRegistry: string;/.test(flatIpc) &&
+      DEFAULTS.pluginRegistry === '' &&
+      /npm_config_registry/.test(pluginSource) &&
+      /pluginRegistryEnv\(this\.settings\.all\(\)\.pluginRegistry\)/.test(pluginSource) &&
+      // 只注入环境；一旦有人改成往磁盘写 .npmrc，就会动到用户全局配置
+      !/\.npmrc/.test(pluginSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')),
   );
   check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',

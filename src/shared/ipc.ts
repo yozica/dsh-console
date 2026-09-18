@@ -154,6 +154,11 @@ export interface SettingsValues {
   openUiOnStart: boolean;
   uiFullscreenOnStart: boolean;
   killOnExit: boolean;
+  /**
+   * 插件装/卸/升级用的 npm registry；留空则跟随系统 npm 配置。
+   * 只注入给 `dsh plugin` 那一次子进程（`npm_config_registry`），**不写用户的 .npmrc**。
+   */
+  pluginRegistry: string;
   /** 自动检查更新：启动后检查一次，之后每 6 小时一次（发现新版本仍要用户确认才下载） */
   autoCheckUpdates: boolean;
   pollIntervalMs: number;
@@ -491,6 +496,8 @@ export interface PluginInspectResult {
   liveError?: string;
   /** 装/卸/升级要 pnpm；`dsh plugin` 内部是裸 spawn('pnpm')，所以这里先把结论告诉界面 */
   pnpm?: { found: boolean; path: string | null };
+  /** 本次装/卸/升级实际走的源（设置里留空时为 null，含义是"跟随系统 npm 配置"） */
+  registry?: string | null;
 }
 
 /**

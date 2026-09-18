@@ -409,6 +409,9 @@ function clearFilters(): void {
         安装
       </button>
       <span class="bar-hint">代码从网络取；本地目录的相对路径按主目录解析，建议写绝对路径</span>
+      <span class="bar-hint">
+        源：{{ data?.registry || '跟随系统 npm 配置' }}（设置页「插件安装源」可改）
+      </span>
       <span v-if="data?.pnpm && !data.pnpm.found" class="plugin-tag warn">没找到 pnpm</span>
     </div>
 
