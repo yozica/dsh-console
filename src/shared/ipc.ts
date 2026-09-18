@@ -419,6 +419,14 @@ export interface PluginProblem {
   entryId?: string;
   /** parse-error：dsh 报的层标签（overlay / bundle 名） */
   layer?: string;
+  /** plain-dependency：装进来却不形成层的那个包名（界面据此给「卸掉它」） */
+  packageName?: string;
+  /**
+   * unmatched-patch：这一条所在的文件**是不是本页能改的那份**（profile 的
+   * `cordis.patch.yml`）。机器级的 `$DSH_HOME/cordis.patch.yml` 不在本页的能力范围里 ——
+   * 界面据此决定给不给「删掉这一行」，不给时要说明文件在哪。
+   */
+  editable?: boolean;
 }
 
 /** 运行中的 Loader 条目的 fiber 阶段（null = 没有存活的根 fiber，多半是被禁用/被覆盖了） */
@@ -465,7 +473,8 @@ export interface PluginOpResult {
 }
 
 /** 改「你自己的补丁层」的四个动作：插入 / 禁用 / 启用 / 移除自己的插入 */
-export type PluginLayerEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert';
+/** 涉及 patch 层的改动动作。`drop` = 删掉一条指向了不存在 id 的条目（巡检给的出路） */
+export type PluginLayerEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert' | 'drop';
 
 /** 改完的结果：是否落盘、改了哪个文件、备份到哪、改完的原文 */
 export interface PluginLayerEditResult {
@@ -518,6 +527,51 @@ export interface PluginInspectResult {
   pnpm?: { found: boolean; path: string | null };
   /** 本次装/卸/升级实际走的源（设置里留空时为 null，含义是"跟随系统 npm 配置"） */
   registry?: string | null;
+  /**
+   * profile 的 bundle 列表（带"是不是内置"）。**`ok: false` 时也给** —— dump 读不出来
+   * （比如某个 bundle 解析不到、dsh 因此起不来）时，救援条只能靠它点名"可以停用哪个"。
+   * 内置包不能停用（那是 dsh 自己的骨架），所以这里就把 `inBox` 标出来。
+   */
+  bundles?: { name: string; inBox: boolean }[];
+  /**
+   * true = 这份结果来自 `--dump-default-config`（dsh 自带的组合，**不含你的层**）。
+   * 配置被改坏时的救援视图，界面上必须写明"这不是你现在真正生效的配置"。
+   */
+  baseline?: boolean;
+}
+
+/** 补丁层的备份（救援时可以从这里恢复） */
+export interface PluginPatchBackup {
+  name: string;
+  path: string;
+  /** 修改时间（毫秒） */
+  at: number;
+  bytes: number;
+}
+
+/** 救援结果：修成空配置 / 列备份 / 从备份恢复，三种动作共用 */
+export interface PluginRescueResult {
+  ok: boolean;
+  error?: string;
+  changed?: boolean;
+  detail?: string;
+  file?: string;
+  backup?: string | null;
+  content?: string;
+  /** 只有 list-backups 会带 */
+  backups?: PluginPatchBackup[];
+}
+
+/** 救援动作：把一个 bundle 从 `dsh.profile.bundles` 里摘掉 / 放回原位 */
+export interface PluginBundleEditResult {
+  ok: boolean;
+  error?: string;
+  changed?: boolean;
+  detail?: string;
+  file?: string;
+  backup?: string | null;
+  /** 它原来的位置（0 起）：恢复时要带回来，否则层序会被改掉 */
+  index?: number;
 }
 
 /**
@@ -566,12 +620,33 @@ export interface DshConsoleApi {
   pluginInspect: () => Promise<PluginInspectResult>;
   pluginRun: (request: { action: PluginOpAction; spec: string }) => Promise<PluginOpResult>;
   pluginCancel: () => Promise<boolean>;
-  /** 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）；只动 profile 的 cordis.patch.yml */
+  /**
+   * 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入 / 删掉指向不存在 id 的条目）；
+   * 只动 profile 的 cordis.patch.yml
+   */
   pluginEditLayer: (request: {
     action: PluginLayerEditAction;
     id: string;
     name?: string;
   }) => Promise<PluginLayerEditResult>;
+  /** 只看 dsh 自带的组合结果（救援用；配置改坏时 `pluginInspect` 会失败，这条通常还能成） */
+  pluginDefaultConfig: () => Promise<PluginInspectResult>;
+  /**
+   * 救援：把你的补丁层修回可用状态。
+   * - `repair-empty`：只认"只剩注释/空文件"这一种坏法，补一个 `[]`
+   * - `list-backups`：列出 `cordis.patch.yml.bak-*`（最近的在前）
+   * - `restore-backup`：用指定备份覆盖（当前内容也会先备份，所以同样可逆）
+   */
+  pluginRescue: (request: {
+    action: 'repair-empty' | 'list-backups' | 'restore-backup';
+    backup?: string;
+  }) => Promise<PluginRescueResult>;
+  /** 临时停用 / 恢复一个 bundle（改 profile 的 dsh.profile.bundles，会先备份） */
+  pluginBundleEdit: (request: {
+    action: 'suspend' | 'restore';
+    name: string;
+    index?: number;
+  }) => Promise<PluginBundleEditResult>;
   onPluginOutput: (handler: (payload: PluginOutputEvent) => void) => () => void;
 
   onState: (handler: (snapshot: DshSnapshot) => void) => () => void;

@@ -15,7 +15,7 @@
  *     插件把启动打挂时，恰恰只有这一页还能看。
  */
 import { computed, ref, watch } from 'vue';
-import { currentTab } from '../lib/store.js';
+import { currentTab, snapshot } from '../lib/store.js';
 import type {
   PluginEntry,
   PluginLayerEditAction,
@@ -29,6 +29,15 @@ import type {
 const api = window.dshConsole;
 
 const data = ref<PluginInspectResult | null>(null);
+/**
+ * 救援视图：`--dump-default-config` 的结果（dsh 自带的组合，**不含你的层**）。
+ * 配置被改坏时 `pluginInspect` 会整条失败，而这条通常还能成 —— 它就是这个页面的出路。
+ */
+const baseline = ref<PluginInspectResult | null>(null);
+const baselineLoading = ref(false);
+const baselineError = ref('');
+/** 刚被临时停用的 bundle：能一键放回**原来的位置**（层序不能变） */
+const suspended = ref<{ name: string; index: number } | null>(null);
 const loading = ref(false);
 const error = ref('');
 const view = ref<'stack' | 'config'>('stack');
@@ -156,6 +165,204 @@ async function startOp(action: PluginOpAction, spec: string): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------- 救援（dsh 起不来 / 配置读坏）
+//
+// 这一页最大的性格：**dsh 挂掉时它还能用**（读磁盘、跑 dump 都不需要那个服务活着）。
+// 所以这里要有出路，而且必须是"摆出来的按钮"，不是一句错误信息。两条出路都留痕、可逆：
+//   1. 只看内置层（`--dump-default-config`，不解析你的层）—— 配置坏掉时它照样能成；
+//   2. 临时停用某个 bundle（摘掉后重启 dsh 就能起来，恢复时插回**原来的位置**，层序不变）。
+
+/** dsh 自己没起来时的原因（相位 + 最近一次异常退出；两者都没有就不显示救援条） */
+const bootFailure = computed<{ title: string; line: string } | null>(() => {
+  const state = snapshot.value?.dsh;
+  if (!state) return null;
+  if (state.phase === 'degraded') {
+    return { title: 'dsh 起来了，但一直没就绪', line: lastDshOutput() };
+  }
+  if (state.phase === 'stopped' && state.lastExit && state.lastExit.code !== 0) {
+    return { title: `dsh 启动失败（退出码 ${state.lastExit.code}）`, line: lastDshOutput() };
+  }
+  return null;
+});
+
+/** dsh 自己打印的那一行原因：主进程在非正常退出时会记成「dsh 输出：…」 */
+function lastDshOutput(): string {
+  const logs = snapshot.value?.dsh?.logs ?? [];
+  for (let i = logs.length - 1; i >= 0; i -= 1) {
+    if (logs[i].text.startsWith('dsh 输出：')) return logs[i].text.slice('dsh 输出：'.length);
+  }
+  return '';
+}
+
+/**
+ * 从失败那一行里认出一个**可以临时停用**的 bundle；认不出就 null —— 不硬猜。
+ *
+ * 两条路：层栈还在（正常情况）就用层栈里的名字；dump 都读不出来时（比如某个 bundle
+ * 解析不到、dsh 因此起不来）层栈是空的，只能退到 profile 的 bundle 清单 —— 但必须
+ * 排除内置包：停用 `@deepseek-ai/dsh-base` 等于把 dsh 拆了。
+ */
+const blamedName = computed<string | null>(() => {
+  const line = bootFailure.value?.line || error.value || '';
+  if (!line) return null;
+  const layer = data.value?.layers?.find(
+    (item) => item.kind === 'out-of-tree' && line.includes(item.name),
+  );
+  if (layer) return layer.name;
+  return data.value?.bundles?.find((item) => !item.inBox && line.includes(item.name))?.name ?? null;
+});
+
+/** 救援条出现条件：dsh 起不来、装配信息读不出来、或基线也读不出来 */
+const showRescue = computed(
+  () => Boolean(bootFailure.value) || Boolean(error.value) || Boolean(baselineError.value),
+);
+
+async function loadBaseline(): Promise<void> {
+  baselineLoading.value = true;
+  baselineError.value = '';
+  try {
+    const result = await api.pluginDefaultConfig();
+    if (!result.ok) {
+      baselineError.value = result.error || '内置层也读不出来';
+      return;
+    }
+    baseline.value = result;
+    view.value = 'config';
+    say('已切到内置层视图（不含你自己的层）');
+  } finally {
+    baselineLoading.value = false;
+  }
+}
+
+function backToFull(): void {
+  baseline.value = null;
+  baselineError.value = '';
+}
+
+const rescueBusy = ref(false);
+/** 备份清单（点「从备份恢复…」才去读；null = 没展开） */
+const backups = ref<{ name: string; path: string; at: number; bytes: number }[] | null>(null);
+
+/** 把一次操作的结果摊进输出区（跟补丁层那些动作同一套呈现） */
+function showOpResult(
+  title: string,
+  result: {
+    ok: boolean;
+    detail?: string;
+    error?: string;
+    backup?: string | null;
+    content?: string;
+  },
+): void {
+  opOpen.value = true;
+  opTitle.value = title;
+  opStatus.value = result.ok ? 'ok' : 'failed';
+  opText.value = result.content ?? '';
+  opSummary.value = result.ok
+    ? [result.detail, result.backup ? `改动前的原文已备份到 ${result.backup}` : '']
+        .filter(Boolean)
+        .join('—— ')
+    : result.error || '操作失败';
+}
+
+/** 修成空配置：只认"只剩注释 / 空文件"这一种坏法（真要恢复内容走备份） */
+async function repairLayer(): Promise<void> {
+  if (rescueBusy.value) return;
+  const ok = await api.confirm({
+    type: 'warning',
+    title: '把补丁层修成空配置',
+    message: 'cordis.patch.yml',
+    detail:
+      '只认"只剩注释 / 空文件"这一种坏法：往文件里补一个空的顶层数组（[]）。当前内容会先备份成 .bak-<时间戳>，所以这一步同样可逆；如果你的层里还有别的内容，它不会被改。',
+  });
+  if (!ok) return;
+  rescueBusy.value = true;
+  try {
+    const result = await api.pluginRescue({ action: 'repair-empty' });
+    showOpResult('修复补丁层', result);
+    if (result.ok) await refresh();
+  } finally {
+    rescueBusy.value = false;
+  }
+}
+
+async function loadBackups(): Promise<void> {
+  if (backups.value) {
+    backups.value = null;
+    return;
+  }
+  rescueBusy.value = true;
+  try {
+    const result = await api.pluginRescue({ action: 'list-backups' });
+    if (!result.ok) {
+      showOpResult('列备份', result);
+      return;
+    }
+    backups.value = result.backups ?? [];
+  } finally {
+    rescueBusy.value = false;
+  }
+}
+
+/** 用某个备份覆盖当前补丁层；当前内容同样会先备份，所以这一步也可逆 */
+async function restoreBackup(path: string): Promise<void> {
+  if (rescueBusy.value) return;
+  // Windows 上是反斜杠 —— 只按 '/' 切会拿到整条路径
+  const name = path.split(/[\\/]/).pop() || path;
+  const ok = await api.confirm({
+    type: 'warning',
+    title: `用备份恢复：${name}`,
+    message: 'cordis.patch.yml',
+    detail:
+      '会用这份备份覆盖当前补丁层。当前内容也会先备份一份（.bak-<时间戳>），所以恢复错了还能再回去。',
+  });
+  if (!ok) return;
+  rescueBusy.value = true;
+  try {
+    const result = await api.pluginRescue({ action: 'restore-backup', backup: path });
+    showOpResult(`用 ${name} 恢复`, result);
+    if (result.ok) {
+      backups.value = null;
+      await refresh();
+    }
+  } finally {
+    rescueBusy.value = false;
+  }
+}
+
+async function editBundle(action: 'suspend' | 'restore', name: string, index = -1): Promise<void> {
+  if (opBusy.value) return;
+  const suspending = action === 'suspend';
+  const ok = await api.confirm({
+    type: 'warning',
+    title: suspending ? `临时停用 ${name}` : `恢复 ${name}`,
+    message: 'profile 的 package.json',
+    detail: suspending
+      ? `会把它从 dsh.profile.bundles 里摘掉（写之前备份原文件）。bundle 列表是启动 dsh 时读的，所以做完要重启 dsh 才生效 —— 这是"插件把 dsh 弄挂了"时最快的出路，随时可以放回来。`
+      : `会把它插回 bundle 列表原来的位置（写之前备份原文件）。层序不能变，所以记着它原来在第几位。同样要重启 dsh 才生效。`,
+  });
+  if (!ok) return;
+
+  const result = await api.pluginBundleEdit({ action, name, index });
+  opOpen.value = true;
+  opTitle.value = `${suspending ? '临时停用' : '恢复'} ${name}`;
+  opStatus.value = result.ok ? 'ok' : 'failed';
+  opText.value = '';
+  opSummary.value = result.ok
+    ? [result.detail, result.backup ? `改动前的原文已备份到 ${result.backup}` : '']
+        .filter(Boolean)
+        .join('—— ')
+    : result.error || '改不了 profile 的 package.json';
+  if (!result.ok) return;
+
+  if (suspending && result.changed) {
+    suspended.value = { name, index: result.index ?? -1 };
+    pendingRestart.value = true;
+  }
+  if (!suspending) suspended.value = null;
+  await load();
+  say(result.detail ?? '已更新 bundle 列表，重启 dsh 后生效');
+}
+
 // ---------------------------------------------------------------- 改你自己的补丁层
 //
 // 三个动作都只写 profile 的 `cordis.patch.yml`（用户层），主进程会先备份再原子写；
@@ -166,6 +373,7 @@ const LAYER_ACTIONS: Record<PluginLayerEditAction, string> = {
   disable: '禁用',
   enable: '启用',
   'remove-insert': '移除我的插入',
+  drop: '删掉这一行',
 };
 
 /** 你自己那张补丁层的文件路径（层栈里 kind 是 profile-patch）；拿不到就没法改 */
@@ -184,7 +392,9 @@ async function editLayer(action: PluginLayerEditAction, id: string, name?: strin
   const detail =
     action === 'insert'
       ? `会往你自己的补丁层加一条 insert（id: ${id}，name: ${name ?? ''}）。写之前先备份原文件，只改这一处；这一层是即时生效的，不用重启 dsh。`
-      : `会改你自己的补丁层 ${where}。写之前先备份原文件（.bak-时间戳），只改匹配到的那一段；这一层是即时生效的，不用重启 dsh。`;
+      : action === 'drop'
+        ? `会从你自己的补丁层里删掉指向「${id}」的那一条 —— 它指向的条目不存在，dsh 每次启动都会忽略它，留着只会让人以为配置生效了。写之前先备份原文件（.bak-时间戳），只改匹配到的那一段。`
+        : `会改你自己的补丁层 ${where}。写之前先备份原文件（.bak-时间戳），只改匹配到的那一段；这一层是即时生效的，不用重启 dsh。`;
   const ok = await api.confirm({
     type: 'warning',
     title: `${LAYER_ACTIONS[action]}：${id}`,
@@ -236,7 +446,13 @@ watch(
 
 const layers = computed<PluginLayer[]>(() => data.value?.layers || []);
 const problems = computed<PluginProblem[]>(() => data.value?.problems || []);
-const treeLayers = computed(() => data.value?.treeLayers || []);
+const treeLayers = computed(() => baseline.value?.treeLayers || data.value?.treeLayers || []);
+
+/** 当前这一屏读的是哪份数据：基线（救援）还是完整配置 */
+const activeData = computed(() => baseline.value ?? data.value);
+
+/** 会话插件行数（来自运行中的 dsh；基线视图里没有它） */
+const presets = computed(() => (baseline.value ? [] : (data.value?.live?.presets ?? [])));
 
 const selectedIndex = ref(0);
 const selected = computed<PluginLayer | null>(() => layers.value[selectedIndex.value] || null);
@@ -345,6 +561,31 @@ function problemLabel(kind: PluginProblem['kind']): string {
   return '提示';
 }
 
+// 巡检这一块原来只能看。三种"悄悄不生效"里，两种有明确的、安全的出路：
+//   1. patch 指向了不存在的 id → 删掉那一行（**只在它能改的那份层上**，见下面 editable）；
+//   2. 装成了普通依赖、不形成层 → 卸掉它（走 dsh plugin remove，所以要重启 dsh）。
+// 第三种（列在 bundles 里却一条都没贡献）没有通用的修法，只把话说清楚。
+
+/** 这条能不能就地删掉：必须是 profile 那份补丁层里的、而且主进程认得那个文件是它 */
+function canDrop(item: PluginProblem): boolean {
+  return item.kind === 'unmatched-patch' && item.editable === true && Boolean(item.entryId);
+}
+
+function dropProblem(item: PluginProblem): void {
+  if (!item.entryId) return;
+  void editLayer('drop', item.entryId);
+}
+
+/** 这条能不能就地卸掉：普通依赖有包名就行 */
+function canRemove(item: PluginProblem): boolean {
+  return item.kind === 'plain-dependency' && Boolean(item.packageName);
+}
+
+function removeProblem(item: PluginProblem): void {
+  if (!item.packageName) return;
+  void startOp('remove', item.packageName);
+}
+
 /** 这一层在生效配置里的条目（自己插入的 + 它覆盖掉的） */
 function entriesOf(layer: PluginLayer): PluginEntry[] {
   const out: PluginEntry[] = [];
@@ -423,7 +664,13 @@ function clearFilters(): void {
         + 安装插件
       </button>
       <div class="plugin-views">
-        <button class="plugin-view" :class="{ active: view === 'stack' }" @click="view = 'stack'">
+        <button
+          class="plugin-view"
+          :class="{ active: view === 'stack' }"
+          :disabled="baseline !== null"
+          :title="baseline ? '基线视图里没有层栈（那是你的层才有的东西）' : ''"
+          @click="view = 'stack'"
+        >
           装配层栈
         </button>
         <button class="plugin-view" :class="{ active: view === 'config' }" @click="view = 'config'">
@@ -431,7 +678,8 @@ function clearFilters(): void {
         </button>
       </div>
       <div class="spacer"></div>
-      <span v-if="error" class="bar-note">{{ error }}</span>
+      <span v-if="baseline" class="bar-note">基线：dsh 自带，不含你的层</span>
+      <span v-else-if="error" class="bar-note">{{ error }}</span>
       <template v-else-if="data">
         <span v-if="data.live" class="bar-note">
           运行中 {{ data.live.counts.total }} 条（{{ data.live.counts.active }} 已挂载<template
@@ -490,20 +738,91 @@ function clearFilters(): void {
       <button class="btn small" @click="restartDsh">立即重启 dsh</button>
     </div>
 
-    <!-- 空态 / 出错 -->
-    <div v-if="error" class="empty">
+    <!-- 救援：dsh 起不来 / 配置被改坏时，先把出路摆出来。
+         这一页读的是磁盘，dsh 挂了它照样该能干活 —— 这是它最大的性格。 -->
+    <div v-if="showRescue" class="plugin-rescue">
+      <svg class="i"><use href="#i-warn" /></svg>
+      <div class="plugin-rescue-body">
+        <b>{{ bootFailure ? bootFailure.title : '装配信息读不出来' }}</b>
+        <p v-if="bootFailure?.line || error || baselineError" class="plugin-rescue-line">
+          {{ bootFailure?.line || error || baselineError }}
+        </p>
+        <p class="plugin-rescue-hint">
+          <template v-if="blamedName">
+            看起来是「{{ blamedName }}」这一层的问题（它出现在上面那行里）。
+          </template>
+          <template v-else-if="baseline">
+            现在显示的是 dsh 自带的组合结果，不是你真正生效的配置。
+          </template>
+          <template v-else>
+            配置读不出来时先看 dsh 自带的组合结果 —— 一眼能分出是你的层坏了还是本来就这样。
+          </template>
+        </p>
+      </div>
+      <div class="plugin-rescue-actions">
+        <button
+          v-if="!baseline"
+          class="btn small"
+          :disabled="baselineLoading"
+          @click="loadBaseline"
+        >
+          {{ baselineLoading ? '正在读…' : '只看内置层' }}
+        </button>
+        <button v-else class="btn small" @click="backToFull">回到完整配置</button>
+        <button
+          v-if="blamedName && !suspended"
+          class="btn danger small"
+          :disabled="opBusy"
+          @click="editBundle('suspend', blamedName)"
+        >
+          临时停用 {{ blamedName }}
+        </button>
+        <button
+          v-if="suspended"
+          class="btn small"
+          :disabled="opBusy"
+          @click="editBundle('restore', suspended.name, suspended.index)"
+        >
+          恢复 {{ suspended.name }}
+        </button>
+        <!-- 修：只认能认出来的坏法，且都先备份 —— 不猜着改用户的内容 -->
+        <button class="btn small" :disabled="rescueBusy" @click="repairLayer">修成空配置</button>
+        <button class="btn small" :disabled="rescueBusy" @click="loadBackups">
+          {{ backups ? '收起备份' : '从备份恢复…' }}
+        </button>
+      </div>
+      <ul v-if="backups" class="plugin-rescue-backups">
+        <li v-for="item in backups" :key="item.path">
+          <span class="plugin-rescue-backup-name">{{ item.name }}</span>
+          <span class="bar-hint"
+            >{{ new Date(item.at).toLocaleString() }} · {{ item.bytes }} B</span
+          >
+          <span class="spacer"></span>
+          <button class="btn tiny" :disabled="rescueBusy" @click="restoreBackup(item.path)">
+            用这个
+          </button>
+        </li>
+        <li v-if="backups.length === 0" class="bar-hint">这份 profile 目录里还没有 .bak- 备份。</li>
+      </ul>
+    </div>
+
+    <!-- 空态 / 出错。注意：基线视图（救援）加载出来之后就不再被这句挡住 ——
+         配置读不出来正是要看内置层的时候。 -->
+    <div v-if="error && !baseline" class="empty">
       <svg class="empty-i"><use href="#i-warn" /></svg>
       <h2>读不出插件装配信息</h2>
       <p>{{ error }}</p>
       <button class="btn small" @click="refresh">重试</button>
     </div>
-    <div v-else-if="!data" class="empty">
+    <div v-else-if="!data && !baseline" class="empty">
       <h2>{{ loading ? '正在读 profile…' : '还没有数据' }}</h2>
     </div>
 
     <template v-else>
-      <!-- "没报错的错"：不会让命令失败，但会让改动悄悄不生效 -->
-      <section v-if="problems.length" class="panel plugin-problems">
+      <!-- "没报错的错"：不会让命令失败，但会让改动悄悄不生效。
+           基线视图里不显示它：那一屏明说"这不是你真正生效的配置"，而这几种问题说的都是
+           真实配置 —— 跟「禁用 / 启用」「移除我的插入」在基线里被藏掉是同一条规则。 -->
+      <section v-if="problems.length && !baseline" class="panel plugin-problems">
         <header class="panel-head">
           <h3>需要注意的 {{ problems.length }} 处</h3>
           <div class="spacer"></div>
@@ -515,12 +834,32 @@ function clearFilters(): void {
               {{ problemLabel(item.kind) }}
             </span>
             <span class="plugin-problem-text">{{ item.detail }}</span>
+            <div v-if="canDrop(item) || canRemove(item)" class="spacer"></div>
+            <button
+              v-if="canDrop(item)"
+              class="btn tiny"
+              :disabled="opBusy"
+              @click="dropProblem(item)"
+            >
+              删掉这一行
+            </button>
+            <button
+              v-else-if="canRemove(item)"
+              class="btn tiny"
+              :disabled="opBusy"
+              @click="removeProblem(item)"
+            >
+              卸掉它
+            </button>
+            <span v-else-if="item.kind === 'unmatched-patch'" class="plugin-problem-where">
+              这一层不归本页改：{{ item.file }}
+            </span>
           </li>
         </ul>
       </section>
 
       <!-- 视图一：装配层栈 -->
-      <div v-if="view === 'stack'" class="plugin-body">
+      <div v-if="view === 'stack' && data" class="plugin-body">
         <section class="panel plugin-side">
           <header class="panel-head">
             <h3>层栈</h3>
@@ -644,6 +983,14 @@ function clearFilters(): void {
               </button>
               <span class="spacer"></span>
               <button
+                class="btn small"
+                :disabled="opBusy"
+                title="从 dsh.profile.bundles 里摘掉它（会先备份），重启 dsh 后生效"
+                @click="editBundle('suspend', selected.name)"
+              >
+                临时停用
+              </button>
+              <button
                 class="btn danger small"
                 :disabled="opBusy"
                 @click="startOp('remove', selected.name)"
@@ -681,13 +1028,13 @@ function clearFilters(): void {
           </button>
           <span v-if="layerFilter" class="plugin-tag">只看 {{ layerFilter }}</span>
           <div class="spacer"></div>
-          <span class="bar-hint">{{ shownEntries }} / {{ data.entryCount }} 条</span>
+          <span class="bar-hint">{{ shownEntries }} / {{ activeData?.entryCount }} 条</span>
           <button v-if="layerFilter" class="btn tiny" @click="clearFilters">清除筛选</button>
         </div>
 
-        <div v-if="data.rawDump" class="plugin-raw">
+        <div v-if="activeData?.rawDump" class="plugin-raw">
           <p class="hint">没能把 dump 解析成结构（dsh 的输出格式可能变了），下面是原样输出。</p>
-          <pre class="plugin-raw-text">{{ data.rawDump }}</pre>
+          <pre class="plugin-raw-text">{{ activeData.rawDump }}</pre>
         </div>
 
         <div v-else class="plugin-config-body">
@@ -696,7 +1043,12 @@ function clearFilters(): void {
             patch 层）。运行中的 Loader 条目还多出几行 —— 启动时挂上的根
             <code>include</code> 与原生目录选择器 /
             HMR，它们不在配置文件里（见下面的「运行时挂载」）。两个数字回答的不是同一个问题，
-            所以不等。<template v-if="data.live">dsh 在跑时，两个数都给你。</template>
+            所以不等。<template v-if="activeData?.live">dsh 在跑时，两个数都给你。</template>
+          </p>
+          <p v-if="baseline" class="plugin-baseline-note">
+            <b>这是 dsh 自带的组合结果</b>（<code>--dump-default-config</code>，不解析你的层与
+            <code>--patch</code>）。跟平时的「生效配置」对比，就能看出问题出在你的层还是内置层。
+            <button class="btn tiny" @click="backToFull">回到完整配置</button>
           </p>
           <template v-for="(group, gi) in visibleGroups" :key="`${group.label}-${gi}`">
             <div class="plugin-group" :class="{ overridden: group.patchedBy !== null }">
@@ -717,13 +1069,13 @@ function clearFilters(): void {
                 <span v-if="entry.disabled" class="plugin-tag muted">disabled</span>
                 <span v-else-if="group.patchedBy" class="plugin-tag accent">被覆盖</span>
                 <span
-                  v-if="liveState(entry.id)"
+                  v-if="!baseline && liveState(entry.id)"
                   class="plugin-state"
                   :data-phase="liveState(entry.id)?.fiberPhase"
                   >{{ stateLabel(liveState(entry.id)?.fiberPhase ?? null) }}</span
                 >
                 <!-- 改你自己的补丁层：禁用/启用是"写一条覆盖"，移除只对自己插入的条目开放 -->
-                <span class="plugin-entry-actions">
+                <span v-if="!baseline" class="plugin-entry-actions">
                   <button
                     class="btn tiny"
                     :disabled="opBusy"
@@ -749,7 +1101,7 @@ function clearFilters(): void {
 
           <!-- 运行中但配置里没有的行：根 include + 启动时挂的原生选择器 / HMR。
                这正是「运行中」与「组合条目」两个数字对不上的那几行。 -->
-          <template v-if="liveOnly.length && !query && !layerFilter">
+          <template v-if="liveOnly.length && !query && !layerFilter && !baseline">
             <div class="plugin-group">
               <span class="plugin-group-name">运行时挂载</span>
               <span class="plugin-group-note"
@@ -767,9 +1119,9 @@ function clearFilters(): void {
             </ul>
           </template>
 
-          <p v-if="data.live?.presets.length" class="plugin-presets">
+          <p v-if="presets.length" class="plugin-presets">
             会话插件（Agent 预设按会话组装的行数）：
-            <span v-for="preset in data.live.presets" :key="preset.id" class="plugin-tag mono"
+            <span v-for="preset in presets" :key="preset.id" class="plugin-tag mono"
               >{{ preset.id }}<template v-if="preset.isDefault">（默认）</template>
               {{ preset.rows }} 行</span
             >

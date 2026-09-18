@@ -46,9 +46,11 @@ import type {
   DshLogEntry,
   DshOutputEvent,
   EnvInfo,
+  PluginBundleEditResult,
   PluginInspectResult,
   PluginLayerEditAction,
   PluginLayerEditResult,
+  PluginRescueResult,
   PluginOpAction,
   PluginOpResult,
   RenameSessionResult,
@@ -864,6 +866,72 @@ function registerIpc(): void {
   );
 
   ipcMain.handle('plugin:cancel', (): boolean => pluginManager.cancelOperation());
+
+  // 救援：只看 dsh 自带的组合结果。配置被改坏时 --dump-config 会整条失败，这条通常还能成，
+  // 所以它是"插件页在配置坏掉时仍然可用"的兜底（见 §救援流程）。
+  ipcMain.handle('plugin:default-config', async (): Promise<PluginInspectResult> => {
+    try {
+      return await pluginManager.baseline();
+    } catch (error) {
+      return { ok: false, error: messageOf(error) };
+    }
+  });
+
+  // 救援：把你的补丁层修回可用状态（补空数组 / 列备份 / 从备份恢复）。
+  // 这些是"修"不是"编辑"：能不动就不动，真要动也先备份。
+  ipcMain.handle(
+    'plugin:rescue',
+    (_event: IpcMainInvokeEvent, request: unknown): PluginRescueResult => {
+      try {
+        const { action, backup } = (request ?? {}) as {
+          action?: 'repair-empty' | 'list-backups' | 'restore-backup';
+          backup?: string;
+        };
+        if (action !== 'repair-empty' && action !== 'list-backups' && action !== 'restore-backup') {
+          return { ok: false, error: '不认识的操作' };
+        }
+        const result = pluginManager.rescue(action, backup ? String(backup) : undefined);
+        if (action !== 'list-backups') {
+          dshManager.log(
+            'info',
+            result.changed
+              ? `补丁层已修复：${result.detail ?? action}`
+              : `补丁层未改动：${result.detail ?? action}`,
+          );
+        }
+        return result;
+      } catch (error) {
+        return { ok: false, error: messageOf(error) };
+      }
+    },
+  );
+
+  // 救援：临时停用 / 恢复一个 bundle。改的是 profile 的 package.json（备份 + 原子写），
+  // 而且**要重启 dsh 才生效**（bundle 列表是启动时读的），界面负责说清这一点。
+  ipcMain.handle(
+    'plugin:bundle-edit',
+    (_event: IpcMainInvokeEvent, request: unknown): PluginBundleEditResult => {
+      try {
+        const { action, name, index } = (request ?? {}) as {
+          action?: 'suspend' | 'restore';
+          name?: string;
+          index?: number;
+        };
+        if (action !== 'suspend' && action !== 'restore')
+          return { ok: false, error: '不认识的操作' };
+        const result = pluginManager.editBundle(action, String(name ?? ''), Number(index ?? -1));
+        dshManager.log(
+          'info',
+          result.changed
+            ? `bundle ${action === 'suspend' ? '已临时停用' : '已恢复'}：${result.detail ?? name}`
+            : `bundle 未改动：${result.detail ?? name}`,
+        );
+        return result;
+      } catch (error) {
+        return { ok: false, error: messageOf(error) };
+      }
+    },
+  );
 
   // 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）：只动 profile 的 cordis.patch.yml，
   // 写之前备份。这一层是 patchReload: live —— 改完即时生效，不用重启 dsh。

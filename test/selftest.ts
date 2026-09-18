@@ -22,6 +22,7 @@ import { execFile } from 'node:child_process';
 import * as processUtils from '../src/main/process-utils';
 import * as pluginManager from '../src/main/plugin-manager';
 import * as patchLayer from '../src/main/patch-layer';
+import * as profileBundles from '../src/main/profile-bundles';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
 import { PtySessions } from '../src/main/pty-sessions';
@@ -426,6 +427,24 @@ async function main(): Promise<void> {
   check('启动失败：能从终端缓冲里摘出像报错的那一行', /EPERM/.test(reason), reason);
   stubManager.buffer = [];
   check('启动失败：没有输出时返回空串（不会伪造原因）', stubManager.lastOutputLine() === '');
+
+  // Node 抛异常时缓冲里先出现「file:///… 源码行 + ^」，真正的原因在后面的 `Error: …`。
+  // 真机截图里救援条显示成了那行源码，等于什么都没说 —— 这几类必须滤掉。
+  stubManager.buffer = [
+    'file:///Users/x/.nvm/versions/node/v24/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1199\n',
+    '\tif (!Array.isArray(parsed)) throw new Error(`${binName}: ${label} ${file} must be a top-level YAML array of loader patch entries`);\n',
+    '\t                     ^\n',
+    '\n',
+    'Error: dsh: overlay /Users/x/.dsh/profiles/web/cordis.patch.yml must be a top-level YAML array of loader patch entries\n',
+    '    at loadOverlay (file:///Users/x/.nvm/versions/node/v24/lib/index.js:1199:8)\n',
+  ];
+  const fromStack = stubManager.lastOutputLine();
+  check(
+    '启动失败：Node 堆栈里要摘出 `Error: …` 那一行，不是源码行',
+    /^Error: dsh: overlay /.test(fromStack) && !/throw new/.test(fromStack),
+    fromStack,
+  );
+  stubManager.buffer = [];
 
   // ---------------------------------------------------------- 6. 渲染层静态检查
   //    渲染层没有类型检查，这里挡掉最容易犯的错：元素 id / class / API 名拼错。
@@ -1295,6 +1314,31 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件：巡检里"指向了不存在的 id"只有本页能改的那份层才给动作（机器级那层不给）',
+    (() => {
+      const text = fixture('unmatched-patch.stderr.txt');
+      // 夹具里 dsh 打的就是它自己那份 profile 层的真实全路径 —— 拿它当 ownPatchFile，
+      // 应当判成"能改"（这条同时钉住路径比较不被真机上的绝对路径绕过去）
+      const own = /\[(.+?)\]/.exec(text)?.[1] ?? '';
+      const mine = pluginManager.parseProblems(text, own)[0];
+      // 同一个文件名、但在别的目录（机器级的 $DSH_HOME/cordis.patch.yml 就是这种）
+      const elsewhere = pluginManager.parseProblems(
+        text,
+        path.join('/tmp', 'other-home', 'profiles', 'web', 'cordis.patch.yml'),
+      )[0];
+      // 老调用方不传 ownPatchFile：一律不给动作，绝不能默认成"能改"
+      const none = pluginManager.parseProblems(text)[0];
+      return (
+        own.endsWith('cordis.patch.yml') &&
+        mine?.kind === 'unmatched-patch' &&
+        mine?.entryId === '这个条目不存在' &&
+        mine?.editable === true &&
+        elsewhere?.editable === false &&
+        none?.editable === false
+      );
+    })(),
+  );
+  check(
     '插件：patch 解析失败也来自 stderr，归到 parse-error 并点名文件',
     (() => {
       const problems = pluginManager.parseProblems(fixture('broken-patch.stderr.txt'));
@@ -1329,7 +1373,7 @@ async function main(): Promise<void> {
     })(),
   );
   check(
-    '插件：装进来却没形成层的依赖、以及什么都没贡献的 bundle 都会被列出来',
+    '插件：装进来却没形成层的依赖、以及什么都没贡献的 bundle 都会被列出来（普通依赖带包名）',
     (() => {
       const plain = pluginManager.plainDependencies({
         name: null,
@@ -1349,6 +1393,8 @@ async function main(): Promise<void> {
       return (
         plain.length === 1 &&
         plain[0].kind === 'plain-dependency' &&
+        // 包名要单独带出来：界面靠它给「卸掉它」，不解析那句人话
+        plain[0].packageName === 'some-lib' &&
         missing.length === 1 &&
         missing[0].kind === 'missing-layer'
       );
@@ -1527,6 +1573,67 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '插件安装：补 PATH 时保留系统原有的键名（Windows 上叫 `Path`，不能造出两个只差大小写的键）',
+    (() => {
+      const win = processUtils.envWithKnownBins({ Path: 'C:\\Windows\\System32', FOO: '1' });
+      const posix = processUtils.envWithKnownBins({ PATH: '/usr/bin', FOO: '1' });
+      const bare = processUtils.envWithKnownBins({});
+      const pathKeys = (env: NodeJS.ProcessEnv) =>
+        Object.keys(env).filter((key) => key.toLowerCase() === 'path');
+      return (
+        // 只有一个 path 键，而且键名原样（`Path` 还是 `Path`）
+        pathKeys(win).length === 1 &&
+        pathKeys(win)[0] === 'Path' &&
+        // 原有值还在末尾（前面补的是 node / pnpm 的目录），别的变量没动
+        String(win.Path).endsWith('C:\\Windows\\System32') &&
+        win.FOO === '1' &&
+        String(win.Path) !== 'C:\\Windows\\System32' &&
+        pathKeys(posix).length === 1 &&
+        pathKeys(posix)[0] === 'PATH' &&
+        String(posix.PATH).endsWith('/usr/bin') &&
+        pathKeys(bare).length === 1 &&
+        pathKeys(bare)[0] === 'PATH'
+      );
+    })(),
+  );
+  check(
+    '插件安装：Windows 上找 pnpm / node 不写死 .cmd（独立安装包是 pnpm.exe），并有已知目录兜底',
+    (() => {
+      const source = fs.readFileSync('src/main/process-utils.ts', 'utf8');
+      // 写死 `pnpm.cmd` 会漏掉 pnpm 官方安装包装的 `pnpm.exe`；交给 whichSync 按 PATHEXT 展开
+      const viaPathext = /whichSync\('pnpm'\)/.test(source) && /whichSync\('node'\)/.test(source);
+      // 键名大小写不统一（LocalAppData / LOCALAPPDATA 都见过），按小写索引后两种写法都要认
+      const upper = processUtils.windowsBinCandidates(
+        {
+          PNPM_HOME: 'C:\\pnpm-home',
+          APPDATA: 'C:\\AppData',
+          LOCALAPPDATA: 'C:\\LocalAppData',
+          ProgramFiles: 'C:\\Program Files',
+          NVM_SYMLINK: 'C:\\Program Files\\nodejs',
+        },
+        'C:\\Users\\x',
+      );
+      const mixed = processUtils.windowsBinCandidates(
+        { Pnpm_Home: 'C:\\pnpm-home', AppData: 'C:\\AppData', LocalAppData: 'C:\\LocalAppData' },
+        'C:\\Users\\x',
+      );
+      const empty = processUtils.windowsBinCandidates({}, 'C:\\Users\\x');
+      return (
+        viaPathext &&
+        upper.includes('C:\\pnpm-home') &&
+        upper.includes('C:\\AppData\\npm') &&
+        upper.includes('C:\\LocalAppData\\pnpm') &&
+        upper.includes('C:\\Program Files\\nodejs') &&
+        upper.includes('C:\\Users\\x\\.volta\\bin') &&
+        // 大小写不同的同一组变量 → 同一组目录，顺序也一样
+        mixed.slice(0, 3).join('|') === upper.slice(0, 3).join('|') &&
+        // 一个变量都没有时也不炸（只留 volta 那条固定路径）
+        empty.length === 1 &&
+        empty[0] === 'C:\\Users\\x\\.volta\\bin'
+      );
+    })(),
+  );
+  check(
     '插件安装：安装源走子进程环境变量，不写用户的 .npmrc',
     /pluginRegistry: string;/.test(flatIpc) &&
       DEFAULTS.pluginRegistry === '' &&
@@ -1629,6 +1736,38 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '补丁层：巡检给的"删掉这一行"只删那一条（覆盖条目 / insert 块里的都认，删完仍留顶层数组）',
+    (() => {
+      // 覆盖/禁用形状的条目（`- id: ghost` 那一层）——removeInsert 不碰它，dropEntry 要能删
+      const ghostOverride = `${realPatch}- id: ghost\n  disabled: true\n`;
+      const dropped = patchLayer.dropEntry(ghostOverride, 'ghost');
+      // 嵌套形状的：insert 块里只剩它一条 → 连块一起删，不能留一个空的 `- insert:`
+      const onlyNested = "# 注释\n- insert:\n    - id: ghost\n      name: 'dsh-ghost'\n";
+      const droppedNested = patchLayer.dropEntry(onlyNested, 'ghost');
+      // 块里还有别的条目时，只删那一条
+      const siblings = `${onlyNested}    - id: keep\n      name: 'dsh-keep'\n`;
+      const droppedOne = patchLayer.dropEntry(siblings, 'ghost');
+      const missing = patchLayer.dropEntry(realPatch, '没有这条');
+      return (
+        dropped.changed &&
+        !dropped.text.includes('ghost') &&
+        // 别动夹具里原有的注释与那条 time-context
+        dropped.text.includes('# 想恢复成"什么都不改"') &&
+        dropped.text.includes("name: '@deepseek-ai/dsh-time-context'") &&
+        droppedNested.changed &&
+        !droppedNested.text.includes('- insert:') &&
+        // 只剩注释时必须补 `[]`，dsh 否则读不出来
+        /^\[\]$/m.test(droppedNested.text) &&
+        droppedOne.changed &&
+        !droppedOne.text.includes('ghost') &&
+        droppedOne.text.includes('- id: keep') &&
+        // 找不到就一个字节都不写
+        !missing.changed &&
+        missing.text === realPatch
+      );
+    })(),
+  );
+  check(
     '补丁层：删完最后一条要留下一个顶层数组（只剩注释 dsh 会直接报错）',
     (() => {
       // 真机事故：移除最后一条 insert 之后文件只剩注释，dsh 判它不是顶层数组，
@@ -1693,10 +1832,140 @@ async function main(): Promise<void> {
       /opNeedsEnable/.test(vueSource) &&
       /pluginEditLayer/.test(flatIpc),
   );
+  // ---------------------------------------------------------- 救援（P2）
+  //    dsh 因为插件起不来、或配置被改坏时，这一页要能把人捞出来。两条出路：
+  //    「只看内置层」（配置坏掉时它照样能成）与「临时停用某个 bundle」（改 package.json，
+  //    恢复时插回原位置 —— 层序就是覆盖顺序，追加到末尾会把"恢复"变成"挪到最后"）。
+  const realManifest = fixture('profile/package.json');
+  check(
+    '救援：临时停用 / 恢复 bundle 记住原位置（恢复之后与原文一字不差）',
+    (() => {
+      const suspended = profileBundles.suspendBundle(realManifest, '@deepseek-ai/dsh-web-app');
+      const restored = profileBundles.restoreBundle(
+        suspended.text,
+        '@deepseek-ai/dsh-web-app',
+        suspended.index,
+      );
+      const again = profileBundles.suspendBundle(realManifest, '不在列表里');
+      return (
+        suspended.changed &&
+        suspended.index === 1 &&
+        !suspended.text.includes('dsh-web-app') &&
+        // 其余键原样保留
+        suspended.text.includes('patchReload') &&
+        suspended.text.includes('"dependencies": {}') &&
+        restored.changed &&
+        restored.text === realManifest &&
+        !again.changed
+      );
+    })(),
+  );
+  check(
+    '救援：只剩注释的补丁层能补成空数组；有内容的文件它不动',
+    (() => {
+      const broken = '# 只剩注释\n# 还是没有数组\n';
+      const fixed = patchLayer.repairEmptyArray(broken);
+      const untouched = patchLayer.repairEmptyArray(realPatch);
+      const empty = patchLayer.repairEmptyArray('');
+      return (
+        fixed.changed &&
+        /^\[\]$/m.test(fixed.text) &&
+        // 注释保住，只在后面补 []
+        fixed.text.includes('# 只剩注释') &&
+        !untouched.changed &&
+        untouched.text === realPatch &&
+        empty.changed &&
+        /^\[\]$/m.test(empty.text)
+      );
+    })(),
+  );
+  check(
+    '救援：备份按时间倒序列出；恢复只认这份 profile 里的 .bak-（递来的路径不可信）',
+    (() => {
+      const dir = path.join(sandbox, 'patch-rescue');
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'cordis.patch.yml');
+      fs.writeFileSync(file, '# 坏掉的\n', 'utf8');
+      fs.writeFileSync(
+        path.join(dir, 'cordis.patch.yml.bak-20260101-000000'),
+        '# 旧备份\n',
+        'utf8',
+      );
+      fs.utimesSync(
+        path.join(dir, 'cordis.patch.yml.bak-20260101-000000'),
+        new Date(1000),
+        new Date(1000),
+      );
+      fs.writeFileSync(
+        path.join(dir, 'cordis.patch.yml.bak-20260102-000000'),
+        '- id: from-backup\n',
+        'utf8',
+      );
+      const list = patchLayer.listPatchBackups(dir);
+      const refused = patchLayer.restorePatchBackup(dir, '/etc/passwd');
+      const restored = patchLayer.restorePatchBackup(dir, list[0]?.path ?? '');
+      const after = fs.readFileSync(file, 'utf8');
+      const savedCurrent = restored.backup ? fs.readFileSync(restored.backup, 'utf8') : '';
+      return (
+        list.length === 2 &&
+        // 最近的在前
+        list[0].name === 'cordis.patch.yml.bak-20260102-000000' &&
+        refused.ok === false &&
+        restored.ok === true &&
+        after === '- id: from-backup\n' &&
+        // 恢复之前那份"坏掉的"也被备份了 —— 这一步同样可逆
+        savedCurrent === '# 坏掉的\n'
+      );
+    })(),
+  );
+  check(
+    '救援：dump 读不出来时也带上 bundle 清单，且只有非内置的才给「临时停用」',
+    /bundles\?: \{ name: string; inBox: boolean \}\[\]/.test(flatIpc) &&
+      /inBox: dshRoot !== null/.test(pluginSource) &&
+      // 失败时提前返回也要带着它（否则"bundle 解析不到"这种救援场景无从下手）
+      /bundles,\n\s*\};/.test(pluginSource) &&
+      /!item\.inBox && line\.includes\(item\.name\)/.test(vueSource),
+  );
+  check(
+    '救援：界面上有「修成空配置」与「从备份恢复」，契约里有 pluginRescue',
+    /repairLayer/.test(vueSource) &&
+      /restoreBackup/.test(vueSource) &&
+      /loadBackups/.test(vueSource) &&
+      /pluginRescue/.test(vueSource) &&
+      /pluginRescue/.test(flatIpc),
+  );
+  check(
+    '救援：配置坏掉时「只看内置层」这条路还在（--dump-default-config，不解析你的层）',
+    /--dump-default-config/.test(pluginSource) &&
+      /baseline: true/.test(pluginSource) &&
+      /pluginDefaultConfig/.test(flatIpc) &&
+      /pluginBundleEdit/.test(flatIpc),
+  );
+  check(
+    '救援：基线视图不会被「读不出来」的空态挡住（否则点了按钮什么也看不到）',
+    /error && !baseline/.test(vueSource) && /data && !baseline/.test(vueSource),
+  );
+  check(
+    '救援：基线视图里不给作用于真实配置的动作（条目上的、以及巡检那块的两个按钮）',
+    // 条目上的动作
+    /v-if="!baseline"/.test(vueSource) &&
+      // 巡检那块整块藏掉：它说的都是真实配置，而这一屏明说"不是你现在生效的配置"
+      /problems\.length && !baseline/.test(vueSource),
+  );
+  check(
+    '救援：界面有救援条与两个出口，而不是只显示一句错误',
+    /loadBaseline/.test(vueSource) &&
+      /plugin-rescue/.test(vueSource) &&
+      /editBundle\('suspend'/.test(vueSource) &&
+      /editBundle\('restore'/.test(vueSource) &&
+      /showRescue/.test(vueSource),
+  );
   check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
     /spawn\(file, args/.test(pluginSource) &&
-      /pathWithKnownBins\(process\.env\.PATH\)/.test(pluginSource) &&
+      // 补 PATH 走 envWithKnownBins（保留系统原有的键名，见下一条）
+      /envWithKnownBins\(process\.env\)/.test(pluginSource) &&
       /stdio: \['ignore', 'pipe', 'pipe'\]/.test(pluginSource) &&
       // 相对路径按 cwd 解析，cwd 不能继承（Electron 的启动目录不可预测）
       /cwd: homeDir\(\)/.test(pluginSource) &&

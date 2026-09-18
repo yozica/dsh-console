@@ -276,18 +276,34 @@ export class DshManager extends EventEmitter {
    */
   lastOutputLine(): string {
     const text = stripAnsi(this.buffer.join(''));
-    const lines = text
+    const raw = text
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
       .slice(-20);
-    if (lines.length === 0) return '';
+    if (raw.length === 0) return '';
+    // Node 抛异常时先打「file:///… 源码行 + ^」，真正的信息在后面的 `Error: …` 里。
+    // 不滤掉这几类的话，界面拿到的"原因"是一行源码（真机截图里就是
+    // `if (!Array.isArray(parsed)) throw new Error(...)`，谁也看不懂）。
+    const noise = (line: string) =>
+      /^file:\/\//.test(line) ||
+      /^at\s/.test(line) ||
+      /throw new /.test(line) ||
+      /\^$/.test(line) ||
+      line === '';
+    const lines = raw.filter((line) => !noise(line));
+    if (lines.length === 0) return raw[raw.length - 1].slice(0, 300);
+    // 先找"一看就是原因"的那一行（`Error: …` / `dsh: …` / `ERR_PNPM_…`），
+    // 再退回关键词，最后才用最后一行 —— 三层都不中时至少不编。
+    const head = lines.find(
+      (line) => /^(?:\w*Error|dsh)\b.*?:/.test(line) || /^ERR_[A-Z_]+/.test(line),
+    );
     const errorish = lines.find((line) =>
       /error|错误|EADDRINUSE|EPERM|EACCES|ENOENT|failed|refused|denied|cannot|未找到|占用/i.test(
         line,
       ),
     );
-    return (errorish || lines[lines.length - 1]).slice(0, 300);
+    return (head || errorish || lines[lines.length - 1]).slice(0, 300);
   }
 
   handleExit(exitCode: number, signal: number | null = null): void {

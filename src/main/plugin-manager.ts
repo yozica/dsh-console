@@ -28,12 +28,21 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { applyPatchEdit, type PatchEditRequest, type PatchEditResult } from './patch-layer';
+import {
+  applyEmptyArrayRepair,
+  applyPatchEdit,
+  listPatchBackups,
+  PATCH_FILE,
+  restorePatchBackup,
+  type PatchEditRequest,
+  type PatchEditResult,
+} from './patch-layer';
+import { applyBundleEdit, type BundleEditResult } from './profile-bundles';
 import {
   dshArgsFor,
+  envWithKnownBins,
   findPnpm,
   homeDir,
-  pathWithKnownBins,
   resolveDshLauncher,
 } from './process-utils';
 import { resolveDshHome } from './session-archive';
@@ -49,6 +58,7 @@ import type {
   PluginLivePreset,
   PluginLiveSnapshot,
   PluginProblem,
+  PluginRescueResult,
   PluginTreeLayer,
 } from '../shared/ipc';
 
@@ -238,8 +248,13 @@ export function firstMeaningfulLine(stderr: string): string {
  *
  * 未匹配的 patch 行退出码是 0，所以这些**必须**单独看；解析失败则是抛异常（退出码 1）
  * 外加一坨堆栈。堆栈不进 problems（那是日志的事），这里只留能指着某个文件的那几行。
+ *
+ * `ownPatchFile` 是 profile 那份 `cordis.patch.yml` 的全路径：dsh 在 stderr 上打的层文件
+ * 可能是它、也可能是机器级的 `$DSH_HOME/cordis.patch.yml`，而本页只能改前者 —— 所以这里就
+ * 把结论（`editable`）算好，别让界面自己去比路径。
  */
-export function parseProblems(stderr: string): PluginProblem[] {
+export function parseProblems(stderr: string, ownPatchFile?: string): PluginProblem[] {
+  const own = ownPatchFile ? path.resolve(ownPatchFile) : '';
   const problems: PluginProblem[] = [];
   for (const rawLine of stderr.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -250,6 +265,7 @@ export function parseProblems(stderr: string): PluginProblem[] {
         kind: 'unmatched-patch',
         file: unmatched[1],
         entryId: unmatched[2],
+        editable: own !== '' && samePath(unmatched[1], own),
         detail: `patch 里指向的条目 "${unmatched[2]}" 不存在，这一行被忽略了`,
       });
       continue;
@@ -297,16 +313,19 @@ export function checkDumpResult(code: number, stdout: string, stderr: string): s
 }
 
 /**
- * 跑一次 `dsh web --dump-config`。
+ * 跑一次 `dsh web --dump-config`（`defaultOnly` 时改成 `--dump-default-config`：**不解析
+ * 你的层与 `--patch`**，只打印 dsh 自带的组合结果 —— 这是配置被改坏时的唯一出路，
+ * 因为它在 patch 文件语法错误时仍然成功（见 §救援流程）。
  *
  * 用 resolveDshLauncher 选出**和启动 dsh 同一个**解释器：dsh 的 CLI 在跑不动的
  * Node 上是"退出码 0 + 零输出"，换一个解释器就等于换一套结果。
  * 另外把解释器所在目录前置进 PATH——node 自己不需要，但 dsh 内部 spawn 的东西要。
  */
-async function runDump(settings: SettingsValues): Promise<DumpRun> {
+async function runDump(settings: SettingsValues, defaultOnly = false): Promise<DumpRun> {
   const launcher = resolveDshLauncher(settings);
-  const args = dshArgsFor(launcher, ['web', '--dump-config']);
-  const display = [launcher.display, 'web', '--dump-config'].join(' ');
+  const flag = defaultOnly ? '--dump-default-config' : '--dump-config';
+  const args = dshArgsFor(launcher, ['web', flag]);
+  const display = [launcher.display, 'web', flag].join(' ');
   const env: NodeJS.ProcessEnv = { ...process.env };
   env.PATH = [path.dirname(launcher.file), env.PATH].filter(Boolean).join(path.delimiter);
 
@@ -458,8 +477,26 @@ export function plainDependencies(manifest: ProfileManifest): PluginProblem[] {
     .filter((name) => !bundles.has(name))
     .map((name) => ({
       kind: 'plain-dependency' as const,
+      packageName: name,
       detail: `${name} 装成了普通依赖，但它没有声明 dsh.bundle，所以不形成配置层`,
     }));
+}
+
+/**
+ * 两个路径是不是同一个文件。dsh 打出来的是它自己解析过的路径，可能经过 realpath
+ * （macOS 上 `/var` → `/private/var`、以及软链接），所以先比 resolve、再比 realpath。
+ */
+function samePath(a: string, b: string): boolean {
+  if (path.resolve(a) === path.resolve(b)) return true;
+  const real = (value: string): string => {
+    try {
+      return fs.realpathSync(value);
+    } catch {
+      return '';
+    }
+  };
+  const resolved = real(a);
+  return resolved !== '' && resolved === real(b);
 }
 
 /** 列在 bundles 里却在 dump 里没有任何条目：dsh 启动时会明确失败 */
@@ -781,8 +818,8 @@ class PluginRunner {
     // 安装源：设置里填了才覆盖，且只覆盖这一个子进程（见 pluginRegistryEnv）
     const registryOverride = pluginRegistryEnv(this.settings.all().pluginRegistry);
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      PATH: pathWithKnownBins(process.env.PATH),
+      // Windows 上 PATH 这个键叫 `Path`，直接写 `PATH` 会造出两个只差大小写的键（见 envWithKnownBins）
+      ...envWithKnownBins(process.env),
       ...registryOverride,
     };
     const registry = registryOverride.npm_config_registry;
@@ -975,6 +1012,56 @@ export class PluginManager {
   }
 
   /**
+   * 只看 dsh 自带的组合结果（`--dump-default-config`，不解析你的层）。
+   *
+   * 用途是**救援**：配置被改坏时 `--dump-config` 会整条失败，而这条命令照样成功 ——
+   * 于是界面至少还能把"内置层长什么样"摆出来，一眼区分是你的层坏了还是本来就这样。
+   */
+  async baseline(): Promise<PluginInspectResult> {
+    try {
+      const run = await runDump(this.settings.all(), true);
+      const treeLayers = parseDump(run.stdout);
+      return {
+        ok: true,
+        baseline: true,
+        commands: [run.display],
+        treeLayers,
+        entryCount: treeLayers.reduce((sum, layer) => sum + layer.entries.length, 0),
+        rawDump: treeLayers.length === 0 ? run.stdout : null,
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * 救援：把补丁层修回可用状态（查看备份、补空数组、从备份恢复）。
+   *
+   * 与"改你自己的层"分开是因为性质不同：那些是**编辑**，这些是**修**——能不动就不动
+   * （`repair-empty` 只认一种坏法），真要动也先备份，而且只接受 profile 目录里的 `.bak-`。
+   */
+  rescue(
+    action: 'repair-empty' | 'list-backups' | 'restore-backup',
+    backup?: string,
+  ): PluginRescueResult {
+    const profileDir = this.profileDir();
+    if (action === 'list-backups') {
+      return { ok: true, backups: listPatchBackups(profileDir) };
+    }
+    if (action === 'restore-backup') {
+      if (!backup) return { ok: false, error: '没给要恢复的备份文件。' };
+      return restorePatchBackup(profileDir, backup);
+    }
+    // repair-empty：只认"只剩注释 / 空文件"这一种坏法（真正的内容坏了要从备份恢复）
+    return applyEmptyArrayRepair(profileDir);
+  }
+
+  /** 临时停用 / 恢复一个 bundle：改 profile 的 `dsh.profile.bundles`（备份 + 原子写） */
+  editBundle(action: 'suspend' | 'restore', name: string, index = -1): BundleEditResult {
+    return applyBundleEdit(this.profileDir(), action, name, index);
+  }
+
+  /**
    * 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）。
    *
    * **只写 profile 的 `cordis.patch.yml`** —— 那是 profile 级的用户层，不影响 `$DSH_HOME`
@@ -1050,21 +1137,44 @@ export class PluginManager {
         ? path.dirname(path.dirname(launcher.prefixArgs[0]))
         : null;
     const moduleDirs = [profileDir, ...(dshRoot ? [dshRoot] : []), path.join(home, 'profiles')];
+    // profile 里列了哪些 bundle，以及哪些是 dsh 自带的（内置的不能停用 —— 那是 dsh 的骨架）。
+    // dump 读不出来时页面要靠这份清单救援，所以要跟着结果一起回。
+    const bundles = manifest.bundles.map((name) => ({
+      name,
+      inBox: dshRoot !== null && resolveModuleDir(name, [dshRoot]) !== null,
+    }));
 
     // dump（静态组合）与运行中清单互不依赖，并行取；运行中清单是"尽力而为"，失败不影响页面
-    const [run, liveResult] = await Promise.all([
-      runDump(this.settings.all()),
-      this.live
-        .fetchInventory()
-        .then((snapshot) => ({ snapshot, error: '' }))
-        .catch((error: unknown) => ({
-          snapshot: null,
-          error: error instanceof Error ? error.message : String(error),
-        })),
-    ]);
+    let run: DumpRun;
+    let liveResult: { snapshot: PluginLiveSnapshot | null; error: string };
+    try {
+      [run, liveResult] = await Promise.all([
+        runDump(this.settings.all()),
+        this.live
+          .fetchInventory()
+          .then((snapshot) => ({ snapshot, error: '' }))
+          .catch((error: unknown) => ({
+            snapshot: null,
+            error: error instanceof Error ? error.message : String(error),
+          })),
+      ]);
+    } catch (error) {
+      // 配置读不出来（overlay 坏了、某个 bundle 解析不到…）：这不是"页面失败"，而是**救援场景**。
+      // 带上 bundle 清单，界面才能指着那个把 dsh 弄挂的层说"临时停用它"。
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        profile: PLUGIN_PROFILE,
+        home,
+        profileDir,
+        profileName: manifest.name,
+        patchReload: manifest.patchReload,
+        bundles,
+      };
+    }
     const dumpLayers = parseDump(run.stdout);
     const problems = [
-      ...parseProblems(run.stderr),
+      ...parseProblems(run.stderr, path.join(profileDir, PATCH_FILE)),
       ...plainDependencies(manifest),
       ...missingLayers(manifest, dumpLayers),
     ];
@@ -1088,6 +1198,7 @@ export class PluginManager {
       profileDir,
       profileName: manifest.name,
       patchReload: manifest.patchReload,
+      bundles,
       layers: buildLayers({ manifest, profileDir, home, dumpLayers, moduleDirs }),
       treeLayers,
       problems,

@@ -3,7 +3,7 @@
  *
  * 这是控制台唯一该写的配置文件 —— 它是**你的**覆盖层（各 bundle 的 patch 之后才轮到它），
  * 官方随包但默认不启用的插件靠它 insert 进来，不想要就 disabled 掉。dsh 自己不会替你改它，
- * 所以插件页得能替你做四个动作：插入 / 禁用 / 启用 / 移除自己的插入。
+ * 所以插件页得能替你做五个动作：插入 / 禁用 / 启用 / 移除自己的插入 / 删掉指向了不存在 id 的条目。
  *
  * 四条硬约定（写的是用户文件，错一次就是把人配置改坏）：
  *
@@ -20,6 +20,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { backupThenWrite } from './safe-file';
+
 /** 补丁层文件名（dsh 认这个名字） */
 export const PATCH_FILE = 'cordis.patch.yml';
 
@@ -31,7 +33,7 @@ export interface PatchEditOutcome {
   detail: string;
 }
 
-export type PatchEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert';
+export type PatchEditAction = 'disable' | 'enable' | 'insert' | 'remove-insert' | 'drop';
 
 export interface PatchEditRequest {
   action: PatchEditAction;
@@ -235,19 +237,11 @@ export function enableEntry(text: string, id: string): PatchEditOutcome {
   return done(joinLines(next), true, `从你的层里删掉了那条只为禁用「${id}」而存在的条目`);
 }
 
-/** 移除自己的插入：删掉那条 insert；整个 insert 块只剩它一条时，连块一起删 */
-export function removeInsert(text: string, id: string): PatchEditOutcome {
-  const lines = splitLines(text);
-  const item = findItem(lines, id);
-  if (!item) return done(text, false, `你的层里没有 id 为「${id}」的条目。`);
-  if (item.indent === 0) {
-    return done(
-      text,
-      false,
-      `「${id}」在你层里不是一条 insert（是覆盖或禁用条目），这个动作不动它。`,
-    );
-  }
-
+/**
+ * 删掉一个**嵌套**条目（`- insert:` 块里的那一条）。父块只剩它一条时把父块一起删 ——
+ * 留一个空的 `- insert:` 没有意义，还得再补 `[]`。
+ */
+function removeNested(lines: string[], item: Item): { next: string[]; droppedParent: boolean } {
   const items = parseItems(lines);
   const parent = items
     .filter((candidate) => candidate.indent < item.indent && candidate.start < item.start)
@@ -263,15 +257,186 @@ export function removeInsert(text: string, id: string): PatchEditOutcome {
     : [];
 
   if (parent && remaining.length === 0) {
-    const next = [...lines.slice(0, parent.start), ...lines.slice(parent.end)];
+    return {
+      next: [...lines.slice(0, parent.start), ...lines.slice(parent.end)],
+      droppedParent: true,
+    };
+  }
+  return {
+    next: [...lines.slice(0, item.start), ...lines.slice(item.contentEnd + 1)],
+    droppedParent: false,
+  };
+}
+
+/** 移除自己的插入：删掉那条 insert；整个 insert 块只剩它一条时，连块一起删 */
+export function removeInsert(text: string, id: string): PatchEditOutcome {
+  const lines = splitLines(text);
+  const item = findItem(lines, id);
+  if (!item) return done(text, false, `你的层里没有 id 为「${id}」的条目。`);
+  if (item.indent === 0) {
+    return done(
+      text,
+      false,
+      `「${id}」在你层里不是一条 insert（是覆盖或禁用条目），这个动作不动它。`,
+    );
+  }
+
+  const { next, droppedParent } = removeNested(lines, item);
+  if (droppedParent) {
     return done(
       joinLines(next),
       true,
       `从你的层里删掉了「${id}」那条插入（整个 insert 块只剩它一条，块一起删）`,
     );
   }
-  const next = [...lines.slice(0, item.start), ...lines.slice(item.contentEnd + 1)];
   return done(joinLines(next), true, `从你的层里删掉了「${id}」那条插入`);
+}
+
+/**
+ * 删掉一条**指向了不存在的 id** 的条目（巡检给的出路）。
+ *
+ * 跟 `removeInsert` 的分工：那个只管"你自己插入的"（`- insert:` 块里的），语义是"撤销我刚
+ * 才做的事"；这个要删的是**任何形状**的条目 —— 它本来就没生效，dsh 每次启动都会在 stderr 上
+ * 说一句"entry not found"，留着只会让人以为配置生效了。
+ *
+ * 删完仍然交给 `joinLines` 收尾（没有条目时补 `[]`）：真机上就因为这事儿把整页读挂过。
+ */
+export function dropEntry(text: string, id: string): PatchEditOutcome {
+  const lines = splitLines(text);
+  const item = findItem(lines, id);
+  if (!item) return done(text, false, `你的层里没有 id 为「${id}」的条目。`);
+  if (item.indent === 0) {
+    const next = [...lines.slice(0, item.start), ...lines.slice(item.contentEnd + 1)];
+    return done(joinLines(next), true, `从你的层里删掉了「${id}」这一条（它指向的条目不存在）`);
+  }
+  const { next, droppedParent } = removeNested(lines, item);
+  return done(
+    joinLines(next),
+    true,
+    droppedParent
+      ? `从你的层里删掉了「${id}」（指向不存在的条目；它所在的 insert 块只剩这一条，块一起删）`
+      : `从你的层里删掉了「${id}」这一条（它指向的条目不存在）`,
+  );
+}
+
+/**
+ * 把"只剩注释（或空文件）"这种坏法修成合法的空配置：补一个 `[]`。
+ *
+ * 只认这一种坏法：文件里已经有条目、或者已经有 `[]` 时**什么都不做**并说明原因 ——
+ * 救援动作宁可"不动"，也不猜着改（真正的内容坏了应该从备份恢复，见下面）。
+ */
+export function repairEmptyArray(text: string): PatchEditOutcome {
+  const lines = splitLines(text);
+  const hasItem = lines.some((line) => ITEM_RE.test(line));
+  const hasEmptyArray = lines.some((line) => EMPTY_ARRAY_RE.test(line));
+  if (hasItem || hasEmptyArray) {
+    return done(text, false, '它现在不是"只剩注释"那种坏法，没动它 —— 这种应该从备份恢复。');
+  }
+  return done(joinLines(lines), true, '在你的补丁层里补了一个空的顶层数组（[]）');
+}
+
+/** 补一个空数组（"只剩注释"那种坏法）并落盘：备份 + 原子写 */
+export function applyEmptyArrayRepair(profileDir: string): PatchEditResult {
+  const file = path.join(profileDir, PATCH_FILE);
+  let current = '';
+  try {
+    current = fs.readFileSync(file, 'utf8');
+  } catch {
+    /* 没有这个文件：也算空配置的一种，补 [] 是对的 */
+  }
+  const outcome = repairEmptyArray(current);
+  if (!outcome.changed) {
+    return {
+      ok: true,
+      changed: false,
+      detail: outcome.detail,
+      file,
+      backup: null,
+      content: current,
+    };
+  }
+  try {
+    const backup = backupThenWrite(file, outcome.text);
+    return { ok: true, changed: true, detail: outcome.detail, file, backup, content: outcome.text };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `写不了 ${file}：${error instanceof Error ? error.message : String(error)}`,
+      file,
+    };
+  }
+}
+
+/** 补丁层的备份文件（给界面选一个恢复） */
+export interface PatchBackup {
+  name: string;
+  path: string;
+  /** 修改时间（毫秒） */
+  at: number;
+  bytes: number;
+}
+
+/** 列出 `cordis.patch.yml.bak-<时间戳>`，最近的在前 */
+export function listPatchBackups(profileDir: string): PatchBackup[] {
+  const prefix = `${PATCH_FILE}.bak-`;
+  let names: string[];
+  try {
+    names = fs.readdirSync(profileDir).filter((name) => name.startsWith(prefix));
+  } catch {
+    return [];
+  }
+  const found: PatchBackup[] = [];
+  for (const name of names) {
+    const file = path.join(profileDir, name);
+    try {
+      const stat = fs.statSync(file);
+      if (stat.isFile()) found.push({ name, path: file, at: stat.mtimeMs, bytes: stat.size });
+    } catch {
+      /* 读不到就跳过 */
+    }
+  }
+  return found.sort((a, b) => b.at - a.at);
+}
+
+/**
+ * 用某个备份覆盖当前补丁层。当前文件**也会先备份**（所以这一步同样可逆）。
+ * 只接受 profile 目录里 `cordis.patch.yml.bak-*` 这种路径 —— 渲染层递过来的字符串不可信。
+ */
+export function restorePatchBackup(profileDir: string, backupPath: string): PatchEditResult {
+  const resolved = path.resolve(backupPath);
+  const allowed = listPatchBackups(profileDir).some((item) => path.resolve(item.path) === resolved);
+  if (!allowed) {
+    return { ok: false, error: '只能从这份 profile 目录里的 .bak- 备份恢复。' };
+  }
+  const file = path.join(profileDir, PATCH_FILE);
+  let content: string;
+  try {
+    content = fs.readFileSync(resolved, 'utf8');
+  } catch (error) {
+    return {
+      ok: false,
+      error: `读不了备份：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  let backup: string | null;
+  try {
+    backup = backupThenWrite(file, content);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `写不了 ${file}：${error instanceof Error ? error.message : String(error)}`,
+      file,
+      backup: null,
+    };
+  }
+  return {
+    ok: true,
+    changed: true,
+    detail: `用备份 ${path.basename(resolved)} 覆盖了补丁层`,
+    file,
+    backup,
+    content,
+  };
 }
 
 /**
@@ -302,7 +467,9 @@ export function applyPatchEdit(profileDir: string, request: PatchEditRequest): P
         ? disableEntry(current, id)
         : request.action === 'enable'
           ? enableEntry(current, id)
-          : removeInsert(current, id);
+          : request.action === 'drop'
+            ? dropEntry(current, id)
+            : removeInsert(current, id);
 
   if (!outcome.changed) {
     return {
@@ -317,14 +484,7 @@ export function applyPatchEdit(profileDir: string, request: PatchEditRequest): P
 
   let backup: string | null = null;
   try {
-    if (fs.existsSync(file)) {
-      backup = `${file}.bak-${timestamp()}`;
-      fs.copyFileSync(file, backup);
-    }
-    fs.mkdirSync(profileDir, { recursive: true });
-    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(tmp, outcome.text, 'utf8');
-    fs.renameSync(tmp, file);
+    backup = backupThenWrite(file, outcome.text);
   } catch (error) {
     return {
       ok: false,
@@ -342,11 +502,4 @@ export function applyPatchEdit(profileDir: string, request: PatchEditRequest): P
     backup,
     content: outcome.text,
   };
-}
-
-/** `20260918-123456`（跟已有的备份文件名一致） */
-function timestamp(): string {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
