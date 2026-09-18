@@ -518,6 +518,23 @@ export interface PluginInspectResult {
   pnpm?: { found: boolean; path: string | null };
   /** 本次装/卸/升级实际走的源（设置里留空时为 null，含义是"跟随系统 npm 配置"） */
   registry?: string | null;
+  /**
+   * true = 这份结果来自 `--dump-default-config`（dsh 自带的组合，**不含你的层**）。
+   * 配置被改坏时的救援视图，界面上必须写明"这不是你现在真正生效的配置"。
+   */
+  baseline?: boolean;
+}
+
+/** 救援动作：把一个 bundle 从 `dsh.profile.bundles` 里摘掉 / 放回原位 */
+export interface PluginBundleEditResult {
+  ok: boolean;
+  error?: string;
+  changed?: boolean;
+  detail?: string;
+  file?: string;
+  backup?: string | null;
+  /** 它原来的位置（0 起）：恢复时要带回来，否则层序会被改掉 */
+  index?: number;
 }
 
 /**
@@ -572,6 +589,14 @@ export interface DshConsoleApi {
     id: string;
     name?: string;
   }) => Promise<PluginLayerEditResult>;
+  /** 只看 dsh 自带的组合结果（救援用；配置改坏时 `pluginInspect` 会失败，这条通常还能成） */
+  pluginDefaultConfig: () => Promise<PluginInspectResult>;
+  /** 临时停用 / 恢复一个 bundle（改 profile 的 dsh.profile.bundles，会先备份） */
+  pluginBundleEdit: (request: {
+    action: 'suspend' | 'restore';
+    name: string;
+    index?: number;
+  }) => Promise<PluginBundleEditResult>;
   onPluginOutput: (handler: (payload: PluginOutputEvent) => void) => () => void;
 
   onState: (handler: (snapshot: DshSnapshot) => void) => () => void;

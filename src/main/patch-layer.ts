@@ -20,6 +20,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { backupThenWrite } from './safe-file';
+
 /** 补丁层文件名（dsh 认这个名字） */
 export const PATCH_FILE = 'cordis.patch.yml';
 
@@ -317,14 +319,7 @@ export function applyPatchEdit(profileDir: string, request: PatchEditRequest): P
 
   let backup: string | null = null;
   try {
-    if (fs.existsSync(file)) {
-      backup = `${file}.bak-${timestamp()}`;
-      fs.copyFileSync(file, backup);
-    }
-    fs.mkdirSync(profileDir, { recursive: true });
-    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(tmp, outcome.text, 'utf8');
-    fs.renameSync(tmp, file);
+    backup = backupThenWrite(file, outcome.text);
   } catch (error) {
     return {
       ok: false,
@@ -342,11 +337,4 @@ export function applyPatchEdit(profileDir: string, request: PatchEditRequest): P
     backup,
     content: outcome.text,
   };
-}
-
-/** `20260918-123456`（跟已有的备份文件名一致） */
-function timestamp(): string {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }

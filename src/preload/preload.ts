@@ -69,6 +69,8 @@ const api: DshConsoleApi = {
   pluginRun: (request) => ipcRenderer.invoke('plugin:run', request),
   pluginCancel: () => ipcRenderer.invoke('plugin:cancel'),
   pluginEditLayer: (request) => ipcRenderer.invoke('plugin:edit-layer', request),
+  pluginDefaultConfig: () => ipcRenderer.invoke('plugin:default-config'),
+  pluginBundleEdit: (request) => ipcRenderer.invoke('plugin:bundle-edit', request),
 
   // 事件
   onState: (handler) => subscribe('dsh:state', handler),

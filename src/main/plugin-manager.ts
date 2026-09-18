@@ -29,6 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { applyPatchEdit, type PatchEditRequest, type PatchEditResult } from './patch-layer';
+import { applyBundleEdit, type BundleEditResult } from './profile-bundles';
 import {
   dshArgsFor,
   findPnpm,
@@ -297,16 +298,19 @@ export function checkDumpResult(code: number, stdout: string, stderr: string): s
 }
 
 /**
- * 跑一次 `dsh web --dump-config`。
+ * 跑一次 `dsh web --dump-config`（`defaultOnly` 时改成 `--dump-default-config`：**不解析
+ * 你的层与 `--patch`**，只打印 dsh 自带的组合结果 —— 这是配置被改坏时的唯一出路，
+ * 因为它在 patch 文件语法错误时仍然成功（见 §救援流程）。
  *
  * 用 resolveDshLauncher 选出**和启动 dsh 同一个**解释器：dsh 的 CLI 在跑不动的
  * Node 上是"退出码 0 + 零输出"，换一个解释器就等于换一套结果。
  * 另外把解释器所在目录前置进 PATH——node 自己不需要，但 dsh 内部 spawn 的东西要。
  */
-async function runDump(settings: SettingsValues): Promise<DumpRun> {
+async function runDump(settings: SettingsValues, defaultOnly = false): Promise<DumpRun> {
   const launcher = resolveDshLauncher(settings);
-  const args = dshArgsFor(launcher, ['web', '--dump-config']);
-  const display = [launcher.display, 'web', '--dump-config'].join(' ');
+  const flag = defaultOnly ? '--dump-default-config' : '--dump-config';
+  const args = dshArgsFor(launcher, ['web', flag]);
+  const display = [launcher.display, 'web', flag].join(' ');
   const env: NodeJS.ProcessEnv = { ...process.env };
   env.PATH = [path.dirname(launcher.file), env.PATH].filter(Boolean).join(path.delimiter);
 
@@ -972,6 +976,34 @@ export class PluginManager {
     onOutput: (chunk: string) => void,
   ): Promise<PluginOpResult> {
     return await this.runner.run(action, spec, onOutput);
+  }
+
+  /**
+   * 只看 dsh 自带的组合结果（`--dump-default-config`，不解析你的层）。
+   *
+   * 用途是**救援**：配置被改坏时 `--dump-config` 会整条失败，而这条命令照样成功 ——
+   * 于是界面至少还能把"内置层长什么样"摆出来，一眼区分是你的层坏了还是本来就这样。
+   */
+  async baseline(): Promise<PluginInspectResult> {
+    try {
+      const run = await runDump(this.settings.all(), true);
+      const treeLayers = parseDump(run.stdout);
+      return {
+        ok: true,
+        baseline: true,
+        commands: [run.display],
+        treeLayers,
+        entryCount: treeLayers.reduce((sum, layer) => sum + layer.entries.length, 0),
+        rawDump: treeLayers.length === 0 ? run.stdout : null,
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** 临时停用 / 恢复一个 bundle：改 profile 的 `dsh.profile.bundles`（备份 + 原子写） */
+  editBundle(action: 'suspend' | 'restore', name: string, index = -1): BundleEditResult {
+    return applyBundleEdit(this.profileDir(), action, name, index);
   }
 
   /**

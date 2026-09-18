@@ -42,6 +42,8 @@ src/
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
     plugin-manager.ts   插件装配层：profile 的 bundle 层栈 + `dsh web --dump-config` 的解析（含 stderr 上的"没报错的错"）
     patch-layer.ts      改你自己的补丁层（cordis.patch.yml）：插入 / 禁用 / 启用 / 移除插入，按行改 + 先备份 + 原子写
+    profile-bundles.ts  救援用：临时停用 / 恢复一个 bundle（改 dsh.profile.bundles，记住原位置）
+    safe-file.ts        写用户文件的公共件：先备份（.bak-<时间戳>）再原子写（tmp + rename）
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
   shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
   renderer/             Vue 3 + Vite，产物 dist/renderer/
@@ -53,7 +55,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar
     panes/              八个页面组件
-test/selftest.ts        140 项自检（`npm test`），不需要 Electron
+test/selftest.ts        143 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装
 .changeset/             每条改动一个片段；config.json 里 changelog: false
@@ -90,7 +92,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（140 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（143 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -391,6 +393,18 @@ dsh 的「插件」有两个层面，界面与代码都得分开看：
 
 自检守着：「插件安装：spec 分得清 npm / 本地 / tarball / git」「插件安装：常见失败各归纳成一句人话，认不出来返回 null」「插件安装：从 spec 里取得出包名（带版本/标签也要取对）」「插件安装：链到已停服的淘宝镜像要单独说，别笼统说"包不存在"（并把失败的主机名带出来）」「插件安装：404 缺的是依赖、不是你要的那个包时，要指名道姓（夹具是真实输出）」「插件安装：缺的正是你要的那个包时，仍按"包不存在"说（并把主机名带出来）」「插件安装：安装源留空 / 写错都退回系统配置，填了才覆盖」「插件安装：安装源走子进程环境变量，不写用户的 .npmrc」「插件安装：没装 pnpm 时在起子进程之前拦下」「插件安装：patch 层里『已经插入了某个包』看得出来（注释里提到的不算）」「插件安装：内置包要分清『还没启用』与『你已经启用了』」「补丁层：禁用 / 启用只动匹配到的那一段（往返之后与原文一字不差）」「补丁层：层里没有那条时，禁用 = 加一条覆盖，启用 = 整条删掉」「补丁层：插入不重复；移除只对自己插入的条目开放」「补丁层：写盘前先备份、原子写；id 不合法就一个字节都不写」「插件页：条目上有禁用 / 启用，内置包被拦下时给『插进我的层』」「补丁层：删完最后一条要留下一个顶层数组（只剩注释 dsh 会直接报错）」「补丁层：写完回读验证，只有失败点名到这份 overlay 时才回滚」「插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收」「插件安装：pnpm 说"这是 workspace root"时用 -w 重试一次」「插件安装：契约里有 3 个 API 与操作结果类型」。失败归纳（`summarizePluginFailure`）只认它认得的几类（pnpm 缺失 / git 构建脚本被拦 / 缺的是依赖还是它自己 / 淘宝旧镜像 / 网络与权限），认不出来就返回 null —— 界面显示原文，不编原因。
 
+### 救援：dsh 起不来 / 配置被改坏（P2）
+
+插件页最大的性格是 **dsh 挂掉时它还能用**（层栈、生效配置都是读磁盘 + 另起一个进程跑 dump）。所以配置被改坏时它不能只变成一句红字 —— 真机上就发生过：`cordis.patch.yml` 只剩注释（不是顶层数组），`--dump-config` 直接失败、整页读不出来，用户只能去手工改文件。这里的出路是：
+
+- **什么时候算"起不来"**：`degraded`（进程活着但超时没就绪）或 `stopped` + `lastExit.code !== 0`（起来又退出）；`pluginInspect` 失败（配置读不出来）同样弹救援条。原因那一行从快照的 `dsh 输出：…` 日志里取（主进程在非正常退出时记的），**不重新解析终端缓冲**。
+- **出口一：只看内置层**（`--dump-default-config`）——**配置坏掉时它照样能成**：实测 overlay 是非法 YAML 时 `--dump-config` 退出码 1，而 `--dump-default-config` 退出码 0、152 条。界面切到「基线」视图并写明"这不是你真正生效的配置"；基线视图里**不给**「禁用 / 启用」「移除我的插入」，也不显示运行状态 —— 那些动作都作用于真实配置。
+- **出口二：临时停用某个 bundle**（`profile-bundles.ts`）——改 `dsh.profile.bundles`，备份 + 原子写（`safe-file.ts`），**并记住它原来的位置**：层序就是覆盖顺序，恢复时追加到末尾会把"恢复"变成"挪到最后"。界面在救援条与层栈详情两个地方都给这个动作；停用之后才出现「恢复」。
+- **不硬猜是哪一层**：只有失败那一行里**真的出现了**某个树外 bundle 的名字（`line.includes(layer.name)`）才给它「临时停用」按钮，认不出来就只给「只看内置层」+"到层栈里挑一个"。
+- **生效时机两条路要分开写**：临时停用改的是 bundle 列表 → **必须重启 dsh**；patch 层的改动是即时生效的。
+
+自检守着：「救援：临时停用 / 恢复 bundle 记住原位置（恢复之后与原文一字不差）」「救援：配置坏掉时『只看内置层』这条路还在（`--dump-default-config`，不解析你的层）」「救援：界面有救援条与两个出口，而不是只显示一句错误」。
+
 ### 运行中的清单：另一条通道（`pluginInventory/list`）
 
 静态 dump 永远看不到这几行：根 `include` 行、以及**启动时用生成的 id 挂上去**的原生目录选择器（host + client 各一）与 HMR。所以两个数字天然差 4（实测静态 153 / 运行中 157）。要拿运行中的事实，只能问 dsh 自己：
@@ -418,7 +432,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，140 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，143 项，不需要 Electron、不启停任何进程
 ```
 
 `test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值，以及设置页表单字段与契约对齐 —— 键名写错只会静默不生效、保存被主进程拒了必须说出来）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。

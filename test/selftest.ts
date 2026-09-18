@@ -22,6 +22,7 @@ import { execFile } from 'node:child_process';
 import * as processUtils from '../src/main/process-utils';
 import * as pluginManager from '../src/main/plugin-manager';
 import * as patchLayer from '../src/main/patch-layer';
+import * as profileBundles from '../src/main/profile-bundles';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
 import { PtySessions } from '../src/main/pty-sessions';
@@ -1692,6 +1693,49 @@ async function main(): Promise<void> {
       /editLayer\('remove-insert', entry\.id\)/.test(vueSource) &&
       /opNeedsEnable/.test(vueSource) &&
       /pluginEditLayer/.test(flatIpc),
+  );
+  // ---------------------------------------------------------- 救援（P2）
+  //    dsh 因为插件起不来、或配置被改坏时，这一页要能把人捞出来。两条出路：
+  //    「只看内置层」（配置坏掉时它照样能成）与「临时停用某个 bundle」（改 package.json，
+  //    恢复时插回原位置 —— 层序就是覆盖顺序，追加到末尾会把"恢复"变成"挪到最后"）。
+  const realManifest = fixture('profile/package.json');
+  check(
+    '救援：临时停用 / 恢复 bundle 记住原位置（恢复之后与原文一字不差）',
+    (() => {
+      const suspended = profileBundles.suspendBundle(realManifest, '@deepseek-ai/dsh-web-app');
+      const restored = profileBundles.restoreBundle(
+        suspended.text,
+        '@deepseek-ai/dsh-web-app',
+        suspended.index,
+      );
+      const again = profileBundles.suspendBundle(realManifest, '不在列表里');
+      return (
+        suspended.changed &&
+        suspended.index === 1 &&
+        !suspended.text.includes('dsh-web-app') &&
+        // 其余键原样保留
+        suspended.text.includes('patchReload') &&
+        suspended.text.includes('"dependencies": {}') &&
+        restored.changed &&
+        restored.text === realManifest &&
+        !again.changed
+      );
+    })(),
+  );
+  check(
+    '救援：配置坏掉时「只看内置层」这条路还在（--dump-default-config，不解析你的层）',
+    /--dump-default-config/.test(pluginSource) &&
+      /baseline: true/.test(pluginSource) &&
+      /pluginDefaultConfig/.test(flatIpc) &&
+      /pluginBundleEdit/.test(flatIpc),
+  );
+  check(
+    '救援：界面有救援条与两个出口，而不是只显示一句错误',
+    /loadBaseline/.test(vueSource) &&
+      /plugin-rescue/.test(vueSource) &&
+      /editBundle\('suspend'/.test(vueSource) &&
+      /editBundle\('restore'/.test(vueSource) &&
+      /showRescue/.test(vueSource),
   );
   check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
