@@ -428,6 +428,24 @@ async function main(): Promise<void> {
   stubManager.buffer = [];
   check('启动失败：没有输出时返回空串（不会伪造原因）', stubManager.lastOutputLine() === '');
 
+  // Node 抛异常时缓冲里先出现「file:///… 源码行 + ^」，真正的原因在后面的 `Error: …`。
+  // 真机截图里救援条显示成了那行源码，等于什么都没说 —— 这几类必须滤掉。
+  stubManager.buffer = [
+    'file:///Users/x/.nvm/versions/node/v24/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1199\n',
+    '\tif (!Array.isArray(parsed)) throw new Error(`${binName}: ${label} ${file} must be a top-level YAML array of loader patch entries`);\n',
+    '\t                     ^\n',
+    '\n',
+    'Error: dsh: overlay /Users/x/.dsh/profiles/web/cordis.patch.yml must be a top-level YAML array of loader patch entries\n',
+    '    at loadOverlay (file:///Users/x/.nvm/versions/node/v24/lib/index.js:1199:8)\n',
+  ];
+  const fromStack = stubManager.lastOutputLine();
+  check(
+    '启动失败：Node 堆栈里要摘出 `Error: …` 那一行，不是源码行',
+    /^Error: dsh: overlay /.test(fromStack) && !/throw new/.test(fromStack),
+    fromStack,
+  );
+  stubManager.buffer = [];
+
   // ---------------------------------------------------------- 6. 渲染层静态检查
   //    渲染层没有类型检查，这里挡掉最容易犯的错：元素 id / class / API 名拼错。
   //    界面正在逐页迁到 Vue 单文件组件，所以**标记与脚本都要把 .vue 一起算进来**
@@ -1721,6 +1739,73 @@ async function main(): Promise<void> {
         !again.changed
       );
     })(),
+  );
+  check(
+    '救援：只剩注释的补丁层能补成空数组；有内容的文件它不动',
+    (() => {
+      const broken = '# 只剩注释\n# 还是没有数组\n';
+      const fixed = patchLayer.repairEmptyArray(broken);
+      const untouched = patchLayer.repairEmptyArray(realPatch);
+      const empty = patchLayer.repairEmptyArray('');
+      return (
+        fixed.changed &&
+        /^\[\]$/m.test(fixed.text) &&
+        // 注释保住，只在后面补 []
+        fixed.text.includes('# 只剩注释') &&
+        !untouched.changed &&
+        untouched.text === realPatch &&
+        empty.changed &&
+        /^\[\]$/m.test(empty.text)
+      );
+    })(),
+  );
+  check(
+    '救援：备份按时间倒序列出；恢复只认这份 profile 里的 .bak-（递来的路径不可信）',
+    (() => {
+      const dir = path.join(sandbox, 'patch-rescue');
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'cordis.patch.yml');
+      fs.writeFileSync(file, '# 坏掉的\n', 'utf8');
+      fs.writeFileSync(
+        path.join(dir, 'cordis.patch.yml.bak-20260101-000000'),
+        '# 旧备份\n',
+        'utf8',
+      );
+      fs.utimesSync(
+        path.join(dir, 'cordis.patch.yml.bak-20260101-000000'),
+        new Date(1000),
+        new Date(1000),
+      );
+      fs.writeFileSync(
+        path.join(dir, 'cordis.patch.yml.bak-20260102-000000'),
+        '- id: from-backup\n',
+        'utf8',
+      );
+      const list = patchLayer.listPatchBackups(dir);
+      const refused = patchLayer.restorePatchBackup(dir, '/etc/passwd');
+      const restored = patchLayer.restorePatchBackup(dir, list[0]?.path ?? '');
+      const after = fs.readFileSync(file, 'utf8');
+      const savedCurrent = restored.backup ? fs.readFileSync(restored.backup, 'utf8') : '';
+      return (
+        list.length === 2 &&
+        // 最近的在前
+        list[0].name === 'cordis.patch.yml.bak-20260102-000000' &&
+        refused.ok === false &&
+        restored.ok === true &&
+        after === '- id: from-backup\n' &&
+        // 恢复之前那份"坏掉的"也被备份了 —— 这一步同样可逆
+        savedCurrent === '# 坏掉的\n'
+      );
+    })(),
+  );
+  check(
+    '救援：界面上有「修成空配置」与「从备份恢复」，契约里有 pluginRescue',
+    /repairLayer/.test(vueSource) &&
+      /restoreBackup/.test(vueSource) &&
+      /loadBackups/.test(vueSource) &&
+      /pluginRescue/.test(vueSource) &&
+      /pluginRescue/.test(flatIpc),
   );
   check(
     '救援：配置坏掉时「只看内置层」这条路还在（--dump-default-config，不解析你的层）',

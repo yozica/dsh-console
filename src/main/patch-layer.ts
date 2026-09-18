@@ -277,6 +277,126 @@ export function removeInsert(text: string, id: string): PatchEditOutcome {
 }
 
 /**
+ * 把"只剩注释（或空文件）"这种坏法修成合法的空配置：补一个 `[]`。
+ *
+ * 只认这一种坏法：文件里已经有条目、或者已经有 `[]` 时**什么都不做**并说明原因 ——
+ * 救援动作宁可"不动"，也不猜着改（真正的内容坏了应该从备份恢复，见下面）。
+ */
+export function repairEmptyArray(text: string): PatchEditOutcome {
+  const lines = splitLines(text);
+  const hasItem = lines.some((line) => ITEM_RE.test(line));
+  const hasEmptyArray = lines.some((line) => EMPTY_ARRAY_RE.test(line));
+  if (hasItem || hasEmptyArray) {
+    return done(text, false, '它现在不是"只剩注释"那种坏法，没动它 —— 这种应该从备份恢复。');
+  }
+  return done(joinLines(lines), true, '在你的补丁层里补了一个空的顶层数组（[]）');
+}
+
+/** 补一个空数组（"只剩注释"那种坏法）并落盘：备份 + 原子写 */
+export function applyEmptyArrayRepair(profileDir: string): PatchEditResult {
+  const file = path.join(profileDir, PATCH_FILE);
+  let current = '';
+  try {
+    current = fs.readFileSync(file, 'utf8');
+  } catch {
+    /* 没有这个文件：也算空配置的一种，补 [] 是对的 */
+  }
+  const outcome = repairEmptyArray(current);
+  if (!outcome.changed) {
+    return {
+      ok: true,
+      changed: false,
+      detail: outcome.detail,
+      file,
+      backup: null,
+      content: current,
+    };
+  }
+  try {
+    const backup = backupThenWrite(file, outcome.text);
+    return { ok: true, changed: true, detail: outcome.detail, file, backup, content: outcome.text };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `写不了 ${file}：${error instanceof Error ? error.message : String(error)}`,
+      file,
+    };
+  }
+}
+
+/** 补丁层的备份文件（给界面选一个恢复） */
+export interface PatchBackup {
+  name: string;
+  path: string;
+  /** 修改时间（毫秒） */
+  at: number;
+  bytes: number;
+}
+
+/** 列出 `cordis.patch.yml.bak-<时间戳>`，最近的在前 */
+export function listPatchBackups(profileDir: string): PatchBackup[] {
+  const prefix = `${PATCH_FILE}.bak-`;
+  let names: string[];
+  try {
+    names = fs.readdirSync(profileDir).filter((name) => name.startsWith(prefix));
+  } catch {
+    return [];
+  }
+  const found: PatchBackup[] = [];
+  for (const name of names) {
+    const file = path.join(profileDir, name);
+    try {
+      const stat = fs.statSync(file);
+      if (stat.isFile()) found.push({ name, path: file, at: stat.mtimeMs, bytes: stat.size });
+    } catch {
+      /* 读不到就跳过 */
+    }
+  }
+  return found.sort((a, b) => b.at - a.at);
+}
+
+/**
+ * 用某个备份覆盖当前补丁层。当前文件**也会先备份**（所以这一步同样可逆）。
+ * 只接受 profile 目录里 `cordis.patch.yml.bak-*` 这种路径 —— 渲染层递过来的字符串不可信。
+ */
+export function restorePatchBackup(profileDir: string, backupPath: string): PatchEditResult {
+  const resolved = path.resolve(backupPath);
+  const allowed = listPatchBackups(profileDir).some((item) => path.resolve(item.path) === resolved);
+  if (!allowed) {
+    return { ok: false, error: '只能从这份 profile 目录里的 .bak- 备份恢复。' };
+  }
+  const file = path.join(profileDir, PATCH_FILE);
+  let content: string;
+  try {
+    content = fs.readFileSync(resolved, 'utf8');
+  } catch (error) {
+    return {
+      ok: false,
+      error: `读不了备份：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  let backup: string | null;
+  try {
+    backup = backupThenWrite(file, content);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `写不了 ${file}：${error instanceof Error ? error.message : String(error)}`,
+      file,
+      backup: null,
+    };
+  }
+  return {
+    ok: true,
+    changed: true,
+    detail: `用备份 ${path.basename(resolved)} 覆盖了补丁层`,
+    file,
+    backup,
+    content,
+  };
+}
+
+/**
  * 落盘：备份 → 原子写。`profileDir` 由调用方给（主进程那边是 `$DSH_HOME/profiles/web`）。
  */
 export function applyPatchEdit(profileDir: string, request: PatchEditRequest): PatchEditResult {

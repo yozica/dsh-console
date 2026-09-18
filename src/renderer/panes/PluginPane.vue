@@ -231,6 +231,96 @@ function backToFull(): void {
   baselineError.value = '';
 }
 
+const rescueBusy = ref(false);
+/** 备份清单（点「从备份恢复…」才去读；null = 没展开） */
+const backups = ref<{ name: string; path: string; at: number; bytes: number }[] | null>(null);
+
+/** 把一次操作的结果摊进输出区（跟补丁层那些动作同一套呈现） */
+function showOpResult(
+  title: string,
+  result: {
+    ok: boolean;
+    detail?: string;
+    error?: string;
+    backup?: string | null;
+    content?: string;
+  },
+): void {
+  opOpen.value = true;
+  opTitle.value = title;
+  opStatus.value = result.ok ? 'ok' : 'failed';
+  opText.value = result.content ?? '';
+  opSummary.value = result.ok
+    ? [result.detail, result.backup ? `改动前的原文已备份到 ${result.backup}` : '']
+        .filter(Boolean)
+        .join('—— ')
+    : result.error || '操作失败';
+}
+
+/** 修成空配置：只认"只剩注释 / 空文件"这一种坏法（真要恢复内容走备份） */
+async function repairLayer(): Promise<void> {
+  if (rescueBusy.value) return;
+  const ok = await api.confirm({
+    type: 'warning',
+    title: '把补丁层修成空配置',
+    message: 'cordis.patch.yml',
+    detail:
+      '只认"只剩注释 / 空文件"这一种坏法：往文件里补一个空的顶层数组（[]）。当前内容会先备份成 .bak-<时间戳>，所以这一步同样可逆；如果你的层里还有别的内容，它不会被改。',
+  });
+  if (!ok) return;
+  rescueBusy.value = true;
+  try {
+    const result = await api.pluginRescue({ action: 'repair-empty' });
+    showOpResult('修复补丁层', result);
+    if (result.ok) await refresh();
+  } finally {
+    rescueBusy.value = false;
+  }
+}
+
+async function loadBackups(): Promise<void> {
+  if (backups.value) {
+    backups.value = null;
+    return;
+  }
+  rescueBusy.value = true;
+  try {
+    const result = await api.pluginRescue({ action: 'list-backups' });
+    if (!result.ok) {
+      showOpResult('列备份', result);
+      return;
+    }
+    backups.value = result.backups ?? [];
+  } finally {
+    rescueBusy.value = false;
+  }
+}
+
+/** 用某个备份覆盖当前补丁层；当前内容同样会先备份，所以这一步也可逆 */
+async function restoreBackup(path: string): Promise<void> {
+  if (rescueBusy.value) return;
+  const name = path.split('/').pop() ?? path;
+  const ok = await api.confirm({
+    type: 'warning',
+    title: `用备份恢复：${name}`,
+    message: 'cordis.patch.yml',
+    detail:
+      '会用这份备份覆盖当前补丁层。当前内容也会先备份一份（.bak-<时间戳>），所以恢复错了还能再回去。',
+  });
+  if (!ok) return;
+  rescueBusy.value = true;
+  try {
+    const result = await api.pluginRescue({ action: 'restore-backup', backup: path });
+    showOpResult(`用 ${name} 恢复`, result);
+    if (result.ok) {
+      backups.value = null;
+      await refresh();
+    }
+  } finally {
+    rescueBusy.value = false;
+  }
+}
+
 async function editBundle(action: 'suspend' | 'restore', name: string, index = -1): Promise<void> {
   if (opBusy.value) return;
   const suspending = action === 'suspend';
@@ -659,7 +749,25 @@ function clearFilters(): void {
         >
           恢复 {{ suspended.name }}
         </button>
+        <!-- 修：只认能认出来的坏法，且都先备份 —— 不猜着改用户的内容 -->
+        <button class="btn small" :disabled="rescueBusy" @click="repairLayer">修成空配置</button>
+        <button class="btn small" :disabled="rescueBusy" @click="loadBackups">
+          {{ backups ? '收起备份' : '从备份恢复…' }}
+        </button>
       </div>
+      <ul v-if="backups" class="plugin-rescue-backups">
+        <li v-for="item in backups" :key="item.path">
+          <span class="plugin-rescue-backup-name">{{ item.name }}</span>
+          <span class="bar-hint"
+            >{{ new Date(item.at).toLocaleString() }} · {{ item.bytes }} B</span
+          >
+          <span class="spacer"></span>
+          <button class="btn tiny" :disabled="rescueBusy" @click="restoreBackup(item.path)">
+            用这个
+          </button>
+        </li>
+        <li v-if="backups.length === 0" class="bar-hint">这份 profile 目录里还没有 .bak- 备份。</li>
+      </ul>
     </div>
 
     <!-- 空态 / 出错。注意：基线视图（救援）加载出来之后就不再被这句挡住 ——

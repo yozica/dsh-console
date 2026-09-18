@@ -50,6 +50,7 @@ import type {
   PluginInspectResult,
   PluginLayerEditAction,
   PluginLayerEditResult,
+  PluginRescueResult,
   PluginOpAction,
   PluginOpResult,
   RenameSessionResult,
@@ -875,6 +876,35 @@ function registerIpc(): void {
       return { ok: false, error: messageOf(error) };
     }
   });
+
+  // 救援：把你的补丁层修回可用状态（补空数组 / 列备份 / 从备份恢复）。
+  // 这些是"修"不是"编辑"：能不动就不动，真要动也先备份。
+  ipcMain.handle(
+    'plugin:rescue',
+    (_event: IpcMainInvokeEvent, request: unknown): PluginRescueResult => {
+      try {
+        const { action, backup } = (request ?? {}) as {
+          action?: 'repair-empty' | 'list-backups' | 'restore-backup';
+          backup?: string;
+        };
+        if (action !== 'repair-empty' && action !== 'list-backups' && action !== 'restore-backup') {
+          return { ok: false, error: '不认识的操作' };
+        }
+        const result = pluginManager.rescue(action, backup ? String(backup) : undefined);
+        if (action !== 'list-backups') {
+          dshManager.log(
+            'info',
+            result.changed
+              ? `补丁层已修复：${result.detail ?? action}`
+              : `补丁层未改动：${result.detail ?? action}`,
+          );
+        }
+        return result;
+      } catch (error) {
+        return { ok: false, error: messageOf(error) };
+      }
+    },
+  );
 
   // 救援：临时停用 / 恢复一个 bundle。改的是 profile 的 package.json（备份 + 原子写），
   // 而且**要重启 dsh 才生效**（bundle 列表是启动时读的），界面负责说清这一点。

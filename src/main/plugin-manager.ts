@@ -28,7 +28,14 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { applyPatchEdit, type PatchEditRequest, type PatchEditResult } from './patch-layer';
+import {
+  applyEmptyArrayRepair,
+  applyPatchEdit,
+  listPatchBackups,
+  restorePatchBackup,
+  type PatchEditRequest,
+  type PatchEditResult,
+} from './patch-layer';
 import { applyBundleEdit, type BundleEditResult } from './profile-bundles';
 import {
   dshArgsFor,
@@ -50,6 +57,7 @@ import type {
   PluginLivePreset,
   PluginLiveSnapshot,
   PluginProblem,
+  PluginRescueResult,
   PluginTreeLayer,
 } from '../shared/ipc';
 
@@ -999,6 +1007,28 @@ export class PluginManager {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /**
+   * 救援：把补丁层修回可用状态（查看备份、补空数组、从备份恢复）。
+   *
+   * 与"改你自己的层"分开是因为性质不同：那些是**编辑**，这些是**修**——能不动就不动
+   * （`repair-empty` 只认一种坏法），真要动也先备份，而且只接受 profile 目录里的 `.bak-`。
+   */
+  rescue(
+    action: 'repair-empty' | 'list-backups' | 'restore-backup',
+    backup?: string,
+  ): PluginRescueResult {
+    const profileDir = this.profileDir();
+    if (action === 'list-backups') {
+      return { ok: true, backups: listPatchBackups(profileDir) };
+    }
+    if (action === 'restore-backup') {
+      if (!backup) return { ok: false, error: '没给要恢复的备份文件。' };
+      return restorePatchBackup(profileDir, backup);
+    }
+    // repair-empty：只认"只剩注释 / 空文件"这一种坏法（真正的内容坏了要从备份恢复）
+    return applyEmptyArrayRepair(profileDir);
   }
 
   /** 临时停用 / 恢复一个 bundle：改 profile 的 `dsh.profile.bundles`（备份 + 原子写） */

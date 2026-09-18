@@ -525,6 +525,28 @@ export interface PluginInspectResult {
   baseline?: boolean;
 }
 
+/** 补丁层的备份（救援时可以从这里恢复） */
+export interface PluginPatchBackup {
+  name: string;
+  path: string;
+  /** 修改时间（毫秒） */
+  at: number;
+  bytes: number;
+}
+
+/** 救援结果：修成空配置 / 列备份 / 从备份恢复，三种动作共用 */
+export interface PluginRescueResult {
+  ok: boolean;
+  error?: string;
+  changed?: boolean;
+  detail?: string;
+  file?: string;
+  backup?: string | null;
+  content?: string;
+  /** 只有 list-backups 会带 */
+  backups?: PluginPatchBackup[];
+}
+
 /** 救援动作：把一个 bundle 从 `dsh.profile.bundles` 里摘掉 / 放回原位 */
 export interface PluginBundleEditResult {
   ok: boolean;
@@ -591,6 +613,16 @@ export interface DshConsoleApi {
   }) => Promise<PluginLayerEditResult>;
   /** 只看 dsh 自带的组合结果（救援用；配置改坏时 `pluginInspect` 会失败，这条通常还能成） */
   pluginDefaultConfig: () => Promise<PluginInspectResult>;
+  /**
+   * 救援：把你的补丁层修回可用状态。
+   * - `repair-empty`：只认"只剩注释/空文件"这一种坏法，补一个 `[]`
+   * - `list-backups`：列出 `cordis.patch.yml.bak-*`（最近的在前）
+   * - `restore-backup`：用指定备份覆盖（当前内容也会先备份，所以同样可逆）
+   */
+  pluginRescue: (request: {
+    action: 'repair-empty' | 'list-backups' | 'restore-backup';
+    backup?: string;
+  }) => Promise<PluginRescueResult>;
   /** 临时停用 / 恢复一个 bundle（改 profile 的 dsh.profile.bundles，会先备份） */
   pluginBundleEdit: (request: {
     action: 'suspend' | 'restore';

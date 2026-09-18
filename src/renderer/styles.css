@@ -2752,3 +2752,30 @@ body[data-immersive='true'] .webview-wrap {
 .plugin-baseline-note .btn {
   margin-left: 8px;
 }
+
+/* 救援条里的备份清单：整行铺开（救援条本身是 flex 行） */
+.plugin-rescue {
+  flex-wrap: wrap;
+}
+
+.plugin-rescue-backups {
+  flex: 1 1 100%;
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.plugin-rescue-backups li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: var(--t-xs);
+}
+
+.plugin-rescue-backup-name {
+  font-family: var(--mono);
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
