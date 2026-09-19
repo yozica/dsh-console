@@ -297,7 +297,9 @@ export function vcRuntimePaths(env: NodeJS.ProcessEnv = process.env): string[] {
     }
     return lower.get('systemroot') ?? lower.get('windir') ?? 'C:\\Windows';
   })();
-  return VC_RUNTIME_DLLS.map((name) => path.join(root, 'System32', name));
+  // `%SystemRoot%\System32` 是 **Windows** 路径：用 `path.win32` 拼（`path.join` 跟着跑测试的机器走，
+  // 在 Linux 上会拼出 `D:\Windows/System32/…` 这种混合分隔符 —— 自检就是这么红的）
+  return VC_RUNTIME_DLLS.map((name) => path.win32.join(root, 'System32', name));
 }
 
 /**
