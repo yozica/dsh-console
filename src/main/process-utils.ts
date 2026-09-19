@@ -114,16 +114,31 @@ function isExecutableFile(file: string): boolean {
 /**
  * 在 PATH 中查找可执行文件（Windows 下自动尝试 PATHEXT）。
  * POSIX 下额外确认可执行位 —— PATH 里躺着同名不可执行文件时不能当真。
+ *
+ * **Windows 上先按 PATHEXT 试带扩展名的，而且不返回无扩展名的同名文件**（t9 round-2 修）：
+ * Node 的安装目录里 `npm`（`#!/usr/bin/env bash`）、`pnpm`（`#!/bin/sh`）与 `npm.cmd` /
+ * `pnpm.cmd` 是并存的，而 CreateProcess / `spawn` 起不了那个 sh 脚本（实测 ENOENT），
+ * 原来"裸名优先"的候选顺序会稳定地挑中它 —— 结果是 `npm -v` 探测不到输出、一键修复直接
+ * ENOENT。PATHEXT 的顺序（`.COM;.EXE;.BAT;.CMD`）天然满足「`pnpm.exe` 优先于 `pnpm.cmd`」。
+ * POSIX 上仍然是裸名优先（那边 `npm` 就是对的，不看扩展名）。
+ *
  * @param name 例如 dsh.cmd / dsh / node.exe
  */
 export function whichSync(name: string): string | null {
-  const exts = isWindows
-    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
-    : [''];
   const hasExt = path.extname(name) !== '';
+  const exts = isWindows
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+        .split(';')
+        .map((ext) => ext.trim())
+        .filter(Boolean)
+    : [];
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
-    const candidates = hasExt ? [name] : [name, ...exts.map((ext) => name + ext.toLowerCase())];
+    const candidates = hasExt
+      ? [name]
+      : isWindows
+        ? exts.map((ext) => name + ext.toLowerCase())
+        : [name];
     for (const candidate of candidates) {
       const full = path.join(dir, candidate);
       if (isExecutableFile(full)) return full;
@@ -210,6 +225,20 @@ export function windowsBinCandidates(env: NodeJS.ProcessEnv, home: string): stri
   // 官方 node 安装包与 nvm-windows 的软链目录（都放 node.exe）
   push(under(at('programfiles'), 'nodejs'));
   push(at('nvm_symlink'));
+  // **nvm v2 的目录形状（VM-11）**：v2 不设 `NVM_HOME` / `NVM_SYMLINK`，它把**自己**放进 PATH
+  // （`…\Author Software\nvm`），当前版本的 shim 放在同级的 `.nodejs` 里。所以从 PATH 里
+  // 认出"像版本管理器根目录"的那几条，各自补上 `.nodejs` —— 这一条在 PATH 还没刷新（刚装完）
+  // 或者只写了根目录的机器上都救得回来。纯拼装、不判存在性（调用方各自查存在性）。
+  for (const raw of String(at('path') || '').split(';')) {
+    const dir = raw.trim().replace(/[\\/]+$/, '');
+    if (dir === '') continue;
+    const base = path.win32.basename(dir).toLowerCase();
+    if (base === 'nvm' || base === '.nvm' || base === 'nvm-windows') {
+      push(path.win32.join(dir, '.nodejs'));
+      // v2 的版本装在 `<root>\installs`（每个版本一个目录）；把里面的目录也交给调用方去扫
+      // 会让"找 node"多一层，这里只补 `.nodejs` 这个**当前版本**的位置，保持候选简单。
+    }
+  }
   push(path.win32.join(home, '.volta', 'bin'));
   return dirs;
 }
@@ -247,6 +276,95 @@ export function findNodeExe(): string | null {
 }
 
 /**
+ * VC++ 2015-2022（x64）运行库那两个 DLL —— Windows 上原生 exe 的加载依赖。
+ *
+ * 为什么要认它：**pnpm 11 起在 Windows 上发的是原生程序**（12.x 的 `install.js` 会把包里的
+ * 占位文件换成 44 MB 的原生 exe），而**纯净 Windows 11 没有这个运行库**；缺了它 exe 加载失败、
+ * 进程没有任何输出（真机 VM-09：`pnpm -v` 无输出 + 弹窗「由于找不到 VCRUNTIME140.dll…」）。
+ * 本项目要覆盖的正是"什么都没装过"的机器，所以这条事实必须自己认。
+ *
+ * **只读、不需要管理员**（就是看两个文件在不在）；而且**只跟 pnpm 有关**：
+ * 真机上同一台机器 `node -v` / `npm -v` 都正常，所以不要因此去要求用户装运行库。
+ */
+export const VC_RUNTIME_DLLS = ['vcruntime140.dll', 'msvcp140.dll'];
+
+/** 那两个 DLL 在 `%SystemRoot%\System32` 里的位置（纯字符串拼装，不判存在性） */
+export function vcRuntimePaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const root = (() => {
+    const lower = new Map<string, string>();
+    for (const [key, value] of Object.entries(env)) {
+      if (typeof value === 'string') lower.set(key.toLowerCase(), value);
+    }
+    return lower.get('systemroot') ?? lower.get('windir') ?? 'C:\\Windows';
+  })();
+  // `%SystemRoot%\System32` 是 **Windows** 路径：用 `path.win32` 拼（`path.join` 跟着跑测试的机器走，
+  // 在 Linux 上会拼出 `D:\Windows/System32/…` 这种混合分隔符 —— 自检就是这么红的）
+  return VC_RUNTIME_DLLS.map((name) => path.win32.join(root, 'System32', name));
+}
+
+/**
+ * 这台机器有没有 VC++ 运行库。
+ *
+ * `exists` 可注入 —— 自检用它把「缺 / 有」两支分支都真跑一遍，不必真的去动系统里的 DLL。
+ * 非 Windows 恒为 true：这条只在 Windows 上成立（POSIX 的 pnpm 是 JS 入口）。
+ */
+export function hasVcRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (file: string) => boolean = (file) => fs.existsSync(file),
+): boolean {
+  if (!isWindows) return true;
+  return vcRuntimePaths(env).every((file) => exists(file));
+}
+
+/**
+ * Windows 上 pnpm 的候选文件名，**按"能不能跑"排序**（不是按 PATH 顺序）。
+ *
+ * - 缺 VC++ 运行库：**`.cmd` 优先** —— `pnpm.cmd` 是 npm 生成的批处理，指向包内的 JS 入口
+ *   （`pnpm@10` 的 `bin` 就是 `bin/pnpm.cjs`），而同一目录里的 `pnpm.exe` 是原生程序，
+ *   在这台机器上注定加载失败（VM-09）。PATH 顺序在这里让位给"能不能跑"。
+ * - 有运行库：`.exe` 优先（原生，最快；也照顾"独立安装包只放了 pnpm.exe"那一路）。
+ *
+ * 纯函数（不碰磁盘）：自检直接钉两支分支。
+ */
+export function pnpmExeNames(vcRuntime: boolean): string[] {
+  return vcRuntime ? ['pnpm.exe', 'pnpm.cmd'] : ['pnpm.cmd', 'pnpm.exe'];
+}
+
+/**
+ * 在 Windows 上找 pnpm：**名字优先于目录顺序**（见 `pnpmExeNames` 的理由）。
+ *
+ * 先扫 `env` 里的 PATH，再扫已知安装位置（`windowsBinCandidates`）。`exists` 可注入，
+ * 所以自检能真跑「同一个目录里既有坏的 pnpm.exe、又有能跑的 pnpm.cmd」这一支。
+ *
+ * 导出它是为了自检与 `findPnpm()` 用**同一份**偏好：`findPnpm()` 只是拿真实运行库事实调它一次
+ * （`process-utils` 是最底层，不许 import 上层，所以事实只能由它自己探测）。
+ */
+export function findPnpmWindows(
+  vcRuntime: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (file: string) => boolean = isExecutableFile,
+): string | null {
+  const names = pnpmExeNames(vcRuntime);
+  const pathDirs: string[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toLowerCase() !== 'path' || typeof value !== 'string') continue;
+    for (const dir of value.split(path.win32.delimiter)) {
+      if (dir.trim()) pathDirs.push(dir.trim());
+    }
+  }
+  const known = windowsBinCandidates(env, homeDir()).filter((dir) => fs.existsSync(dir));
+  for (const name of names) {
+    for (const dir of [...pathDirs, ...known]) {
+      // 这些是 **Windows** 路径：用 `path.win32` 拼，别用 `path.join` —— 后者跟着**跑测试的这台机器**
+      // 的分隔符走，于是同一条断言在 Windows 上绿、在 macOS / Linux 上假红（VM-09 的自检就踩过）。
+      const full = path.win32.join(dir, name);
+      if (exists(full)) return full;
+    }
+  }
+  return null;
+}
+
+/**
  * 找 pnpm 可执行文件。
  *
  * 为什么必须自己找：`dsh plugin` 内部是 `spawnSync('pnpm', …)`（`stdio: 'inherit'`），
@@ -254,14 +372,14 @@ export function findNodeExe(): string | null {
  * `/usr/bin:/bin:/usr/sbin:/sbin`，nvm / homebrew / `~/Library/pnpm` 都不在里面。
  * Windows 上 GUI 启动的应用拿到的是启动那一刻的环境块，刚装完 pnpm 还没重新登录时同理。
  * 不补的话用户看到的是 `dsh: pnpm not found on PATH`，退出码 127。
+ *
+ * **Windows 上还要选"能跑的那个"**：缺 VC++ 运行库时原生 `pnpm.exe` 加载会失败（VM-09），
+ * 所以偏好交给 `findPnpmWindows()`（同一份判据，插件路径也走这里，两边不会各挑一个）。
  */
 export function findPnpm(): string | null {
-  // Windows 上不写死 `pnpm.cmd`：独立安装包装的是 `pnpm.exe`，交给 whichSync 按 PATHEXT 展开
+  if (isWindows) return findPnpmWindows(hasVcRuntime());
   const fromPath = whichSync('pnpm');
   if (fromPath) return fromPath;
-  if (isWindows) {
-    return firstExisting(windowsBinCandidates(process.env, homeDir()), ['pnpm.exe', 'pnpm.cmd']);
-  }
   const home = homeDir();
   const candidates = [
     // pnpm 官方安装脚本在这台机器上就装在这儿（PATH 里没有）
@@ -583,6 +701,96 @@ export function resolveDshLauncher(settings: SettingsValues): DshLauncher {
 export function dshArgsFor(launcher: DshLauncher, args: string[]): string[] {
   if (!launcher.viaCmd) return [...launcher.prefixArgs, ...args];
   return [...launcher.prefixArgs, ...args.map(quoteForCmd)];
+}
+
+/**
+ * Windows 上「这个文件真的起得来」的扩展名：`.exe` / `.com` 是 PE，`.cmd` / `.bat` 交给 cmd.exe。
+ * 无扩展名的同名文件（Node 安装目录里的 `npm` 是 `#!/usr/bin/env bash`）不在其中 ——
+ * `spawn` 它直接 ENOENT（本机实测）。
+ */
+const WIN_RUNNABLE_EXTS = new Set(['.exe', '.com', '.cmd', '.bat']);
+
+/** 一条真正能交给 `spawn` / `execFile` 的启动描述 */
+export interface LaunchSpec {
+  file: string;
+  args: string[];
+  /**
+   * true = `args` 已经是我们按 cmd.exe 的规则拼好的**一整条命令行**，Node 不要再加引号。
+   *
+   * Windows 上必须声明它（调用方要原样传给 `spawn` / `execFile`）：Node 自己的引号规则与 cmd
+   * 不一样，`"C:\…\dsh.cmd"` 会被再转义成 `\"C:\…\dsh.cmd\"`，cmd 于是报
+   * `'"…dsh.cmd"' is not recognized as an internal or external command`（本机实测）。
+   * 这是「.cmd 不能直接 spawn（EINVAL）」之外的第二道坑，两条都在这里收口。
+   */
+  windowsVerbatimArguments: boolean;
+}
+
+function isCmdExe(file: string): boolean {
+  const base = path.basename(file).toLowerCase();
+  return base === 'cmd.exe' || base === 'cmd';
+}
+
+/** PE 映像可以直接 spawn；其它可执行文件（`.cmd` / `.bat`）在 Windows 上都要经 cmd.exe */
+function isPeImage(file: string): boolean {
+  const ext = path.extname(file).toLowerCase();
+  return ext === '.exe' || ext === '.com';
+}
+
+/**
+ * 这份路径在**自己的平台**上能不能被起起来。
+ *
+ * Windows 上只看扩展名：Node 安装目录里 `npm`（POSIX sh 脚本）与 `npm.cmd` 是并存的，
+ * 只按 PATH 找「叫 npm 的那个文件」会拿到前者 —— 而它既不是 PE，也不是 cmd 能执行的批处理。
+ * 所以**解析侧只认带可执行扩展名的**，执行侧再按扩展名决定要不要经 cmd.exe。
+ */
+export function isRunnablePath(file: string, platform: string): boolean {
+  if (platform !== 'win32') return true;
+  return WIN_RUNNABLE_EXTS.has(path.extname(file).toLowerCase());
+}
+
+/**
+ * 统一包装器：把「可执行文件 + argv」变成真正能起的 spec。
+ * **凡是自己起 dsh / npm 的地方都用它**（env-doctor 的探测与一键修复、plugin-manager 的
+ * dump 与装/卸/升级）—— 各写一遍就会出现「一条路能跑、另一条路报 not recognized」。
+ *
+ * - 非 Windows：原样返回 argv 数组；
+ * - Windows + PE（`.exe` / `.com`）：可以直接 spawn，不需要 cmd 这层；
+ * - Windows 其它（`.cmd` / `.bat` / 无扩展名），以及**已经是 cmd.exe 的调用**
+ *   （`resolveDshLauncher` 给的 shim / npx / custom-shim 那条路）：经 `cmd.exe`，把 `/d /s /c`
+ *   之后的整条命令拼成**一个**参数，再整条套一层引号 —— `/s` 会把最外层那对引号剥掉，
+ *   剥完才是真命令行（cmd 的既定行为，`cross-spawn` 一类库也是这么拼的），否则路径里带空格 /
+ *   最后一个参数带引号时会被 `/s` 的引号剥离规则切坏（真机实测：`C:\Program Files\nodejs\npm.cmd`
+ *   会被切成 `'C:\Program Files' is not recognized as an internal or external command`）。
+ */
+export function launchSpec(file: string, args: string[], platform: string): LaunchSpec {
+  if (platform !== 'win32') {
+    return { file, args: [...args], windowsVerbatimArguments: false };
+  }
+  if (!isCmdExe(file) && isPeImage(file)) {
+    return { file, args: [...args], windowsVerbatimArguments: false };
+  }
+  const parts =
+    isCmdExe(file) && args[0] === '/d' && args[1] === '/s' && args[2] === '/c'
+      ? args.slice(3) // 已经是引好的段落（dshArgsFor 拼的），原样接在后面
+      : [file, ...args].map(quoteForCmd);
+  return {
+    file: isCmdExe(file) ? file : COMSPEC,
+    args: ['/d', '/s', '/c', `"${parts.join(' ')}"`],
+    windowsVerbatimArguments: true,
+  };
+}
+
+/**
+ * 「启动 dsh」的统一入口：解析出来的 launcher（含 shim / npx / 自定义 shim 这三条回退分支）
+ * 经它变成能真的 `spawn` / `execFile` 的 spec。
+ *
+ * 为什么必须走这里：`resolveDshLauncher()` 在这些回退分支上给的是 `cmd.exe` + `/d /s /c`
+ * 前缀（见该函数），直接 `spawn(launcher.file, dshArgsFor(...))` 时 Node 会把内嵌的引号再
+ * 转义一遍，cmd 报 `'"…dsh.cmd"' is not recognized` —— 也就是"用户自己装了 dsh 却解析不到"时
+ * 插件页一整块功能都不可用。
+ */
+export function dshLaunchSpec(launcher: DshLauncher, args: string[], platform: string): LaunchSpec {
+  return launchSpec(launcher.file, dshArgsFor(launcher, args), platform);
 }
 
 /** 解析要启动的 dsh web（= `dsh web --no-open` + 监听地址与附加参数） */

@@ -15,6 +15,8 @@
  *     插件把启动打挂时，恰恰只有这一页还能看。
  */
 import { computed, ref, watch } from 'vue';
+import { requestEnvFocus } from '../lib/env-anchor.js';
+import { envFix, wireEnvDoctor } from '../lib/env-doctor.js';
 import { currentTab, snapshot } from '../lib/store.js';
 import type {
   PluginEntry,
@@ -27,6 +29,9 @@ import type {
 } from '../../shared/ipc.js';
 
 const api = window.dshConsole;
+
+// 一键修复的状态也在这里读（装 pnpm 走的是主进程同一套修复，插件页只是"发起 + 装完重读"）
+wireEnvDoctor();
 
 const data = ref<PluginInspectResult | null>(null);
 /**
@@ -163,6 +168,39 @@ async function startOp(action: PluginOpAction, spec: string): Promise<void> {
           : '已升级，重启 dsh 后生效',
     );
   }
+}
+
+// ---------------------------------------------------------------- 缺 pnpm → 一键安装
+//
+// 插件页的装 / 卸 / 升级全部经 pnpm（`dsh plugin` 内部裸调 pnpm），没装就只能干看着。
+// 这里**不另写一套安装逻辑**：点一下把人带到自检页的 pnpm 那一行并展开确认区，
+// 真正的执行是自检页递 action、主进程 `EnvFixRunner` 跑（命令由主进程现算）。
+// 跑完之后 findPnpm() 不缓存，所以这一页重读一次就能看到 pnpm.found 变真。
+
+/** 一键修复是不是在跑（按钮互斥用） */
+const envFixRunning = computed(() => envFix.value.phase === 'running');
+
+// 装 pnpm 的收尾（不管是从这一页发起的，还是在自检页点的）都要重读一次插件信息：
+// `findPnpm()` 不缓存，所以那一行会立刻变成「可用」。还没读过就不管 —— 切过来自然会读。
+watch(
+  () => envFix.value.phase,
+  (phase) => {
+    if (envFix.value.action !== 'install-pnpm') return;
+    if (phase !== 'done' && phase !== 'error' && phase !== 'cancelled') return;
+    if (!loadedOnce) return;
+    void load().then(() => {
+      if (!error.value && currentTab.value === 'plugin') say('已重新读取插件装配信息');
+    });
+  },
+);
+
+function installPnpm(): void {
+  if (envFixRunning.value) {
+    say('已经有一个修复在进行中');
+    return;
+  }
+  requestEnvFocus('pnpm', 'install-pnpm');
+  currentTab.value = 'env';
 }
 
 // ---------------------------------------------------------------- 救援（dsh 起不来 / 配置读坏）
@@ -724,6 +762,17 @@ function clearFilters(): void {
         源：{{ data?.registry || '跟随系统 npm 配置' }}（设置页「插件安装源」可改）
       </span>
       <span v-if="data?.pnpm && !data.pnpm.found" class="plugin-tag warn">没找到 pnpm</span>
+      <!-- 缺 pnpm 时给一条出路：走自检页同一套一键修复（不在这里另写安装逻辑） -->
+      <button
+        v-if="data?.pnpm && !data.pnpm.found"
+        id="btn-plugin-install-pnpm"
+        class="btn small"
+        :disabled="opBusy || envFixRunning"
+        title="装到全局 npm 包目录；装完这一页会重新读一次装配信息"
+        @click="installPnpm"
+      >
+        一键安装 pnpm
+      </button>
     </div>
 
     <!-- 装/卸/升级改的是 package.json 与 node_modules → 必须重启 dsh -->

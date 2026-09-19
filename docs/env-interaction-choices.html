@@ -1,0 +1,1091 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>交互选择示例：7 条规格待明确（DSH Console）</title>
+    <!--
+      这份文件回答一个问题：设计预览 docs/env-wizard-preview.html 里那 7 处琥珀色「规格待明确」，
+      两种摆法各自长什么样、现在实现站在哪一边。
+
+      它是「能看的产物」而不是描述：每一屏都用真实尺寸（顶栏 36px、左栏 --rail-w 188px、
+      内容列最大 760px）与既有设计变量摆出来。零脚本，双击就能开。
+
+      怎么用：逐条看 A / B（A = 现在实现的样子），在下面那行「你的选择」里记一下，
+      回一句「1A 2B 3A …」即可；我按你的裁决改规格，需要动代码的再动代码。
+    -->
+    <style>
+      :root {
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --rail-w: 188px;
+        --bar-h: 36px;
+        --wizard-card: 760px;
+        /* 亮色主题（与 styles.css 的亮色变量同一套取值） */
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f7f8fa;
+        --ink: #101828;
+        --ink-dim: #667085;
+        --line: rgba(16, 24, 40, 0.12);
+        --line-soft: rgba(16, 24, 40, 0.06);
+        --sky: #0369a1;
+        --sky-soft: rgba(3, 105, 161, 0.1);
+        --amber: #92400e;
+        --amber-soft: rgba(146, 64, 14, 0.15);
+        --rose: #be123c;
+        --ok: #15803d;
+        --ok-soft: rgba(21, 128, 61, 0.12);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 24px 72px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          'Segoe UI',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 6px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 0;
+      }
+      .lede {
+        color: var(--ink-dim);
+        margin: 0 0 24px;
+      }
+      .lede code,
+      .q code,
+      .src code,
+      p code,
+      li code {
+        background: var(--surface);
+        border: 1px solid var(--line-soft);
+        border-radius: 5px;
+        padding: 0 4px;
+        font-family: 'IBM Plex Mono', Consolas, monospace;
+        font-size: 0.92em;
+      }
+      .note {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--sky);
+        border-radius: var(--r-panel);
+        padding: 12px 14px;
+        margin: 0 0 28px;
+      }
+      .note b {
+        color: var(--sky);
+      }
+      section.item {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        padding: 18px 18px 14px;
+        margin: 0 0 26px;
+      }
+      .item-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin: 0 0 6px;
+      }
+      .num {
+        flex: 0 0 auto;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--sky-soft);
+        color: var(--sky);
+        font-weight: 600;
+        font-size: var(--t-sm);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .q {
+        margin: 0 0 4px;
+      }
+      .src {
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        margin: 0 0 14px;
+      }
+      .variants {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+      }
+      .variant {
+        flex: 1 1 320px;
+        min-width: 300px;
+      }
+      .vlabel {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: var(--t-sm);
+        font-weight: 600;
+        margin: 0 0 6px;
+      }
+      .tag {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 1px 8px;
+        font-size: var(--t-xs);
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        color: var(--ink-dim);
+        font-weight: 500;
+      }
+      .tag.now {
+        background: var(--ok-soft);
+        border-color: transparent;
+        color: var(--ok);
+      }
+      .verdict {
+        margin: 14px 0 0;
+        padding-top: 10px;
+        border-top: 1px dashed var(--line);
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+      }
+      .verdict b {
+        color: var(--ink);
+      }
+
+      /* ============ 窗口 / 页面骨架（真实尺寸：bar 36、rail 188、内容列 760） ============ */
+      .win {
+        width: 100%;
+        min-width: 300px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-panel);
+        background: var(--bg);
+        overflow: hidden;
+        position: relative;
+      }
+      .win.tall {
+        height: 260px;
+      }
+      .win.mid {
+        height: 210px;
+      }
+      .bar {
+        height: var(--bar-h);
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+      .bar .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--sky);
+      }
+      .body {
+        display: flex;
+        min-height: 0;
+      }
+      .rail {
+        flex: 0 0 var(--rail-w);
+        max-width: 46%;
+        background: var(--surface);
+        border-right: 1px solid var(--line);
+        padding: 10px 12px;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+      .rail .brand {
+        color: var(--ink);
+        font-weight: 600;
+        font-size: var(--t-sm);
+      }
+      .rail ul {
+        margin: 10px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .rail li {
+        padding: 3px 0;
+      }
+      .rail li.on {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .col {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 12px 14px;
+      }
+      .col.scroll {
+        overflow: auto;
+      }
+      .col-inner {
+        max-width: var(--wizard-card);
+      }
+      .title {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 2px;
+      }
+      .sub {
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        margin: 0 0 10px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        padding: 12px 13px;
+        max-width: var(--wizard-card);
+      }
+      .card + .card {
+        margin-top: 10px;
+      }
+      .card h4 {
+        margin: 0 0 6px;
+        font-size: var(--t-md);
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        padding: 5px 0;
+        font-size: var(--t-sm);
+      }
+      .row .k {
+        flex: 0 0 auto;
+        font-weight: 600;
+        font-size: var(--t-md);
+        color: var(--ink);
+      }
+      .row .s {
+        flex: 0 0 auto;
+        font-size: var(--t-xs);
+        color: var(--ok);
+        font-weight: 600;
+      }
+      .row .s.warn {
+        color: var(--amber);
+      }
+      .row .d {
+        color: var(--ink-dim);
+      }
+      .concl {
+        font-size: var(--t-xs);
+        color: var(--ink);
+        margin: 2px 0 0;
+      }
+      .opt {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        border: 1.5px solid var(--line);
+        border-radius: var(--r-control);
+        padding: 8px 10px;
+        margin: 6px 0 0;
+        background: var(--surface-2);
+      }
+      .opt.sel {
+        border-color: var(--sky);
+        background: var(--sky-soft);
+      }
+      .opt .radio {
+        flex: 0 0 auto;
+        width: 12px;
+        height: 12px;
+        margin-top: 3px;
+        border-radius: 50%;
+        border: 1.5px solid var(--ink-dim);
+      }
+      .opt.sel .radio {
+        border: 4px solid var(--sky);
+      }
+      .opt .t {
+        font-size: var(--t-sm);
+        font-weight: 600;
+      }
+      .opt .n {
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+      .risk {
+        font-size: var(--t-xs);
+        color: var(--amber);
+        margin-top: 3px;
+      }
+      .btns {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        border-radius: var(--r-control);
+        padding: 5px 12px;
+        font-size: var(--t-sm);
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--ink);
+      }
+      .btn.primary {
+        background: var(--sky);
+        border-color: var(--sky);
+        color: #fff;
+        font-weight: 600;
+      }
+      .btn.ghost {
+        background: transparent;
+        color: var(--ink-dim);
+      }
+      .link {
+        color: var(--sky);
+        text-decoration: underline;
+        font-size: var(--t-sm);
+      }
+      .hint {
+        color: var(--ink-dim);
+        font-size: var(--t-xs);
+        margin-top: 6px;
+      }
+      .foot {
+        background: var(--surface);
+        border-top: 1px solid var(--line);
+        padding: 8px 12px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+      .foot .btn {
+        font-size: var(--t-xs);
+        padding: 3px 10px;
+      }
+      .scrollbar {
+        position: absolute;
+        top: calc(var(--bar-h) + 8px);
+        right: 4px;
+        bottom: 40px;
+        width: 6px;
+        border-radius: 3px;
+        background: rgba(16, 24, 40, 0.08);
+      }
+      .scrollbar i {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 46%;
+        border-radius: 3px;
+        background: rgba(16, 24, 40, 0.28);
+      }
+      .below-fold {
+        margin-top: 10px;
+        padding: 8px 10px;
+        border: 1px dashed var(--line);
+        border-radius: var(--r-panel);
+        color: var(--ink-dim);
+        font-size: var(--t-xs);
+        background: var(--surface-2);
+      }
+      .banner {
+        background: var(--amber-soft);
+        border: 1px solid var(--amber);
+        border-radius: var(--r-panel);
+        padding: 7px 10px;
+        font-size: var(--t-xs);
+        color: var(--amber);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .banner .acts {
+        display: flex;
+        gap: 6px;
+      }
+      .banner .btn {
+        font-size: var(--t-xs);
+        padding: 2px 8px;
+        color: var(--amber);
+        border-color: var(--amber);
+        background: transparent;
+      }
+      .mini-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .mini-page {
+        border: 1px solid var(--line);
+        border-radius: var(--r-panel);
+        background: var(--surface);
+        padding: 6px 8px;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+      .mini-page b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .mini-page .has-banner {
+        margin-top: 4px;
+      }
+      .mini-page .bar-mini {
+        background: var(--amber-soft);
+        border: 1px solid var(--amber);
+        border-radius: 6px;
+        color: var(--amber);
+        padding: 3px 6px;
+        font-size: var(--t-xs);
+      }
+      table.pick {
+        border-collapse: collapse;
+        width: 100%;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        overflow: hidden;
+      }
+      table.pick th,
+      table.pick td {
+        border-bottom: 1px solid var(--line-soft);
+        padding: 8px 10px;
+        text-align: left;
+        font-size: var(--t-sm);
+        vertical-align: top;
+      }
+      table.pick th {
+        background: var(--surface-2);
+        font-weight: 600;
+      }
+      table.pick td.blank {
+        color: var(--ink-dim);
+      }
+      .kbd {
+        font-family: 'IBM Plex Mono', Consolas, monospace;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 0 5px;
+        font-size: var(--t-xs);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>交互选择示例：7 条「规格待明确」</h1>
+      <p class="lede">
+        这 7 条来自设计预览里那 7 个琥珀色框 ——
+        都是「两种摆法都说得通、而三份规格没写死（或互相矛盾）」的地方。
+        每条下面并排给出两（或三）种摆法，<b>A = 现在实现的样子</b>。看完回我一句
+        <span class="kbd">1A 2B 3A …</span> 就行；需要动代码的我在你选完之后再动。
+      </p>
+
+      <div class="note">
+        <b>尺寸与配色取自实现</b>：顶栏 36px、左栏 188px、内容列最大 760px，颜色用
+        <code>styles.css</code> 亮色那一套变量（个别次要色按同一套体系补齐）。
+        这里画的是<b>摆法与逻辑</b>，不是像素级复刻；真机观感仍以你机器上的应用为准。
+      </div>
+
+      <!-- 1 -->
+      <section class="item">
+        <div class="item-head">
+          <span class="num">1</span>
+          <h2>内容列放不下时，是"内容列自己滚"还是"整页一起滚"</h2>
+        </div>
+        <p class="q">
+          关键在**底部的逃生口**：交互规格要求它「不需要滚动就能看到」。窗口矮的时候（例如 828px
+          高），两种摆法的差别就是"逃生口一直在"还是"要滚下去才看得到"。
+        </p>
+        <p class="src">出处：交互 §2.7（逃生口可见） vs 三份文档都没写内容列的滚动归属。</p>
+        <div class="variants">
+          <div class="variant">
+            <div class="vlabel"><span class="tag now">A · 现状</span> 内容列自己滚，底条常驻</div>
+            <div class="win tall">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="rail">
+                  <div class="brand">DSH Console</div>
+                  <ul>
+                    <li class="on">第一步 安装 Node.js</li>
+                    <li>第二步 安装 pnpm</li>
+                    <li>第三步 安装 dsh</li>
+                  </ul>
+                </div>
+                <div class="col scroll">
+                  <div class="col-inner">
+                    <p class="title">运行环境还没准备好</p>
+                    <p class="sub">下面几步装好之后，就可以进入 DSH Console 了</p>
+                    <div class="card">
+                      <h4>第一步：安装 Node.js</h4>
+                      <p class="sub">没有它 dsh 起不来，也无法安装后面的东西</p>
+                      <div class="opt sel">
+                        <span class="radio"></span
+                        ><span
+                          ><span class="t">直接安装官方版本（会问一次管理员权限）</span><br /><span
+                            class="n"
+                            >官方安装包，装到系统的默认位置。</span
+                          ></span
+                        >
+                      </div>
+                      <div class="opt">
+                        <span class="radio"></span
+                        ><span
+                          ><span class="t">用版本管理器安装（不用管理员权限，可以装多个版本）</span
+                          ><br /><span class="n"
+                            >先装一个版本管理器（nvm），再用它装 Node。</span
+                          ></span
+                        >
+                      </div>
+                      <div class="btns">
+                        <span class="btn primary">安装</span
+                        ><span class="btn">我想自己去官网下载安装</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="scrollbar"><i></i></div>
+              </div>
+              <div class="foot">
+                <span class="btn">先进入界面（环境还没准备好，我稍后自己处理）</span
+                ><span>点了不改动这台电脑上的任何东西</span>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel"><span class="tag">B · 另一种</span> 整页一起滚，底条跟着滚走</div>
+            <div class="win tall">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="rail">
+                  <div class="brand">DSH Console</div>
+                  <ul>
+                    <li class="on">第一步 安装 Node.js</li>
+                    <li>第二步 安装 pnpm</li>
+                    <li>第三步 安装 dsh</li>
+                  </ul>
+                </div>
+                <div class="col scroll">
+                  <div class="col-inner">
+                    <p class="title">运行环境还没准备好</p>
+                    <p class="sub">下面几步装好之后，就可以进入 DSH Console 了</p>
+                    <div class="card">
+                      <h4>第一步：安装 Node.js</h4>
+                      <p class="sub">没有它 dsh 起不来，也无法安装后面的东西</p>
+                      <div class="opt sel">
+                        <span class="radio"></span
+                        ><span
+                          ><span class="t">直接安装官方版本（会问一次管理员权限）</span><br /><span
+                            class="n"
+                            >官方安装包，装到系统的默认位置。</span
+                          ></span
+                        >
+                      </div>
+                      <div class="opt">
+                        <span class="radio"></span
+                        ><span
+                          ><span class="t">用版本管理器安装（不用管理员权限，可以装多个版本）</span
+                          ><br /><span class="n"
+                            >先装一个版本管理器（nvm），再用它装 Node。</span
+                          ></span
+                        >
+                      </div>
+                      <div class="btns">
+                        <span class="btn primary">安装</span
+                        ><span class="btn">我想自己去官网下载安装</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="scrollbar"><i></i></div>
+              </div>
+            </div>
+            <div class="below-fold">
+              ↓ 滚到底才看得到：<span class="btn"
+                >先进入界面（环境还没准备好，我稍后自己处理）</span
+              >
+            </div>
+          </div>
+        </div>
+        <p class="verdict">现状 = <b>A</b>。你的选择：<b>1 ___</b></p>
+      </section>
+
+      <!-- 2 -->
+      <section class="item">
+        <div class="item-head">
+          <span class="num">2</span>
+          <h2>事实行的第一行，是"项名 + 状态词"还是"结论词"</h2>
+        </div>
+        <p class="q">
+          同一件事实在「环境自检页」与「门禁卡片」里长得一样，还是各自一套？视觉规格里 §5.0 A 与
+          §5.2 的示意图给了两种写法。
+        </p>
+        <p class="src">
+          出处：视觉 §5.0 A（结论词，--t-xs，状态色） vs §5.2 示意图 + 既有自检页解剖（项名 13.5/600
+          + 状态词 11.5）。
+        </p>
+        <div class="variants">
+          <div class="variant">
+            <div class="vlabel">
+              <span class="tag now">A · 现状</span> 项名 + 状态词，下面才是结论
+            </div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 环境自检</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <div class="row">
+                      <span class="k">外部 Node</span><span class="s">正常</span>
+                    </div>
+                    <p class="concl">
+                      找到了外部 Node：C:\Program Files\nodejs\node.exe（v24.21.0）
+                    </p>
+                    <div class="row">
+                      <span class="k">Node 版本</span><span class="s">正常</span>
+                    </div>
+                    <p class="concl">v24.21.0 落在要求区间内</p>
+                    <div class="row">
+                      <span class="k">pnpm</span><span class="s warn">需要注意</span>
+                    </div>
+                    <p class="concl">找到了 pnpm，但它跑起来没有任何输出</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel"><span class="tag">B · 另一种</span> 只写结论词，不加项名</div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 环境自检</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <p class="concl" style="color: var(--ok); font-weight: 600">正常</p>
+                    <p class="concl">
+                      找到了外部 Node：C:\Program Files\nodejs\node.exe（v24.21.0）
+                    </p>
+                    <p class="concl" style="color: var(--ok); font-weight: 600">正常</p>
+                    <p class="concl">v24.21.0 落在要求区间内</p>
+                    <p class="concl" style="color: var(--amber); font-weight: 600">需要注意</p>
+                    <p class="concl">找到了 pnpm，但它跑起来没有任何输出</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="verdict">现状 = <b>A</b>（两处同一套解剖）。你的选择：<b>2 ___</b></p>
+      </section>
+
+      <!-- 3 -->
+      <section class="item">
+        <div class="item-head">
+          <span class="num">3</span>
+          <h2>卡片下面那两行，谁在前</h2>
+        </div>
+        <p class="q">
+          卡片下方有两条东西：①
+          这一步专属的交代（例如"装好之后，其它已经打开的终端窗口需要重开一次"）；② 通用提醒行 +
+          「重新检测」。
+        </p>
+        <p class="src">出处：视觉 §5.2 第 6、7 条 与 §5.3「卡外一行」，规格没写先后。</p>
+        <div class="variants">
+          <div class="variant">
+            <div class="vlabel"><span class="tag now">A · 现状</span> 专属交代在前</div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <h4>第一步：安装 Node.js</h4>
+                    <div class="btns"><span class="btn primary">安装</span></div>
+                  </div>
+                  <p class="hint">
+                    装好之后，其它已经打开的终端窗口需要重开一次，才会用上新版的 Node。
+                  </p>
+                  <p class="hint">
+                    另外还有 1 项提醒（可稍后处理）　<span class="link">去环境自检看详情</span
+                    >　<span class="btn">重新检测</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel"><span class="tag">B · 另一种</span> 通用提醒行在前</div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <h4>第一步：安装 Node.js</h4>
+                    <div class="btns"><span class="btn primary">安装</span></div>
+                  </div>
+                  <p class="hint">
+                    另外还有 1 项提醒（可稍后处理）　<span class="link">去环境自检看详情</span
+                    >　<span class="btn">重新检测</span>
+                  </p>
+                  <p class="hint">
+                    装好之后，其它已经打开的终端窗口需要重开一次，才会用上新版的 Node。
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="verdict">现状 = <b>A</b>。你的选择：<b>3 ___</b></p>
+      </section>
+
+      <!-- 4 -->
+      <section class="item">
+        <div class="item-head">
+          <span class="num">4</span>
+          <h2>装到一半时，进度区那两个按钮是"替换"还是"另起一行"</h2>
+        </div>
+        <p class="q">
+          进行中会出现「取消」「显示详细输出」。视觉规格写"按钮行留在原位，只换词"，但没说进度区自带的那两个按钮是替换卡片原有的「安装
+          / 我想自己去官网下载安装」，还是另起一行。
+        </p>
+        <p class="src">出处：视觉 §5.5。</p>
+        <div class="variants">
+          <div class="variant">
+            <div class="vlabel"><span class="tag now">A · 现状</span> 替换（同一行、同位置）</div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <h4>第一步：安装 Node.js</h4>
+                    <p class="sub">正在下载官方安装包…（约 26 MB）</p>
+                    <div class="btns">
+                      <span class="btn">取消</span><span class="btn ghost">显示详细输出</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel"><span class="tag">B · 另一种</span> 另起一行（原按钮行还在）</div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <h4>第一步：安装 Node.js</h4>
+                    <p class="sub">正在下载官方安装包…（约 26 MB）</p>
+                    <div class="btns">
+                      <span class="btn">取消</span><span class="btn ghost">显示详细输出</span>
+                    </div>
+                    <div class="btns">
+                      <span class="btn primary">安装</span
+                      ><span class="btn">我想自己去官网下载安装</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="verdict">现状 = <b>A</b>。你的选择：<b>4 ___</b></p>
+      </section>
+
+      <!-- 5 -->
+      <section class="item">
+        <div class="item-head">
+          <span class="num">5</span>
+          <h2>装完之后的"成果"长什么样：一张独立的卡，还是既有面板 + 分行</h2>
+        </div>
+        <p class="q">
+          视觉规格写"一张 <code>--surface</code> 卡（圆角
+          14，不给阴影）"，但没说它是"卡"还是环境自检页那种"面板 + 分行"解剖。
+        </p>
+        <p class="src">出处：视觉 §5.7 vs 既有 <code>.panel</code> + <code>.envrow</code> 解剖。</p>
+        <div class="variants">
+          <div class="variant">
+            <div class="vlabel">
+              <span class="tag now">A · 现状</span> 既有面板 + 分行（三行成果读起来像自检页）
+            </div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <h4>Node.js 装好了</h4>
+                    <div class="row">
+                      <span class="k">Node</span><span class="s">v24.21.0</span>
+                    </div>
+                    <div class="row"><span class="k">npm</span><span class="s">11.19.0</span></div>
+                    <div class="row">
+                      <span class="k">装到哪</span
+                      ><span class="s" style="color: var(--ink-dim)">C:\Program Files\nodejs</span>
+                    </div>
+                    <div class="btns"><span class="btn primary">继续装 pnpm</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel">
+              <span class="tag">B · 另一种</span> 一张独立成果卡（圆角 14、无阴影、居中）
+            </div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 运行环境准备</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card" style="text-align: center">
+                    <h4>Node.js 装好了</h4>
+                    <p class="sub">v24.21.0（npm 11.19.0）</p>
+                    <p class="hint">装到 C:\Program Files\nodejs</p>
+                    <div class="btns" style="justify-content: center">
+                      <span class="btn primary">继续装 pnpm</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="verdict">现状 = <b>A</b>。你的选择：<b>5 ___</b></p>
+      </section>
+
+      <!-- 6 -->
+      <section class="item">
+        <div class="item-head">
+          <span class="num">6</span>
+          <h2>那条"常驻横幅"，到底出现在哪些页面</h2>
+        </div>
+        <p class="q">
+          三份文档给了三种说法：交互 §2.8 说"控制台页顶部的常驻横幅"、§2.6
+          说"主界面顶部常驻一条黄条"，而环境自检页自己另有一条"这一轮没测全"。是**所有页面同一条**，还是**只有控制台页一条**，还是**几种不同的事各显各的**？
+        </p>
+        <p class="src">出处：交互 §2.6 / §2.8 + 自检页既有实现。</p>
+        <div class="variants">
+          <div class="variant">
+            <div class="vlabel">
+              <span class="tag now">A · 现状</span> 分开：门禁外一条 + 各页各自的
+            </div>
+            <div class="mini-stack">
+              <div class="mini-page">
+                <b>控制台</b>
+                <div class="has-banner">
+                  <div class="bar-mini">环境自检有 1 处需要注意　[去自检页]</div>
+                </div>
+              </div>
+              <div class="mini-page">
+                <b>环境自检</b>
+                <div class="has-banner">
+                  <div class="bar-mini">这一轮没测全（有 2 项没能实测）</div>
+                </div>
+              </div>
+              <div class="mini-page">
+                <b>Harness</b>
+                <div class="has-banner">
+                  <div class="bar-mini">没拿到令牌，无法内嵌显示　[重启为受管实例]</div>
+                </div>
+              </div>
+              <div class="mini-page">
+                <b>插件</b>
+                <div class="has-banner"><div class="bar-mini">改动要重启 dsh 才生效</div></div>
+              </div>
+              <div class="mini-page">
+                <b>任何页（跳过门禁后）</b>
+                <div class="has-banner">
+                  <div class="bar-mini">你跳过了环境准备，dsh 可能起不来　[重新检测]</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel"><span class="tag">B · 另一种</span> 所有页面顶部同一条</div>
+            <div class="mini-stack">
+              <div class="mini-page">
+                <b>控制台</b>
+                <div class="has-banner">
+                  <div class="bar-mini">环境没准备好：1 处需要注意　[去自检页]</div>
+                </div>
+              </div>
+              <div class="mini-page">
+                <b>环境自检</b>
+                <div class="has-banner">
+                  <div class="bar-mini">环境没准备好：1 处需要注意　[去自检页]</div>
+                </div>
+              </div>
+              <div class="mini-page">
+                <b>Harness</b>
+                <div class="has-banner">
+                  <div class="bar-mini">环境没准备好：1 处需要注意　[去自检页]</div>
+                </div>
+              </div>
+              <div class="mini-page">
+                <b>插件</b>
+                <div class="has-banner">
+                  <div class="bar-mini">环境没准备好：1 处需要注意　[去自检页]</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel"><span class="tag">C · 第三种</span> 只有控制台页一条，别处不显</div>
+            <div class="mini-stack">
+              <div class="mini-page">
+                <b>控制台</b>
+                <div class="has-banner">
+                  <div class="bar-mini">环境没准备好：1 处需要注意　[去自检页]</div>
+                </div>
+              </div>
+              <div class="mini-page"><b>环境自检</b>（无横幅）</div>
+              <div class="mini-page"><b>Harness</b>（无横幅）</div>
+              <div class="mini-page"><b>插件</b>（无横幅）</div>
+            </div>
+          </div>
+        </div>
+        <p class="verdict">现状 = <b>A</b>。你的选择：<b>6 ___</b></p>
+      </section>
+
+      <!-- 7 -->
+      <section class="item">
+        <div class="item-head">
+          <span class="num">7</span>
+          <h2>「更新 Node.js」的确认区，要不要有一个主按钮</h2>
+        </div>
+        <p class="q">
+          视觉规格 §6.3 说"需要用户明确确认的场合不出现主按钮"（安全的一侧在左），而 §5.9
+          给更新确认区画的是 <code>[开始] [取消]</code>（开始是主按钮）。两处的边界没写。
+        </p>
+        <p class="src">出处：视觉 §6.3 vs §5.9。</p>
+        <div class="variants">
+          <div class="variant">
+            <div class="vlabel">
+              <span class="tag now">A · 现状</span> 有主按钮（更新不是"证据不足"的场合）
+            </div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 环境自检</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <h4>更新 Node.js</h4>
+                    <p class="sub">当前 v26.9.0（当前版） → 目标 v26.12.0（当前版）</p>
+                    <p class="hint">将要执行：nvm install 26.12.0 && nvm use 26.12.0</p>
+                    <div class="btns">
+                      <span class="btn primary">开始</span><span class="btn">取消</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="variant">
+            <div class="vlabel">
+              <span class="tag">B · 另一种</span> 不出现主按钮（安全的一侧在左）
+            </div>
+            <div class="win mid">
+              <div class="bar"><span class="dot"></span> 环境自检</div>
+              <div class="body">
+                <div class="col">
+                  <div class="card">
+                    <h4>更新 Node.js</h4>
+                    <p class="sub">当前 v26.9.0（当前版） → 目标 v26.12.0（当前版）</p>
+                    <p class="hint">将要执行：nvm install 26.12.0 && nvm use 26.12.0</p>
+                    <div class="btns">
+                      <span class="btn">取消</span><span class="btn">仍然更新</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="verdict">现状 = <b>A</b>。你的选择：<b>7 ___</b></p>
+      </section>
+
+      <h2 style="margin: 30px 0 10px">回给我这张表就行</h2>
+      <table class="pick">
+        <tr>
+          <th style="width: 42px">#</th>
+          <th>问题</th>
+          <th style="width: 92px">现状</th>
+          <th style="width: 120px">你的选择</th>
+        </tr>
+        <tr>
+          <td>1</td>
+          <td>内容列滚动 / 底条常驻</td>
+          <td>A</td>
+          <td class="blank">___</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>事实行第一行写法</td>
+          <td>A</td>
+          <td class="blank">___</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>卡片下两行顺序</td>
+          <td>A</td>
+          <td class="blank">___</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>进行中按钮行：替换 / 另起一行</td>
+          <td>A</td>
+          <td class="blank">___</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>成果卡形态</td>
+          <td>A</td>
+          <td class="blank">___</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>横幅出现范围（A / B / C）</td>
+          <td>A</td>
+          <td class="blank">___</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td>更新确认区主按钮</td>
+          <td>A</td>
+          <td class="blank">___</td>
+        </tr>
+      </table>
+      <p class="lede" style="margin-top: 14px">
+        全部选 A = 现状不动（我只需要把这 7 条写进规格，不再让下一个人猜）。有改成 B/C
+        的，我先改规格、再改代码，然后重新构建打包给你复看。
+      </p>
+    </div>
+  </body>
+</html>

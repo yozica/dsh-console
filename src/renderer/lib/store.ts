@@ -26,7 +26,7 @@ const api: DshConsoleApi = window.dshConsole;
 
 /** 页面标识：左栏导航、快捷键、各页可见性都用它 */
 export type TabId =
-  'dashboard' | 'terminal' | 'shell' | 'ui' | 'usage' | 'archive' | 'plugin' | 'settings';
+  'dashboard' | 'terminal' | 'shell' | 'ui' | 'usage' | 'archive' | 'plugin' | 'env' | 'settings';
 
 /** 最近一次完整快照（getSnapshot 的返回结构） */
 export const snapshot = ref<AppSnapshot | null>(null);

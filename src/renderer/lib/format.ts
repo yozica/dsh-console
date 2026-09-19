@@ -22,3 +22,17 @@ export function formatDurationMs(ms: unknown): string {
   const seconds = value / 1000;
   return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} 秒`;
 }
+
+/**
+ * 相对时间：「刚刚 / 3 分钟前 / 2 小时前 / 1 天前」。
+ * 用于「上次检查」这类"离现在多久"的说明 —— 判定函数不看时钟，时刻由调用方给。
+ */
+export function formatAgo(at: number, now = Date.now()): string {
+  const diff = Math.max(0, now - at);
+  if (diff < 60_000) return '刚刚';
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}

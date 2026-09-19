@@ -55,6 +55,16 @@ export const DEFAULTS: SettingsValues = {
   pluginRegistry: '',
   /** 自动检查更新：启动后检查一次，之后每 6 小时一次（只提示，下载与安装都要用户点） */
   autoCheckUpdates: true,
+  /**
+   * 用户明确跳过的引导步骤（只可能是可跳过的那些）。内部标记，设置页里没有控件 ——
+   * 恢复入口在被跳过的那一行上（见 docs/env-wizard-interaction.md 5.4）。
+   */
+  envSkips: [],
+  /**
+   * Node / 版本管理器安装包的下载基地址；留空 = 官方直连。
+   * 只认 http(s)（写错当没填），只影响这一次下载，**不写任何用户配置文件**。
+   */
+  envNodeSource: '',
   /** 状态轮询间隔（毫秒） */
   pollIntervalMs: 1500,
   /** 启动后多少毫秒仍未通过健康检查就判定为异常 */

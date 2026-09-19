@@ -35,10 +35,12 @@ src/
     main.ts             窗口、IPC、生命周期、退出清理、关闭窗口行为（询问 / 收起托盘 / 直接退出）、开发工具快捷键、内嵌页诊断
     dsh-manager.ts      dsh 进程状态机：启动 / 停止 / 接管 / 健康轮询 / 令牌 URL 捕获
     pty-sessions.ts     node-pty 会话注册表（dsh 终端 + 本地 Shell 共用）
-    process-utils.ts    命令探测、端口占用、进程名、结束进程树、HTTP 探测、ANSI 清理
+    process-utils.ts    命令探测、端口占用、进程名、结束进程树、HTTP 探测、ANSI 清理，以及**启动 spec 的公共件**（LaunchSpec / launchSpec / dshLaunchSpec / isRunnablePath）
     settings.ts         settings.json 读写（含 v1→v2 一次性迁移）
     logger.ts           主进程日志：console 同时落盘到 <userData>/logs/console.log
     updater.ts          自动更新状态机（electron-updater）：检查 / 下载 / 安装
+    env-doctor.ts       运行环境自检：只读探测 + 纯函数判定（含门禁判定 judgeWizard / 快速探测）+ 一键修复（装 pnpm / dsh，见 7.20、7.21）
+    node-installer.ts   系统级安装与更新执行：Node 的两条路（官方 MSI / nvm-windows）、下载与校验、提权、复检（见 7.21）
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
     plugin-manager.ts   插件装配层：profile 的 bundle 层栈 + `dsh web --dump-config` 的解析（含 stderr 上的"没报错的错"）
     patch-layer.ts      改你自己的补丁层（cordis.patch.yml）：插入 / 禁用 / 启用 / 移除插入 / 删掉失效条目，按行改 + 先备份 + 原子写
@@ -47,17 +49,20 @@ src/
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
   shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
   renderer/             Vue 3 + Vite，产物 dist/renderer/
-    index.html          页面骨架：八个页面容器 + 挂载点 + 内联图标精灵 + 启动锁
+    index.html          页面骨架：九个页面容器 + 挂载点 + 门禁层容器 + 启动锁 + 内联图标精灵
     main.ts             入口：样式导入顺序 → app.ts → 建立共享状态 → 挂载
-    app.ts              应用级胶水：启动守卫、启动锁状态机、自动打开、快捷键
-    mount.ts            挂载清单：外壳三块 + 全部页面
+    app.ts              应用级胶水：启动守卫、启动锁状态机、门禁改道（gateDiversion）、自动打开、快捷键
+    mount.ts            挂载清单：外壳三块 + 全部页面 + 门禁层与横幅
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
-    lib/                共享状态与纯逻辑（store / platform / xterm / markdown / …）
-    shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）
-    panes/              八个页面组件
-test/selftest.ts        154 项自检（`npm test`），不需要 Electron
+    lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
+    shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
+    panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
+test/selftest.ts        265 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
-scripts/build.mts       受限环境用的构建包装
+scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
+scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
+scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹具，20 条）—— 按约定放在这里、以 `-cases.mjs` 结尾，门禁会自动收录（第 5 节）
+scripts/env-wizard-cases.mjs  环境向导的独立反例脚本（门禁判定 + 安装引擎纯函数 + 逃生口，185 条）—— 同上，自动收录
 .changeset/             每条改动一个片段；config.json 里 changelog: false
 vite.config.mts         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
 tsconfig.*.json         三份配置，见第 3 节
@@ -73,8 +78,10 @@ eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 - **主进程 / preload / shared 由 tsc 直出 CJS**（`tsconfig.main.json` 的 `rootDir=src`、`outDir=dist`）：产物与源码一一对应（`src/main/main.ts → dist/main/main.js`），`main.ts` 里的相对路径（preload、`dist/renderer`、`build/icon.png`）编译后依然成立，**不需要为了打包改写业务代码** —— 这也是选 tsc 而不是 bundler 的主要原因。
 - **渲染层由 Vite 打包成单个自包含的普通脚本**（见下）。
 - **共享状态只有一份**：`lib/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
+- **门禁层是一个覆盖层，不是第 10 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
+- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/selftest.ts`；渲染层 = `renderer/{panes/**,shell/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
 
-**一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。
+**一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。启动后 1.5 秒另有一轮**只读**的运行环境自检在后台跑（`main/env-doctor.ts`，见 7.20）：它不参与启动、不碰 dsh 进程，结果由渲染层 `envCheck()` 拉取。
 
 ### 渲染层产物为什么必须是「单个自包含的普通脚本」
 
@@ -92,7 +99,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（154 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（265 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -136,6 +143,40 @@ npm run lint && npm run format:check && npm run typecheck
 - **全量检查在 PR 的 `ci.yml`**：`.github/workflows/ci.yml` 的 `check` job 跑 `npm ci`、`npm test`、`npm run lint && npm run format:check && npm run typecheck`，外加「本次改动要带 changeset 片段」的闸门。打标签出包时 `release.yml` 的两个 build job 会**再跑一遍**同一套（要发出去的东西自己证明合规）。
 - 别用 `git commit --no-verify` 绕过钩子（它跳过的只是本地这次检查，CI 那一关照样在）。
 - 改 `src/renderer/` 后要**构建才生效**；改 `src/main` / `src/preload` / `src/shared` 后要重新编译并**重启应用**（`npm run watch:main` 只编译，不会替你重启）。
+
+**受限环境里的自检**（和 `npm run build:sandbox` 同构）：`npm test` 是 `tsx test/selftest.ts`，而 tsx 要经 esbuild 的**带管道子进程** —— 禁止 `spawn` 管道的沙箱里它根本起不来（这不是被测代码的问题）。等价路径是把「编译 → 自检 → 清理」三步交给一个可重复入口（它按 tsc 自己报的 `TSFILE:` 行拿产物清单，只删清单里的路径，**上一次被中断过也能接着跑**）：
+
+```bash
+node scripts/selftest-sandbox.mjs                                # 门禁：编译 + 自检 +（自动收录的反例脚本）+ 清理
+node scripts/selftest-sandbox.mjs scripts/env-doctor-cases.mjs   # 也可以显式点名要跑的脚本（与自动收录的合并去重）
+```
+
+**额外检查脚本的约定**：门禁会**自动收录 `scripts/*-cases.mjs`**（按文件名排序、与显式参数合并去重），所以「不带参数」不等于「只跑自检」—— 放一个 `<模块>-cases.mjs` 到 `scripts/` 下就会被每一轮门禁跑到，不必再手写一次命令行。**约定为空**（`scripts/` 里一个都没有）**不是错误**，门禁照常通过。
+
+它的原始输出与「上一轮产物清单」落在 `.verify/selftest-sandbox/`（该目录被 git / eslint / prettier 一起忽略）。普通开发机不需要它。
+
+**⚠️ 两条环境性陷阱（不是代码问题，也别去改配置绕开）**：
+
+- **沙箱门禁不能与 `npm run lint` 并发跑**。`node scripts/selftest-sandbox.mjs` 的第一步是**编译**，它跑的是
+  `tsc -p tsconfig.node.json --noEmit false --listEmittedFiles` —— `noEmit` 被显式关掉、且这个配置**没有 `outDir`**，
+  于是程序里被 import 到的 `src/**` 也会**就地**生成 `.js`（`.verify/selftest-sandbox/tsc.log` 里的 `TSFILE:` 行就是：
+  `src/shared/ipc.js`、`src/main/dsh-manager.js`、…，共 40 个），编译完由清理段按清单删掉。而 eslint 的扫描面是
+  「仓库根下它能解析的所有 `.js` / `.ts` / `.vue`」，**包含这些中途产物**：两者并发时 `no-undef`
+  （`exports` / `require` / `process` / `console` / `__dirname`）会成片爆出来 —— **本轮实测 516 条；树安静之后串行重跑 = 0**。
+  - **正确做法**：**串行跑** —— 沙箱门禁跑完（清理段把清单里的路径删干净）**之后**再 `npm run lint`；
+    或者动手前先确认 `src` 下没有就地产物：`Get-ChildItem src -Recurse -Include *.js,*.js.map` 数出来应当是 **0**。
+  - **不要去给 eslint 加 ignore 绕开**：`eslint.config.mjs` 的忽略清单里已经有 `dist/**`、`release/**`、`build/**`、
+    `.verify/**`、`node_modules/**`、`.build-home/**`，而**故意没有 `src/**`** —— 加上它，一次「手写或误留的 `.js` 混进 `src/`」
+    就永久不可见了，而那种文件正是 §4「`src/`、`test/`、`tools/` 全是 TypeScript，仓库里没有手写的 `.js` 源码」这条约定的反面。
+    这批 `.js` 是**中途产物**，正确状态是「树安静时一个都不存在」，不是「让 linter 别看它」。
+  - **另一种表现同源**：门禁被中断（或上一次跑了一半）时也会留下就地产物 —— 那正是它能「接着跑」的机制（按 `TSFILE:` 清单删）。
+    所以看到 `no-undef` 成片时先按上面两条排查，**不要先怀疑代码**；也确实不需要任何"清理脚本"以外的动作。
+- **测量 / 门禁期间不要并发改树**（本轮与前几轮都撞过同类竞态）：**结论必须绑在一个冻结的修订上**。
+  一边跑门禁（或一边改源码、一边跑对照测量）一边改别的文件时，绿 / 红会落在**中间态**上 ——
+  表现是「同一棵树两次跑出不同结论」「报错的行号与刚改的内容对不上」「断言数与上一条日志不一致」。
+  **做法**：跑门禁 / 取数之前先停手（同一个工作区里的其它成员也一样），要留证据就先记下关键文件的**哈希与行数**
+  （前几轮验证就是这么做的：定格前后各记一份，结论绑在那个哈希上），跑完再继续改；
+  `git status` 里出现你不认识的新改动时，先查清是谁写的，**别把它算进这一次的结论**。
 
 ## 6. 变更记录与发版
 
@@ -315,6 +356,10 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达层级，不平摊**（四级表面 + 半透明发丝线，阴影全局只用一处）；交互强调色与状态语义色两套色相不撞车；字体随包分发 IBM Plex Sans / Mono（中文回落系统字体）。主题由**主进程解析**（`themeInfo()` → `{ mode, resolved }`），渲染层只把结果写到 `<html data-theme>`；**终端配色必须单独给**（xterm 的配色是 JS 配置，不走 CSS），在 `lib/xterm.ts` 的 `TERM_THEMES.dark / .light` 两套里。自检守着「主题：样式表除变量块外没有硬编码颜色」「主题：亮色覆盖了深色的全部颜色变量」「主题：终端两套配色都在（xterm 不走 CSS）」「字体：@font-face 引用的文件都存在」。
 
+**界面设计的交付物必须是「能看的产物」，而且要在研发动手之前过一遍**（阶段二首启向导定下的规矩）。设计阶段交的不是一段文字描述，而是一个**双击就能打开的单文件 HTML 预览**：本轮是 `docs/env-wizard-preview.html`（155 KB、**零 `<script>`**、纯内联 CSS），用**真实尺寸**（顶栏 36px、左栏 `--rail-w` 188px、内容列最大 760px —— 与 `main.ts` / `styles.css` 里的值一致）与**既有 CSS 变量**摆出**全部界面与状态**（缺 Node / 安装中 / 失败 / 门禁层 / 逃生口 / 自检页的更新入口…），逐屏可看、可量、可标注。理由有两条：**"两栏布局、留白适中"这类描述没法 review**（读完描述都点头，做出来才发现间距不对，退回去改的代价是重做一屏）；而预览里的每个数与变量都能和实现**逐字对上** —— `docs/env-wizard-visual.md` 那些间距值（含自检 M15–M17 钉住的十个值）就是从它取的。推论：**改设计先改预览、再动实现**；预览里没有的界面状态不算设计过。
+
+**交互逻辑上的分歧 / 规格没讲清的选择，不许由实现方自行拍板（用户定的规矩）**。判据：一处交互有**两种以上说得通的摆法**，而规格里没写死（或两份文档互相矛盾）时——**先把这几种摆法做成能看的 UI 示例**（同一份单文件 HTML 里并排 / 上下摆放，真实尺寸、既有 CSS 变量，就是你日常 review 的那份东西），**交用户看，用户选定之后再动代码**。不许用"我按默认判断收口"把选择吞掉，也不许只在提交信息或文档里事后追认。已落地的选择同样要能被复看：若某条在实现时已经按某一种摆法做进去了，**把另一种摆法也摆出来请他确认**（正面例子：`docs/env-interaction-choices.html` 那 7 条），而不是默认"就这么定了"。推论：**这类问题的产出顺序是「UI 示例 → 用户裁决 → 改规格 → 再改代码」**，四步里前两步不许跳过。
+
 ### 7.13 静态检查只看代码、不看注释
 
 自检里的 id / class / api / webview 检查扫描 `index.html + panes/*.vue + shell/*.vue + lib/*.ts` 的合集，并**先剥掉注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、`#000` 这类示意写法举例，当真值去查会误报。class 检查要认得动态绑定（`:class="{ active: 条件 }"` 的键名算用到的 class）。新增页面时记得同步挂载清单、样式与（如需要）preload 暴露的 API —— 自检「样式：标记用到的 class 都有对应样式（HTML + .vue）」已经挡住过两次真问题。
@@ -472,15 +517,106 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 信号放在 `lib/update-anchor.ts`：**递增的请求号**而不是布尔量（第二次没有变化，watch 不触发，看起来就像"点了没反应"）；每次请求带一个 token，中途又点一次时旧流程在 `await` 处自行退出。
 
+### 7.20 运行环境自检：探测是只读的，修复只有两个动作
+
+**为什么有这一页**：dsh 起不来时界面上只有一句「已停止」，而最常见的原因恰恰是说不出口的那种 —— 本机 Node 版本不兼容时 dsh **静默退出**（退出码 0、零输出，见 7.4），光看退出码永远发现不了；插件的装 / 卸 / 升级又会因为 GUI 应用的 PATH 很窄而缺 pnpm（7.18 第 2 条）。所以左栏第 8 页把「这台机器上到底有什么、能不能用」逐条摆出来。
+
+**探测与判定分家**：`main/env-doctor.ts` 的 `collectEnvProbe()` 只负责收集事实（跑 `--version`、查 PATH 与已知目录、读 `process.versions`），`judgeEnvironment(raw)` 是**纯函数** —— 入参只有已经收集好的结果，不碰磁盘、不起子进程、不读 `process.*`、也不看时钟（`checkedAt` 由调用方塞进 `raw`）。所以那 8 项的所有分支在自检里都能用**手工构造的对象字面量**跑完，不需要装 pnpm、不需要起任何进程（与 `parseNetstatForPort` / `checkDumpResult` / `windowsBinCandidates` 是同一套路）。加一项判定时改 `EnvCheckId` 联合类型，渲染层那张 `Record<EnvCheckId, string>` 的标题映射会跟着报错，漏不掉。
+
+**两个动作的边界**：一键修复只有 `install-pnpm` 与 `install-dsh`，都只改**全局 npm 包**；不装 Node、不改 PATH、不写 `.npmrc`、不提权、不动 `$DSH_HOME`。几条必须守住的：
+
+- 渲染层只递 `action`，命令原文由主进程用 `fixPlan()` 现场重算（与 7.18「救援时渲染层递来的路径不可信」同一条原则）；
+- 每次都先在**页内**点一次确认（不弹原生对话框，理由同 7.19），跑的过程中输出实时可见、可中断；
+- 同一时刻只允许一个动作：互斥位是**同步**置位的（在第一个 `await` 之前），终态才释放 —— 异步置位会让两次点击都通过检查；
+- `FIX_TIMEOUT_MS` 到点自动 kill，而且**超时是独立终态**：判定要放在「子进程报错」「退出码 != 0」**之前**，否则那句「超过 N 分钟没跑完」会被通用的失败分支吃掉，退化成「退出码未知，认不出具体原因」；
+- 跑完自动复检一次，结论随 `EnvFixState.report` 与 `env:fix-state` 回来。
+
+**Windows 上两条坑，一起收口在 `process-utils.ts` 的 `launchSpec()` / `dshLaunchSpec()` 里**：一键装包、插件的三个启动点（装 / 卸 / 升级、`--dump-config`）与 `dsh web` 都从这一处取，探测侧与执行侧用的也是**同一个**它 —— 分开各写一遍就会出现「修复起不来、探测却说正常」这种自相矛盾的结论。把这两个公共件放在 `process-utils.ts`（而不是 `env-doctor.ts`）是为了让 env-doctor 与 plugin-manager 都只是**取用**它，谁都不必 import 谁。
+
+1. Node 安装目录里 `npm`（POSIX sh 脚本）与 `npm.cmd` 是并存的，只按 PATH 找「叫 npm 的那个文件」会拿到前者 —— 它既不是能直接 spawn 的 PE，也不是 cmd 能跑的批处理（直接 spawn 报 `EINVAL`）。所以解析侧只认带可执行扩展名（`PATHEXT`）的那个，`whichSync()` 在 Windows 上不再返回无扩展名的同名文件。
+2. `.cmd` / `.bat` / 无扩展名，以及**已经是 `cmd.exe` 的调用**，都要经 `cmd.exe`：把 `/d /s /c` 之后拼成**一个**参数、整条再套一层引号，并给 `spawn` 传 `windowsVerbatimArguments: true`。少了这个，Node 自己的引号规则会把 `"C:\…\npm.cmd"` 再转义一次，cmd 报 `\"…npm.cmd\" is not recognized`（`/s` 会剥掉最外层那对引号，剥完才是真命令行）。
+
+**一键装 pnpm：「装完当场能用」是判据，不是口号（VM-06 / VM-07 / VM-09 的教训）**：
+
+- **现象 A（npm 的 install-scripts 门禁）**：`npm i -g pnpm` 退出码 0、文件也落到了盘上，`pnpm -v` 却起不来；npm 自己在输出里写着 `1 package has install scripts not yet covered by allowScripts: pnpm@… (preinstall/postinstall: node install.js)`，并给出放行的写法。**这里的口径是「已知的坑 + 我们加了放行与诊断」，不是我们认定的根因**：本机对照实验（`.verify/npm-allow-scripts-experiment.log`）里**带不带那个开关都能装出能跑的 pnpm**，所以任何地方都不许写成「因为它所以坏」。`env-doctor.ts` 里那段注释把话说明了 —— 开关是「按 npm 原文补上的一手（无害且官方）」，真正的交付是把「文件在、跑不起来」做成**可诊断的失败态**。
+- **现象 B（纯净 Windows 缺 VC++ 运行库，VM-09）**：`npm ls -g` 显示 pnpm 装上了，`pnpm -v` 却**零输出**、并弹出「由于找不到 VCRUNTIME140.dll，无法继续执行代码」。实测事实是 pnpm 11 起在 Windows 上发原生程序（10.x 的 `bin/pnpm.cjs` 是纯 JS，能跑）。所以 `pnpmInstallSpec(vcRuntime)` 按运行库在不在选线：缺 → `pnpm@10`（纯 JS 那条），有 → 最新。**只跟 pnpm 有关**：同一台真机上 `node -v` / `npm -v` 都正常，不要因此要求用户去装运行库。
+- **判据**：装完必须**真的跑一次** `<pnpm> -v`，有输出才算成功（与 7.4「有输出才算能跑」同一条口径）。只看「文件在不在」会把这一屏判成成功 —— 用户看到的是「装完了还是红的」。
+- **三条做法**：① 放行开关只作为**这一次 argv 的一个元素**（`ALLOW_INSTALL_SCRIPTS_FLAG`），绝不 `npm config set` / 写 `.npmrc` / 动用户全局配置（自检用正则盯着 `config set` / `--location=user` / `.npmrc` 不许在 `env-doctor.ts` 里出现）；② 没通过就把**那一次实际执行的命令、退出码、stdout、stderr** 落进日志，功能实测那条命令（`<pnpm> -v`）的原文也落一份，空的那一路写「（空）」—— VM 那一屏的症状正是「两路都空」，写出来才看得见；③ 同一次运行内**先刷新查找路径再复检**：重读注册表 PATH（用户级 + 机器级，展开 `%NVM_HOME%` 这类引用）+ 重扫已知 bin 目录，并把 `npm prefix -g` 那个目录**排在最前** —— 排后面会被 PATH 里旧的那一份先选中，刷新等于白刷。
+- **对外形状与三条口径**（细节留日志 / 一次性开关不改全局配置 / 装完同一次运行内刷新）写在 **`docs/env-doctor.md` §3.4**：`ALLOW_INSTALL_SCRIPTS_FLAG`、`PNPM_PURE_JS_SPEC` / `pnpmInstallSpec`、`refreshLookupPath`、`probeFixTarget`、`fixDoneMessage`、`EnvFixHooks.logFile?`、`parseRegQueryVars` / `expandEnvRefs` / `mergePathText`。**签名与逐条口径放设计文档**（它跟模块一起改、能写清「为什么」），AGENTS 只留「现象 → 判据 → 做法」加指针 —— 签名抄进这一份，第二天就会过期。
+- **哪条自检守着**（`test/selftest.ts` 的 17a 组 + `scripts/env-doctor-cases.mjs`）：「装 pnpm 带一次性 install-scripts 开关，且绝不改用户的全局 npm 配置」「`mergePathText` 合并去重保序；`refreshLookupPath` 把新目录真的写进本进程 PATH（键名保持 `Path`、第二次不重复注入）」「收尾那句话分得清四种情形，『重开应用』只在刷新后仍找不到时出现」「没有装出可用结果时命令 / 退出码 / stdout / stderr 全落进日志」「`describePnpmRunFailure` 认出缺运行库：给人话 + 两条出路」；case G 逐字钉住 `… i -g pnpm --allow-scripts=pnpm`。**真机装一次、看一次「文件在但跑不起来」的日志，仍然要人工验。**
+
+**报告是「拉」的，没有 `onEnvReport`**：契约里只有 `envCheck()`、`envFix()`、`envFixCancel()` 与 `onEnvFixState` / `onEnvFixOutput` 五个成员。主进程按需探测并把结果缓存住（`{ refresh: true }` 才清缓存重跑），修复后的复检结果随修复状态回来；渲染层 `lib/env-doctor.ts` 是唯一的镜像。启动后 1.5 秒主进程会自己跑一轮（不 `await`、不阻塞启动），**每轮在事件日志里留一行**（`环境自检：N 项正常 · N 项需要注意 · N 项不正常（先看 x）`）—— 留一行是为了报障时先看到事实，不是为了刷屏。
+
+**自检页常驻挂载**（所有页面都靠 visibility 隐藏，见 7.6），所以它在**挂载时**就 `loadEnvReport()`，而不是等「首次进入这一页」：控制台顶部那条横幅与插件页的「没找到 pnpm」读的是同一份报告，等切页才拉会和它们抢第一次数据。
+
+**设置项**：阶段一那一版自检本身**没加设置项**（探测是只读、修复永远要用户点）；阶段二加了两个（`envSkips` 跳过的步骤、`envNodeSource` 安装包下载源，见 7.21），这两个要按 7.14 的规矩**同时**改契约与 `DEFAULTS` 两处、改完**重启应用**。
+
+**哪条自检守着**（都在 `test/selftest.ts` 的「环境自检」一组里）：「judgeEnvironment 是纯函数」「八项都在、id 不重复、顺序固定」「不满足必有出路（每项非 ok 都有 fixHint）」「找不到 dsh 与跑不动 dsh 分开判」「Windows 上的启动 spec 真的起得来」「解析出的 npm / pnpm / node 一定是能执行的那个（不许拿 POSIX sh shim 充数）」「PATHEXT 优先于裸名，首行 `#!` 的无扩展名 shim 不算可执行文件」「探测与修复走同一个包装器」「超时是独立终态」「单动作互斥是同步置位」「契约里有 8 个 id、2 个动作、5 个 API」「渲染层的标题映射覆盖全部八个 id」。真机上一次 `npm i -g pnpm` 这类**改机器状态**的动作不进自检，靠人工验。
+
+### 7.21 首启环境门禁与 Node 安装：硬门禁 + 永远可用的逃生口
+
+**为什么有这一层**：在一台什么都没有的 Windows 11 上，进了主界面也只能看着 dsh 起不来（见 7.4）。所以启动后先跑一轮**只读**探测，缺东西就盖一张**覆盖层**（不是第 10 个页面 —— 做成页面就能用 `Ctrl+2` 切走），逐步把 Node → pnpm → dsh 装好，环境 OK 才放行。判定与"动手"分家：`main/env-doctor.ts` 的 `judgeWizard(report, skips)` 是**纯函数**（入参只有阶段一的报告 + 用户跳过的步骤），`main/node-installer.ts` 只负责把系统改对，`renderer/lib/env-wizard.ts` 管相位与显示。
+
+**几条必须守住的**：
+
+- **逃生口是这一层的底线，而且必须与安装动作解耦**：底部常驻「先进入界面（环境还没准备好，我稍后自己处理）」，它只调 `escapeGate()` —— **两行纯内存赋值**：不写盘、不发 IPC、不看安装状态、不受互斥位影响（自检有一条记账探针盯着「探测卡死时逃生仍能放行」「逃生期间触碰 preload 出口 0 次」）。逃生不是一次性豁免：下次启动重新判定（它不落盘）；跳过某一步才写设置（`envSkips`），并且能在环境自检页加回来。
+- **`gateVisible` 与 `gateDiversion` 不是一个量**：前者是"门禁层**该不该显示**"（渲染的输入）= 启动锁不在显示中 **且**（`blocked` ｜ `checking` 且这一轮属于门禁层 ｜ `released` 且本轮显示过挡住页）；后者是"用户是不是**被门禁层接管着**"（键盘要不要改道）= `escaped` / `entered` / `done` / `unknown` 四个相位显式放行、其余才读 `gateVisible`。**三种不相等的情形**（收尾相位 / `unknown` / 启动锁期间）都写在注释里：逃生之后 `Ctrl+R` 必须恢复，而健康机器第一次就是 `open` 时压根不该显示任何全屏层。
+- **`blocked` 时不自动拉起 dsh**：启动决策用一次**快速探测**（`collectBootProbe`：只读文件系统、不起子进程），把"要起子进程才知道的项"标成 `skipped` —— 判定把 `skipped` 当 `warn`（测不出来，不挡人），只有**有证据的缺失**才 `blocked`。于是健康机器不为判定多等一次，干净机器也不会先看一遍失败的启动。
+- **Node 的存在性以官方校验清单为准**：`index.json` 只用来列版本，**它的 `files` 数组从来不列 `win-arm64-msi`**，拿它判架构会让 arm64 机器永远拿不到这个功能；权威证据是同一版本目录下的 `SHASUMS256.txt`（本来就要取它校验哈希）。取不到清单 = **网络失败**，如实说，**不许**降级成"这台机器不支持"。
+- **nvm 那条路的发布事实**：发布 API 用 `https://api.github.com/repos/nvm-windows/nvm/releases`（旧的 `coreybutler/nvm-windows` 会 **301** 到同一个仓库）；**node 的 `https.get` 不跟 301**，仓库名写错就是一次静默的网络失败。资产按模式挑（新线 `nvm-<版本>-amd64-setup.exe` / `-arm64-setup.exe`、旧线 `nvm-setup.exe`；跳过 `*-sync.exe` 与预发布），**`x64` 要映射成 `amd64`**；新线资产带 `digest: sha256:…`、**旧线没有**（那是正常情形，走"这次没能校验安装包的完整性"，**不许**用 `nvm-setup.zip.checksum.txt` 去猜 exe 的哈希）。
+- **签名的语义分两段，别把两件事塞进一个可空字段**：计划阶段 `signer === null` 只表示"**还没读**"（Authenticode 要读文件才有），不得据此说"没有数字签名"、也不得因此多一次确认；计划阶段唯一能依据的是 `releaseSigning`（**发布元数据的自述**，官方直装恒 `'unknown'`）。`parseReleaseSigning` 的**判定顺序**是要紧的：先判 `Unsigned community build` 再判 `Authenticode-signed community build` —— "Unsigned" 里也含 "signed"，顺序反了会把未签名认成已签名、**静默跳过**那次确认（最新稳定版 v2.0.0 就是 `Unsigned`，所以这不是边缘情况）。下载后才读真实签名：明确未签名/无效且计划阶段没确认过 → **不安装**；读不到 → 继续并在结果里如实写「这次没能读到安装包签名」。
+- **安装器静默参数按形态识别，不是 NSIS**：实测 nvm-windows v2.0.0 是 **Inno Setup**，用 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`；**`/S` 是 NSIS 的写法，对它无效**（会给用户弹一个没人管的窗口）。识别不出来时把「正在等待安装程序：它有一个窗口需要你点选」作为 `EnvInstallState.message` 推给界面 —— 契约**有意不**新增 `needsUserInteraction` 这类字段。
+- **安装一旦开始就不杀**：`stop()` 按相位分两种语义（下载 / 校验 = 真取消并删临时文件；安装 / 等待 = 只置 `detached`），`detachOnQuit()` 在退出时也**不杀不 wait**；互斥锁在 `detached` 期间**仍然持有**，直到复检证明落地 / 用户点「我确认安装已经结束」/ 应用重启。**阶段一那条 5 分钟超时 `kill` 的规则不适用于安装器**（杀在半路会留下一个半装的 Node）。
+- **面向用户的结论不许出现内部记号**：`detail` 里不写 `EPERM` / `EACCES`（同一个含义说成人话："这个运行环境不允许起子进程 —— 不代表没装"），原始错误经 `EnvDoctorHooks.log` 落 `<userData>/logs/console.log`。判定口径也随之收紧：**只有真的跑不起来（有路径但零输出 / 退出码非 0）才 `missing`**，"测不出来"仍是 `warn`（不挡人，与门禁判据 `pnpm.status !== 'missing'` 对齐）。
+- **版本管理器的模型按 v2 的真相推，不按 v1 的变量推**（VM-11 / VM-12 的客机实测）：nvm-windows **v2** 用 **shim 模式 + PATH**（用户 PATH 里是 `<root>` 与 `<root>\.nodejs`），各版本在 `<root>\installs`，**不设 `NVM_HOME` / `NVM_SYMLINK`**，另有 `nvm on/off`（注册表 `Enabled` 里读得到）；`NVM_HOME` / `NVM_SYMLINK` 只作 v1 风格机器的兜底。所以 `deriveNvmModel()` 的证据优先级是「`nvm.exe` 的真实路径 → `nvm env` / 注册表偏好 → 用户 PATH 里那条 `…\nvm` → `NVM_HOME`」，`activeDir` 先认 PATH 里真实存在的 `.nodejs`；**模型不许写死成 v1 的形状**。配套那条更硬的规矩：**「版本管理器装好了但没有可用版本」不是让用户回终端 `nvm use` 的理由 —— 装版本是应用自己的事**（`nvm install` → `nvm use` → 实测 `<node> --version` 与 `<npm> --version` 都有输出才算完成）。模型、证据与这条状态的出路写在 **`docs/env-wizard.md` §7.6**。
+- **「更新 Node」不许把方法写死 —— 判据跟着那份 Node 的真实归属走**（VM-14 的真实现场）：**现象** —— 这台电脑上的 Node 由版本管理器管着，点「更新 Node.js」却下载了官方安装包装到 `C:\Program Files\nodejs`，装完机器上**有两份 Node**，之后 `node` 用哪一份只看系统查找路径里谁在前（终端 / 插件 / 我们自己可能各拿一份）。**原因** —— 渲染层把方法写死成直装（历史现场是 `panes/EnvPane.vue` 里两处调用的 `method: 'direct'`），而"这份 Node 归谁管"这件事**在契约里根本没有字段可读**，于是界面只能替用户猜一个。**现在的做法** —— 归属判定 `detectNodeOwner()`（纯函数，判据见 `docs/env-wizard.md` §7.7）→ 进 `EnvDoctorReport.nodeOwner` → 计划里 `EnvNodePlan.owner`：`nvm` 只走版本管理器、`system` 只走官方安装包、`unknown` **不预选**（更新不做自动更新；安装两条路都列出来让用户显式选 + 先说清两份并存的后果）。**两种 `unknown` 必须分开（VM-16）**：**已经有一份 Node** 时两条路都列、**一条都不预选**（必须显式选）；**一份 Node 都没有**时**两条路也都要在**（默认**预选**一条：机器上已有可辨认的版本管理器就用它，否则官方安装包），预选**只是预选**、随时能改 —— 把这一支做成"只给一句事实行、另一条点不了"，就是用户重置虚拟机后第一次装 Node 时**找不到「用版本管理器安装」**的那个回归。**渲染层只递选择、不递事实**：更新入口的请求是 `{ mode: 'update' }`（方法省略 = 跟随归属），归属判不出来时那一行**不给「更新」**，只给官方下载页 + 重新检测。配套两条同样要守：**机器上已经有可辨认的版本管理器时不许再装它一遍**（`EnvNodePlan.installsManager === false` → 跳过下载与校验两段，直接 `nvm install` → `nvm use`），以及**归属纯函数只有一份**（`env-doctor` 采集侧与安装计划共用，渲染层零路径判断）。
+- **档位是事实，不是偏好：`switchesChannel` 按构造保证，别改回去**（VM-15 的另一半）：**现象** —— 用户在向导里选了「当前版」装出 `v26.9.0`，之后点「更新」，目标却按默认的稳定版算成 `v24.21.0`，**比已装的更低**，而界面没说这是换档。**原因** —— 目标档位的默认值写死成 `'lts'`；"这一次是不是换档"只在显式选档那一支上算，于是另两条可达路径（`install` 的设计默认正好跨档、目标版本比现在低）拿不到"这是换档"的事实，界面就把它当"更新"显示。**现在的做法** —— ① `update` 省略档位 = **跟随当前档位**（当前档 = 已装版本在官方清单里那一条的 `lts` 字段，判不出来就 `null`、不许猜），只有 `install` 才用设计默认的"最新稳定版"；② `decideNodePlan()` 在**所有**分支上算 `switchesChannel = direction === 'older' || (currentChannel !== null && channel !== currentChannel)` —— 即"**档位变了 或 目标更低**"这个**超集**语义，于是约定 ②「`direction === 'older'` ⟹ `switchesChannel === true`」**按构造无条件成立**（不是靠"跟随时现实中不会出现更低的目标"这种概率性理由）。⚠️ **`src/shared/ipc.ts` 里那句注释只写了充分条件**（"目标档位与当前档位不同 = 这是「换档」"），照它把这一行改回"只比档位"就会让 `older` 重新变成一次没有解释的静默降级（t9 的变异实验正是这么把它还原红的）—— **以后者（代码里的构造）为准，别照注释改**；③ 跨档的**两个来源**都要认：用户显式选档，以及 `install` 的设计默认正好跨档（向导第三步「换一个 Node」那条可达路径）。
+- **「先停 dsh」这类承诺必须与引擎的实际动作同位**（同一类坑的第二个实例）：**现象** —— 确认区上写着「更新会先停掉正在运行的 dsh」，但真机上 `dsh` 没被停。**原因** —— 那句承诺对应的 `hooks.stopDsh()` 原先住在 `installPhase()` 里，而"机器上已经有版本管理器"（`installsManager === false`）那条路**整个跳过安装阶段**，于是那句承诺**悄悄落空**（界面说着会停、实际没停）。**现在的做法** —— 停 dsh 是 `execute()` 里 `mode === 'update'` 的**唯一一处**调用（`stopDshForUpdate()`，排在 `installsManager` 分支**之前**）：不管走哪条路、要不要下载，先停一次，结构上不可能漏、也不可能停两次。**代价与时序**（船长裁定，记下来免得后人当 bug 修）：直装那条路因此从「下载 → 校验 → 停 → 装」变成「**停 → 下载 → 校验 → 装**」—— 好处是与需求 §8.3 的"先停、再更新"逐字一致、两条路共用同一处；代价是**下载失败 / 取消时 dsh 已经被停了**。这个代价**可以接受**：终态仍是 `error`（界面照旧给「重新启动 dsh」这个一键恢复的出口），不为它新增"dsh 已经停掉了"的额外文案。
+
+**哪条自检守着**（`test/selftest.ts` 的「环境向导」一组 + `scripts/env-wizard-cases.mjs`）：「skipped 项判 warn 不是 missing」「快速探测把要起子进程才知道的项标成 skipped」、门禁判定的 I 系列（全 `warn` → 三步 `done` → 放行；`report.error` 非空且无 `missing` → `unknown` 不挡人；**有 `missing` 证据就挡**）、「首启门禁：逃生口不写盘、不依赖任何安装动作」、「首启门禁：跳过 / 恢复只走 `envWizardSkip`」、安装引擎的 M 段（两条路、退出码分类、等太久的"未确定"、复检失败不说 done）。**这一轮（t29）新增的几条**：归属纯函数与计划形状（「环境向导（VM-14）：归属 → 方法」「档位跟随当前、跨档才叫换档」）、`switchesChannel` 的三条不变量（跟随时**不许**被误报成换档 / `older` 必须伴随换档 / `install` 设计默认跨档也必须为真）、实例断言（「安装引擎（VM-14）：nvm 那条路的机器上不再装管理器」「环境自检页（VM-14 / VM-15）：更新入口不写死方法，档位不写死字面量（默认跟随、显式才换档）」），以及 `scripts/env-wizard-cases.mjs` 的 O 段（648 组合穷举：`direction === 'older'` ⟹ `switchesChannel === true`，反例 0 条）。**变异守则**（评审时照这两条做，t9 / t12 各做过一次）：把 `await this.stopDshForUpdate();` 拿掉 → 停 dsh 那组断言变红；把 `switchesChannel` 还原成"只比档位" → 跨档那组断言变红。真机上装一次 Node、看一次 UAC、断一次网仍要人工验。
+
+### 7.22 改源码不能整文件往返写：编码与换行会被毁掉（同类事故已两次）
+
+**现象**：用 shell 的文本管道对源码做**整文件往返写** —— PowerShell 的 `Get-Content -Raw` 之后 `Set-Content` / `[IO.File]::WriteAllText()`，或 `cat` / `sed` 一类管道重定向 —— 改完之后文件**变成了乱码**：满篇 `瀹宸鐨` 这种「UTF-8 中文被当 GBK 读、又按另一种编码写回去」的字，或者换行（CRLF / LF）与注释被破坏。
+
+**原因**：读进来时走了**非 UTF-8 的代码页**（Windows PowerShell 5.1 的默认编码是 ANSI / 系统代码页，不是 UTF-8），写回去时又按另一种编码 —— 两侧不一致，字节就不再是原来那串。这不是"文件坏了"，是**工具链把整个文件改写了一遍**。
+
+**发生过两次**（所以这条不是理论风险）：
+
+- `src/main/main.ts`：丢过注释（3 句整句丢失 + 若干排版差异）—— 当时靠**事故前的编译产物**逐字对齐恢复（t16/t20 的 F-04 复核：注释逐字回来、其余差异全部可归因）。
+- `test/selftest.ts`（4593 行）：为了让一个标识符改名做了整文件往返写，**整篇变成乱码**，随后用「出错前那一份编译产物」当 oracle 重建了全文（t39/t40）。
+
+**现在的做法**：
+
+- **改源码只用带字节级语义的工具化编辑**：`edit` / `write`（以及任何"按字节读写、不经过文本代码页"的编辑器或脚本）。**不要**用 shell 的文本管道做「读全文 → 替换 → 写全文」。
+- 确实需要批量替换时，用**能明确控制编码与换行**的手段：写文件时显式 **UTF-8 无 BOM**、换行 **LF**（Node 侧 `fs.writeFileSync(path, text, 'utf8')` 且文本里只留 `\n`；PowerShell 侧至少要 `-Encoding utf8NoBOM` / `new UTF8Encoding(false)`），并且**先备份**。
+- 改完立刻对账：`git diff --stat`（行数暴涨 / 暴跌就是出事了）、`git diff` 看自己是不是改到了预期之外的行。
+
+**编译产物能当 oracle，但不是备份**：真出事时它救得了**语义**（逐行比对能把"改了什么"还原出来），**救不了注释与排版** —— 上面两次恢复都得靠人再对一遍注释，这就是代价。要按"随时能回到上一版"的心智改源码，别把 `dist/` 当成 git。
+
+**发现损坏时，检测手段本身也要验证**：这类损坏**可能仍是合法 UTF-8、`U+FFFD` 为 0** —— 只数「替换字符」的尺子会让你以为文件是好的。工作区根（**在仓库外**）那份真坏文件 `.tmp/selftest-corrupted-backup.ts` 就是活证据：`合法 UTF-8 = true`、`U+FFFD = 0`、无 BOM、无 CRLF，可换一把「乱码字母表」的尺（把 CJK 按 UTF-8 编码、再用 CP936 解码得到的字符集合）去量，它命中 **171 个不同字符 / 共 8434 次**，而恢复后的现树是 **0 次 / 0 个字符**。可用的判据按力度排：
+
+1. **乱码字母表扫描**（本轮那把尺的可用实现：`.verify/t40/enc-scan.mjs`，可对任意文件跑）—— 命中数不为 0 就是有残留；
+2. **与编译产物逐行比对**（Myers diff，语义层面唯一硬的证据；`.verify/t40/myers-diff.mjs`）；
+3. **与上一轮门禁日志对断言名**（`scripts/selftest-sandbox.mjs` 的输出是逐条断言名，丢没丢一列就知道；`.verify/t40/name-diff.mjs`）。
+
+**哪条自检守着**：**没有一条自检盯着"源码有没有被写坏"** —— 乱码落在注释或字符串里时 `typecheck` 与 `lint` 可能照样绿，所以这条只能靠纪律挡（别用那条路）+ 出事时用上面三条判据。**顺带一条反例**：`format:check` 不是编码检查 —— 乱码文本照样是合法 UTF-8、照样能被格式化，别拿它当保险。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，154 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，265 项，不需要 Electron、不启停任何进程
 ```
 
-`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值，以及设置页表单字段与契约对齐 —— 键名写错只会静默不生效、保存被主进程拒了必须说出来）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater），发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门），以及插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功）。
+受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：
+
+```bash
+node scripts/selftest-sandbox.mjs
+```
+
+`test/selftest.ts` 覆盖：命令解析三级回退与解释器实测、ANSI 清理与令牌提取、健康判据、端口占用解析（Windows `netstat` / POSIX `lsof` 两套夹具，所以在一个平台上开发也不会把另一个平台的解析改坏）、`DshManager` 状态机与 PID 归属、渲染层静态检查（含 macOS 适配契约、构建产物形状、样式与主题、启动锁、设置默认值，以及设置页表单字段与契约对齐 —— 键名写错只会静默不生效、保存被主进程拒了必须说出来）、自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater）、发布流程（CHANGELOG 条目、片段汇总规则、Release 标题与正文的生成与产物闸门）、插件装配层（dump 的层归因、stderr 上的未匹配 patch、空输出不算成功），以及**运行环境自检与首启门禁**（判定是纯函数、八项结论与阈值边界、静默退出与缺失的区别、Windows 上的启动 spec 真的起得来、超时是独立终态、一键修复的契约与接线、`skipped` 判 warn、门禁三态与 `currentStepId`、逃生口不写盘也不依赖安装动作、安装引擎两条路与失败分类）。
 
 **为什么这些检查放在自检里**：它们要么是纯函数 / 静态文本检查，要么只需要一个子进程 —— 不需要起 Electron，所以在 CI 的 Ubuntu runner 上也能跑。
 

@@ -16,7 +16,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { phaseText } from '../lib/phase-text.js';
 import { formatDurationMs, formatUptime } from '../lib/format.js';
 import { forceStopFlow, openUiExternally, restartFlow, stopFlow } from '../lib/dsh-actions.js';
-import { dsh, snapshot, startStore } from '../lib/store.js';
+import { requestEnvFocus } from '../lib/env-anchor.js';
+import { envReport } from '../lib/env-doctor.js';
+import { currentTab, dsh, snapshot, startStore } from '../lib/store.js';
 import type { DshLogEntry } from '../../shared/ipc.js';
 
 const api = window.dshConsole;
@@ -79,6 +81,25 @@ const ownerText = computed(() => {
 const graceText = computed(() => formatDurationMs(snapshot.value?.settings?.stopGraceMs));
 const launchCommand = computed(() => dsh.value?.launch?.display || '—');
 const launchCwd = computed(() => String(snapshot.value?.settings?.cwd || '（用户主目录）'));
+
+/**
+ * 有「不可用」项时在顶部挂一条横幅（`warn` 不算：那只是隐患，不该天天吓人）。
+ * 它是这一页到自检页的唯一入口，所以不做成弹窗、也不做成可关闭的 —— 关了用户就找不回来了。
+ */
+const envProblems = computed(() => envReport.value?.counts.missing ?? 0);
+
+const firstProblemText = computed(() => {
+  const report = envReport.value;
+  if (!report?.firstProblemId) return '';
+  return report.checks.find((check) => check.id === report.firstProblemId)?.detail ?? '';
+});
+
+function goEnvDoctor(): void {
+  const id = envReport.value?.firstProblemId;
+  // 带锚点过去：自检页会滚到那一行（没有首选项时只是切页）
+  if (id) requestEnvFocus(id);
+  currentTab.value = 'env';
+}
 
 // 延迟趋势：复用主进程已经采集的 latencyHistory
 const spark = computed(() => {
@@ -260,6 +281,17 @@ onUnmounted(() => {
         </span>
       </div>
     </section>
+
+    <!-- 环境缺项的出口：点它去自检页，并落到最该先处理的那一行 -->
+    <div v-if="envProblems > 0" class="banner">
+      <svg class="i"><use href="#i-warn" /></svg>
+      <span>
+        <b>有 {{ envProblems }} 项环境问题，可能影响 dsh 启动。</b>
+        {{ firstProblemText }}
+      </span>
+      <span class="spacer"></span>
+      <button class="btn small" @click="goEnvDoctor">去自检</button>
+    </div>
 
     <div class="dash-body">
       <section class="panel log-panel">

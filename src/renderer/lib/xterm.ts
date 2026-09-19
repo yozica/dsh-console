@@ -110,9 +110,9 @@ export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): Term
 /**
  * 让应用级快捷键穿过终端。
  *
- * 不这么做的话，xterm 会把 Ctrl+2~7 / ⌘2~7 当成控制字符吃掉（^@、^[、^\、^]、^^、^_）、
+ * 不这么做的话，xterm 会把 Ctrl+2~8 / ⌘2~8 当成控制字符吃掉（^@、^[、^\、^]、^^、^_、^?）、
  * 并停止冒泡，window 上那个切换页面的处理器就永远收不到 ——
- * 症状是"在终端里只有 Ctrl+1 能切页，2~7 全都没反应"（Ctrl+1 恰好不在它的表里）。
+ * 症状是"在终端里只有 Ctrl+1 能切页，2~8 全都没反应"（Ctrl+1 恰好不在它的表里）。
  *
  * 用 xterm 的正式接口：处理函数返回 false = 终端不处理，事件继续冒泡给应用。
  * 修饰键按平台取（macOS 认 Cmd，其它平台认 Ctrl），与 app.ts 的处理器保持一致。
@@ -126,7 +126,7 @@ export function passAppShortcutsThrough(
   term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     if (event.type !== 'keydown') return true;
     if (!isAppModifier(event) || event.shiftKey || event.altKey) return true;
-    if (/^[1-8]$/.test(event.key)) return false;
+    if (/^[1-9]$/.test(event.key)) return false;
     if (includeReload && String(event.key).toLowerCase() === 'r') return false;
     return true;
   });

@@ -1,0 +1,3847 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1300" />
+    <title>首启环境向导 + 入口门禁 + 版本更新 —— 设计预览（阶段二·冻结版）</title>
+    <style>
+      /* ==========================================================================
+         这是「已冻结设计」的呈现，不是设计源。
+         取值来源：
+           · docs/env-wizard-visual.md（视觉规格）—— 尺寸、层级、形状、排版
+           · docs/env-wizard-freeze.md（冻结裁决）—— R-01 左轨竖向队列 / R-02 进度条 --sky
+             / R-03 顶栏 / R-04 浅色四色加深 / R-05 currentStepId / R-06 未确定行的第三个按钮
+             / R-11 pnpm 目标版本措辞 / R-12 默认焦点给安全侧 / R-17 读数态 / R-21 N=counts.warn
+             / R-22 来源只作下载基地址 / R-26·R-27 签名语义分阶段
+         颜色与尺寸变量逐字抄自 src/renderer/styles.css + 视觉规格 §9.1，
+           · 深色块 = styles.css 的 :root
+           · 浅色块 = styles.css 的 :root[data-theme='light']，四个状态色用冻结 R-04 的加深取值
+         本页没有任何脚本、没有任何外部资源、不发任何网络请求。
+         ========================================================================== */
+
+      /* ---------------------------------------------------------------- 深色主题（既有 :root） */
+      :root {
+        /* 尺度与字体：主题无关（既有） */
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --t-lg: 15px;
+        --t-state: 22px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --rail-w: 188px;
+        --bar-h: 36px;
+        --dur: 140ms;
+        --sans:
+          'IBM Plex Sans', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei', system-ui,
+          sans-serif;
+        --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+        /* 视觉规格 §9.1：必须新增的变量（主题无关，两套同值） */
+        --z-gate: 58;
+        --wizard-read: 620px;
+        --wizard-card: 760px;
+        --wizard-rail-dot: 14px;
+        --dur-screen: 220ms;
+
+        /* 表面：页底 → 面板 → 抬升 → 下沉井（+ 框架） */
+        --bg: #0a0c10;
+        --surface: #12151b;
+        --surface-2: #181c24;
+        --well: #0c0f14;
+        --rail: #0e1117;
+
+        /* 半透明发丝线 */
+        --hairline: rgba(255, 255, 255, 0.07);
+        --hairline-strong: rgba(255, 255, 255, 0.13);
+
+        /* 墨 */
+        --ink: #e8eaf0;
+        --ink-dim: #a3aabb;
+        --ink-faint: #767e90;
+
+        /* 交互强调色（青蓝） */
+        --accent: #22d3ee;
+        --accent-ink: #04262c;
+        --accent-soft: rgba(34, 211, 238, 0.13);
+
+        /* 状态语义色 */
+        --run: #34d399;
+        --run-soft: rgba(52, 211, 153, 0.13);
+        --sky: #38bdf8;
+        --sky-soft: rgba(56, 189, 248, 0.13);
+        --amber: #fbbf24;
+        --amber-soft: rgba(251, 191, 36, 0.13);
+        --rose: #fb7185;
+        --rose-soft: rgba(251, 113, 133, 0.13);
+
+        --focus: rgba(34, 211, 238, 0.45);
+        --code-ink: #7fd3c4;
+        --shadow-focus: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -24px rgba(0, 0, 0, 0.8);
+      }
+
+      /* ---------------------------------------------------------------- 浅色主题（既有 light + R-04） */
+      .theme-light {
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --well: #f2f5f9;
+        --rail: #e6ebf2;
+
+        --hairline: rgba(16, 24, 40, 0.12);
+        --hairline-strong: rgba(16, 24, 40, 0.2);
+
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+
+        --accent: #0e7490;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(8, 145, 178, 0.16);
+
+        /* 冻结 R-04：只改浅色块这四个取值，并同步软底色相 */
+        --run: #047857;
+        --run-soft: rgba(4, 120, 87, 0.15);
+        --sky: #0369a1;
+        --sky-soft: rgba(3, 105, 161, 0.15);
+        --amber: #92400e;
+        --amber-soft: rgba(146, 64, 14, 0.15);
+        --rose: #be123c;
+        --rose-soft: rgba(190, 18, 60, 0.15);
+
+        --focus: rgba(14, 116, 144, 0.35);
+        --code-ink: #0f766e;
+        --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+      }
+
+      /* ---------------------------------------------------------------- 预览页自己的骨架 */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--sans);
+        font-size: var(--t-md);
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        padding: 28px 24px 56px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p,
+      ol,
+      ul,
+      dl,
+      dd,
+      dt {
+        margin: 0;
+        padding: 0;
+      }
+
+      code {
+        font-family: var(--mono);
+      }
+
+      .page-head {
+        max-width: 1188px;
+      }
+
+      .page-head h1 {
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+        line-height: 1.25;
+      }
+
+      .page-head .lede {
+        margin-top: 10px;
+        font-size: var(--t-md);
+        color: var(--ink-dim);
+        line-height: 1.8;
+        max-width: 70ch;
+      }
+
+      .page-head .lede b {
+        color: var(--ink);
+      }
+
+      .rule {
+        height: 1px;
+        background: var(--hairline);
+        margin: 22px 0;
+      }
+
+      .block-title {
+        font-size: var(--t-lg);
+        font-weight: 600;
+      }
+
+      .howto {
+        margin-top: 8px;
+        max-width: 92ch;
+      }
+
+      .howto ol {
+        margin: 0 0 0 20px;
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        line-height: 1.9;
+      }
+
+      .howto li b {
+        color: var(--ink);
+      }
+
+      .disclaim {
+        margin-top: 12px;
+        padding: 11px 14px;
+        border-radius: var(--r-panel);
+        background: var(--surface-2);
+        border-left: 3px solid var(--accent);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        line-height: 1.8;
+        max-width: 92ch;
+      }
+
+      .toc {
+        margin-top: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 8px;
+        font-size: var(--t-xs);
+      }
+
+      .toc a {
+        color: var(--accent);
+        text-decoration: none;
+        border: 1px solid var(--hairline-strong);
+        border-radius: 999px;
+        padding: 3px 10px;
+      }
+
+      .toc a:hover {
+        border-color: var(--accent);
+      }
+
+      .srcline {
+        margin-top: 10px;
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+        line-height: 1.9;
+        max-width: 100ch;
+      }
+
+      /* ---------------------------------------------------------------- 主题块 */
+      .theme {
+        margin-top: 34px;
+        padding: 22px 0 8px;
+      }
+
+      .theme-dark {
+        border-top: 1px solid var(--hairline);
+      }
+
+      .theme-light {
+        margin-top: 46px;
+        border-top: 1px solid var(--hairline);
+      }
+
+      .theme-head h2 {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .theme-head p {
+        margin-top: 6px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.8;
+        max-width: 100ch;
+      }
+
+      /* 状态图例：形状是第一信号 */
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 22px;
+        margin: 16px 0 4px;
+        padding: 12px 14px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: var(--surface);
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+
+      /* ---------------------------------------------------------------- 每一屏的框 */
+      .sec {
+        margin-top: 30px;
+      }
+
+      .sec-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+        max-width: 1188px;
+      }
+
+      .sec-no {
+        font-family: var(--mono);
+        font-size: var(--t-xs);
+        color: var(--accent);
+        border: 1px solid var(--hairline-strong);
+        border-radius: 5px;
+        padding: 2px 7px;
+      }
+
+      .sec-title {
+        font-size: var(--t-lg);
+        font-weight: 600;
+      }
+
+      .sec-note {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+        line-height: 1.8;
+        max-width: 100ch;
+      }
+
+      .frame {
+        width: 1236px;
+        max-width: 100%;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-panel);
+        overflow: hidden;
+        background: var(--bg);
+      }
+
+      .frame + .frame,
+      .frame + .flag,
+      .legend + .sec {
+        margin-top: 16px;
+      }
+
+      .frame-cap {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+        margin: 0 0 6px;
+      }
+
+      /* 窗口顶栏：门禁期间显示「运行环境准备」，右侧页面控件收起（R-03）。
+         系统的最小化 / 最大化 / 关闭由 Windows 画，这里只是示意。 */
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: var(--bar-h);
+        padding: 0 12px 0 20px;
+        flex: 0 0 auto;
+      }
+
+      .topbar-title {
+        font-size: var(--t-lg);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .winbtns {
+        margin-left: auto;
+        display: flex;
+        gap: 18px;
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+
+      /* 门禁层：左轨（--rail，188px）+ 内容列（--bg）+ 底条（--rail，与状态栏同位） */
+      .gatebody {
+        display: flex;
+        min-height: 745px;
+      }
+
+      .rail {
+        width: var(--rail-w);
+        flex: 0 0 var(--rail-w);
+        background: var(--rail);
+        border-right: 1px solid var(--hairline);
+        padding: 16px 12px 12px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 5px;
+        padding: 0 6px 16px;
+      }
+
+      .brand-logo {
+        font-size: var(--t-lg);
+        font-weight: 600;
+      }
+
+      .brand-sub {
+        font-size: var(--t-sm);
+        color: var(--ink-faint);
+      }
+
+      .rail-rule {
+        height: 1px;
+        background: var(--hairline);
+        margin: 0 0 16px;
+      }
+
+      .steps {
+        position: relative;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      /* 脊线：已经走完的那一段 --run，剩下的一段 --hairline-strong（视觉 §4.2） */
+      .spine {
+        position: absolute;
+        left: calc(var(--wizard-rail-dot) / 2 - 1px);
+        top: 7px;
+        width: 2px;
+        height: 124px;
+        background: var(--hairline-strong);
+      }
+
+      .spine-done {
+        position: absolute;
+        left: calc(var(--wizard-rail-dot) / 2 - 1px);
+        top: 7px;
+        width: 2px;
+        height: 0;
+        background: var(--run);
+      }
+
+      .steps[data-done='1'] .spine-done {
+        height: 62px;
+      }
+
+      .steps[data-done='2'] .spine-done,
+      .steps[data-done='3'] .spine-done {
+        height: 124px;
+      }
+
+      .step {
+        position: relative;
+        display: grid;
+        grid-template-columns: var(--wizard-rail-dot) 1fr;
+        column-gap: 8px;
+        height: 62px;
+      }
+
+      .step-dot {
+        width: var(--wizard-rail-dot);
+        height: var(--wizard-rail-dot);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* 状态灯：形状是第一信号（尺寸两档 + 实心 / 空心 / 虚线 / 呼吸） */
+      .node {
+        display: inline-block;
+        flex: 0 0 auto;
+        box-sizing: border-box;
+        border-radius: 50%;
+      }
+
+      .node-sm {
+        width: 8px;
+        height: 8px;
+      }
+
+      .node-lg {
+        width: 11px;
+        height: 11px;
+      }
+
+      /* 正常 / 已完成：8px 实心圆 + 3px 软晕 */
+      .node-run {
+        background: var(--run);
+        box-shadow: 0 0 0 3px var(--run-soft);
+      }
+
+      /* 不可用 / 当前待办：实心圆 + 软晕（当前步骤放大到 11px） */
+      .node-rose {
+        background: var(--rose);
+        box-shadow: 0 0 0 3px var(--rose-soft);
+      }
+
+      /* 进行中：实心圆 + 呼吸（视觉 §6.1：必须"在动"，不许静止地只靠颜色） */
+      .node-sky {
+        background: var(--sky);
+        box-shadow: 0 0 0 3px var(--sky-soft);
+        animation: breathe 1.2s ease-in-out infinite;
+      }
+
+      /* 需要注意：1.5px 空心环、无填充、无晕 */
+      .node-amber {
+        background: transparent;
+        border: 1.5px solid var(--amber);
+      }
+
+      /* 不是状态：已跳过 / 未确定 = 墨色空心环；测不出来 = 墨色虚线空心环（不许借 amber / rose） */
+      .node-skip,
+      .node-neutral {
+        background: transparent;
+        border: 1.5px solid var(--ink-dim);
+      }
+
+      .node-unknown {
+        background: transparent;
+        border: 1.5px dashed var(--ink-faint);
+      }
+
+      /* 检查中的缺口环：沿用启动锁那颗（26px / 2px / 顶边强调色 / 900ms 匀速） */
+      .spinner {
+        width: 26px;
+        height: 26px;
+        border: 2px solid var(--hairline-strong);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 900ms linear infinite;
+      }
+
+      .step-text {
+        min-width: 0;
+        padding-top: 2px;
+      }
+
+      .step-title {
+        display: block;
+        font-size: var(--t-md);
+        color: var(--ink-faint);
+        line-height: 1.4;
+      }
+
+      .step[data-current='true'] .step-title {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .step-state {
+        display: block;
+        margin-top: 3px;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+        line-height: 1.5;
+      }
+
+      .step-state-run {
+        color: var(--run);
+      }
+
+      .step-state-sky {
+        color: var(--sky);
+      }
+
+      .step-state-rose {
+        color: var(--rose);
+      }
+
+      .step-state-amber {
+        color: var(--amber);
+      }
+
+      /* 内容列：左右 20px、上 24px、下 20px（与九页内容的 20px 同一条竖线） */
+      .col {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 24px 20px 20px;
+      }
+
+      .col > * {
+        max-width: var(--wizard-card);
+      }
+
+      .screen-title {
+        font-size: var(--t-state);
+        font-weight: 600;
+        line-height: 1.2;
+        letter-spacing: -0.015em;
+      }
+
+      .screen-sub {
+        margin-top: 6px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.7;
+        max-width: var(--wizard-read);
+      }
+
+      /* 底条：与状态栏同一个位置、同一套内边距 */
+      .floor {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: var(--rail);
+        border-top: 1px solid var(--hairline);
+        padding: 10px 20px;
+      }
+
+      .floor-note {
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+
+      /* ---------------------------------------------------------------- 当前步骤卡（整屏唯一一处阴影） */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        box-shadow: var(--shadow-focus);
+        padding: 18px 20px;
+      }
+
+      .card-title {
+        font-size: var(--t-lg);
+        font-weight: 600;
+        line-height: 1.3;
+      }
+
+      .card-why {
+        margin-top: 4px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.7;
+        max-width: var(--wizard-read);
+      }
+
+      /* 事实行：灯 + 项名（13.5/600）+ 状态词（11.5 状态色）+ 结论原文 */
+      .fact {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .fact + .fact {
+        margin-top: 6px;
+      }
+
+      .fact-lamp {
+        width: 14px;
+        flex: 0 0 14px;
+        padding-top: 4px;
+        display: flex;
+        justify-content: center;
+      }
+
+      .fact-main {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .fact-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+
+      .fact-name {
+        font-size: var(--t-md);
+        font-weight: 600;
+      }
+
+      .fact-state {
+        font-size: var(--t-xs);
+      }
+
+      .state-ok {
+        color: var(--run);
+      }
+
+      .state-warn {
+        color: var(--amber);
+      }
+
+      .state-missing {
+        color: var(--rose);
+      }
+
+      .state-run {
+        color: var(--sky);
+      }
+
+      .state-neutral {
+        color: var(--ink-dim);
+      }
+
+      .fact-detail {
+        display: block;
+        margin-top: 3px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.7;
+        overflow-wrap: anywhere;
+      }
+
+      /* 选择区：两张单选卡，--surface-2，圆角 10，内边距 12 / 14 */
+      .opts {
+        margin-top: 16px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .opt {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-panel);
+      }
+
+      .opt[data-on='true'] {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+      }
+
+      .radio {
+        width: 14px;
+        height: 14px;
+        flex: 0 0 14px;
+        margin-top: 3px;
+        border-radius: 50%;
+        border: 1px solid var(--ink-faint);
+        position: relative;
+      }
+
+      .opt[data-on='true'] .radio {
+        border-color: var(--accent);
+      }
+
+      .opt[data-on='true'] .radio::after {
+        content: '';
+        position: absolute;
+        left: 3px;
+        top: 3px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .opt-body {
+        min-width: 0;
+      }
+
+      .opt-title {
+        display: block;
+        font-size: var(--t-md);
+        font-weight: 600;
+        line-height: 1.5;
+      }
+
+      .opt-note {
+        display: block;
+        margin-top: 3px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.7;
+        max-width: var(--wizard-read);
+      }
+
+      /* 操作行 */
+      .btnrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+
+      .btnrow-tight {
+        margin-top: 10px;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 30px;
+        padding: 0 13px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        background: var(--surface-2);
+        color: var(--ink);
+        font-size: var(--t-sm);
+        white-space: nowrap;
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+
+      .btn-ghost {
+        background: transparent;
+        border-color: transparent;
+        color: var(--ink-dim);
+      }
+
+      .btn-small {
+        height: 27px;
+        padding: 0 10px;
+        font-size: var(--t-xs);
+      }
+
+      .btn-tiny {
+        height: 23px;
+        padding: 0 9px;
+        font-size: var(--t-xs);
+      }
+
+      /* 键盘焦点：既有 :focus-visible（2px --focus + 2px 偏移）。预览里用这个类示意默认焦点（R-12） */
+      .is-focus {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+
+      /* 确认区：下沉井 + 左 3px 强调条 + 圆角 10 + 内边距 11 / 13 */
+      .confirm {
+        margin-top: 12px;
+        padding: 11px 13px;
+        background: var(--well);
+        border: 1px solid var(--hairline-strong);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--r-panel);
+      }
+
+      .confirm-label {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+      }
+
+      .cmd {
+        display: block;
+        margin-top: 7px;
+        padding: 8px 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-control);
+        color: var(--code-ink);
+        font-family: var(--mono);
+        font-size: var(--t-sm);
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      /* 确认区的两列事实表：键列固定 96px */
+      .plan-facts {
+        margin-top: 8px;
+      }
+
+      .plan-fact {
+        display: grid;
+        grid-template-columns: 96px 1fr;
+        gap: 10px;
+        padding: 3px 0;
+        font-size: var(--t-sm);
+        line-height: 1.7;
+      }
+
+      .plan-key {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+      }
+
+      .plan-val {
+        color: var(--ink-dim);
+      }
+
+      .plan-val-mono {
+        font-family: var(--mono);
+      }
+
+      /* 提示块：提醒（琥珀软底）/ 决策（下沉井 + 左条） */
+      .notice {
+        margin-top: 10px;
+        padding: 11px 14px;
+        background: var(--amber-soft);
+        border-radius: var(--r-panel);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        line-height: 1.7;
+        max-width: var(--wizard-read);
+      }
+
+      .notice b {
+        color: var(--ink);
+      }
+
+      .decision {
+        margin-top: 10px;
+        padding: 11px 13px;
+        background: var(--well);
+        border: 1px solid var(--hairline-strong);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--r-panel);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        line-height: 1.7;
+        max-width: var(--wizard-read);
+      }
+
+      .decision b {
+        color: var(--ink);
+      }
+
+      /* 结果行：成功 / 失败 / 未确定共用同一个槽位 */
+      .result {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .result-line {
+        display: block;
+        font-size: var(--t-lg);
+        font-weight: 600;
+        line-height: 1.25;
+        max-width: var(--wizard-read);
+      }
+
+      .result-note {
+        display: block;
+        margin-top: 4px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.7;
+        max-width: var(--wizard-read);
+      }
+
+      /* 卡片外的一行交代 + 提醒行 + 重新检测 */
+      .outside {
+        margin-top: 10px;
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+        line-height: 1.7;
+        max-width: var(--wizard-read);
+      }
+
+      .reminder-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .reminder {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+      }
+
+      .spacer {
+        flex: 1 1 auto;
+      }
+
+      .linkbtn {
+        background: none;
+        border: 0;
+        padding: 0;
+        color: var(--accent);
+        font-size: var(--t-xs);
+        font-family: inherit;
+      }
+
+      /* 进行中：状态行 + 6px 进度条 + 元信息 + 输出井 */
+      .statline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        font-size: var(--t-md);
+        color: var(--ink);
+      }
+
+      .statline-num {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .prog {
+        height: 6px;
+        margin-top: 10px;
+        background: var(--well);
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+
+      .prog-fill {
+        height: 100%;
+        background: var(--sky);
+        border-radius: 999px;
+      }
+
+      .prog-meta {
+        margin-top: 6px;
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .out {
+        margin-top: 16px;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        overflow: hidden;
+      }
+
+      .out-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 14px;
+        font-size: var(--t-sm);
+      }
+
+      .out-chip {
+        padding: 3px 7px;
+        border: 1px solid var(--hairline);
+        border-radius: 5px;
+        background: var(--well);
+        color: var(--ink-dim);
+        font-family: var(--mono);
+        font-size: var(--t-xs);
+        white-space: nowrap;
+      }
+
+      .out-state {
+        font-size: var(--t-xs);
+        color: var(--sky);
+      }
+
+      .out-body {
+        padding: 12px 14px;
+        max-height: 220px;
+        overflow: hidden;
+        border-top: 1px solid var(--hairline);
+        background: var(--well);
+        color: var(--ink-dim);
+        font-family: var(--mono);
+        font-size: var(--t-xs);
+        line-height: 1.75;
+        white-space: pre-wrap;
+      }
+
+      /* ---------------------------------------------------------------- 检出型（既有形态）复用 */
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 0;
+        flex-wrap: wrap;
+      }
+
+      .bar-note {
+        font-size: var(--t-sm);
+        color: var(--ink-faint);
+      }
+
+      .bar-hint {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+        padding-left: 10px;
+        border-left: 1px solid var(--hairline);
+      }
+
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        overflow: hidden;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 44px;
+        padding: 0 16px;
+        font-size: var(--t-md);
+        font-weight: 600;
+      }
+
+      .panel-block {
+        padding: 14px 16px;
+        border-top: 1px solid var(--hairline);
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.7;
+      }
+
+      .envrow {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 12px 16px;
+        border-top: 1px solid var(--hairline);
+      }
+
+      .envrow:first-child {
+        border-top: 0;
+      }
+
+      .envrow-main {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .envrow-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+
+      .envrow-name {
+        font-size: var(--t-md);
+        font-weight: 600;
+      }
+
+      .envrow-state {
+        font-size: var(--t-xs);
+      }
+
+      .envrow-detail {
+        display: block;
+        margin-top: 3px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.7;
+      }
+
+      .envrow-actions {
+        flex: 0 0 auto;
+      }
+
+      /* 读数态（R-17）：不可聚焦、不可点，也不褪成灰色 */
+      .readout {
+        display: inline-flex;
+        align-items: center;
+        height: 27px;
+        padding: 0 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-control);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+        white-space: nowrap;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        height: 20px;
+        padding: 0 9px;
+        border-radius: 999px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline);
+        color: var(--ink-dim);
+        font-size: var(--t-xs);
+      }
+
+      .input {
+        display: inline-flex;
+        align-items: center;
+        height: 30px;
+        min-width: 320px;
+        padding: 0 10px;
+        background: var(--well);
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        color: var(--ink-faint);
+        font-family: var(--mono);
+        font-size: var(--t-sm);
+      }
+
+      /* 版本前后对照：全应用唯一许可的 → */
+      .verpair {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: var(--t-sm);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .ver-old {
+        color: var(--ink-faint);
+      }
+
+      .ver-new {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .ver-arrow {
+        color: var(--ink-faint);
+      }
+
+      /* ---------------------------------------------------------------- 常驻横幅（既有形态，不可关闭） */
+      .banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 0 20px 12px;
+        padding: 11px 14px;
+        background: var(--amber-soft);
+        border-radius: var(--r-panel);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        line-height: 1.7;
+      }
+
+      .banner b {
+        color: var(--ink);
+      }
+
+      .banner-i {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 15px;
+        margin-top: 2px;
+        color: var(--amber);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+      }
+
+      .banner-body {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .banner-actions {
+        display: flex;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+
+      /* 应用外壳（只用于展示横幅的位置与整窗比例） */
+      .shell {
+        display: flex;
+      }
+
+      .nav {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .nav-item {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 10px;
+        border-radius: var(--r-control);
+        color: var(--ink-dim);
+        font-size: var(--t-md);
+      }
+
+      .nav-item[data-on='true'] {
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 600;
+      }
+
+      .workspace {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .main {
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 4px 0 0;
+      }
+
+      .statusbar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 6px 20px;
+        background: var(--rail);
+        border-top: 1px solid var(--hairline);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+
+      .dash {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 4px 20px 20px;
+      }
+
+      .grid2 {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(300px, 344px);
+        gap: 16px;
+      }
+
+      .placeholder {
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+        line-height: 1.7;
+      }
+
+      /* ---------------------------------------------------------------- 规格里的讲不清 / 矛盾之处：照实标出 */
+      .flag {
+        margin-top: 12px;
+        padding: 11px 14px;
+        border-radius: var(--r-panel);
+        background: var(--surface);
+        border: 1px solid var(--hairline-strong);
+        border-left: 3px solid var(--amber);
+        max-width: 92ch;
+      }
+
+      .flag h4 {
+        margin: 0;
+        font-size: var(--t-sm);
+        font-weight: 600;
+        color: var(--amber);
+      }
+
+      .flag p {
+        margin-top: 5px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.8;
+      }
+
+      .flag code {
+        color: var(--code-ink);
+        font-size: var(--t-xs);
+      }
+
+      .page-foot {
+        margin-top: 40px;
+        padding-top: 18px;
+        border-top: 1px solid var(--hairline);
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        line-height: 1.9;
+        max-width: 100ch;
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          opacity: 1;
+        }
+
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .node-sky,
+        .spinner {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="page-head">
+      <h1>首启环境向导 + 入口门禁 + 版本更新 —— 设计预览（阶段二·冻结版）</h1>
+      <p class="lede">
+        这是对<b>已冻结设计</b>的呈现，<b>不引入新的设计决定</b>。每一屏的取值只有两个来源：
+        <code>docs/env-wizard-visual.md</code>（视觉规格：尺寸、层级、形状、排版）与
+        <code>docs/env-wizard-freeze.md</code>（冻结裁决：R-01 ~
+        R-27）。凡是规格没讲清、或两份文档看起来不一致的地方，都<b>原样标在那一屏旁边</b>（琥珀色「规格待明确」框），不替它拍板。
+      </p>
+      <div class="disclaim">
+        本页只是<b>设计呈现</b>：它摆的是静态画面，用来评审<b>层次、间距、字号层级、状态色的可读性</b>。真实的交互、动效、滚动、键盘走查与"手感"仍然以应用为准。本页不含任何脚本、不引任何外部资源、不发任何网络请求；两套主题靠同一页里上下两块各自的变量作用域呈现，没有主题切换按钮。
+      </div>
+      <div class="srcline">
+        尺寸与变量逐字来自 <code>src/renderer/styles.css</code> 与视觉规格 §9.1：左轨
+        188px（<code>--rail-w</code>）、内容列 760px（<code>--wizard-card</code>）里的正文
+        620px（<code>--wizard-read</code>）、页面左右 20px 内边距、圆角 14 / 10 /
+        8、发丝线用半透明变量、整屏只有当前步骤卡一处阴影（<code>--shadow-focus</code>）；窗口尺寸按
+        1236 × 828 摆放（与仓库里的 <code>docs/screenshot.png</code> 同一个窗口大小）。深色块用
+        <code>styles.css</code> 的 <code>:root</code> 取值；浅色块用
+        <code>:root[data-theme='light']</code> 的取值，其中四个状态色是冻结 R-04
+        采纳的<b>加深取值</b>。
+      </div>
+      <div class="rule"></div>
+      <div class="block-title">怎么看（请重点盯这几处）</div>
+      <div class="howto">
+        <ol>
+          <li>
+            <b>层次是否拉开</b>：门禁层是五层表面（页底 / 框架 / 面板 / 抬升 /
+            下沉井）。整屏只有当前步骤卡有阴影 ——
+            其余元素（后续步骤、提示、提醒行）都不许看起来像"卡片"。看看有没有哪一块"抢"了当前步骤卡。
+          </li>
+          <li>
+            <b>浅色下的小字对比度</b>：浅色块的状态词用的是冻结 R-04
+            加深后的四个取值，压在左轨（最深的表面）与卡片（白色）上都要读得清。请特别看左轨里那几行
+            11.5px 的状态词。
+          </li>
+          <li>
+            <b>间距节奏</b>：标题 → 副标题 6px、副标题 → 卡 20px、块之间 16px、卡内 18 / 20px、左轨
+            16 / 12 / 12px、底条 10 / 20px。哪一段让你觉得"挤"或"散"，直接说段名。
+          </li>
+          <li>
+            <b>文字层级</b>：22px 屏标题 / 15px 步骤标题与结论句 / 13.5px 项名与按钮 / 12.5px 说明 /
+            11.5px 状态词与元信息 ——
+            只有这五档，没有第六档。看看有没有两处该分开却同号、或该同号却不同号。
+          </li>
+          <li>
+            <b>有没有截断或错位</b
+            >：命令原文、路径、主机名、逃生口按钮文案（较长）在任何宽度下都不该被省略号截断；左轨的节点、脊线与标题应该在同一条竖线上。
+          </li>
+          <li>
+            <b>着色纪律</b>：形状是第一信号（实心圆 / 空心环 / 虚线环 /
+            呼吸），颜色是第二信号；<b>已跳过</b>与<b>测不出来</b>只用墨色，不许借琥珀或玫红。看看有没有哪一处"只靠颜色"在说话。
+          </li>
+        </ol>
+      </div>
+      <div class="toc"><a href="#dark">深色主题</a><a href="#light">浅色主题</a></div>
+    </header>
+
+    <!-- ==================================================================== 深色主题 -->
+    <section class="theme theme-dark" id="dark">
+      <div class="theme-head">
+        <h2>深色主题（应用的默认主题）</h2>
+        <p>
+          这一块的底色就是应用的页底（<code>--bg</code>），左轨与底条用框架色（<code>--rail</code>）。七个分区与浅色块一一对应，取值只差变量本身。
+        </p>
+      </div>
+
+      <div class="legend">
+        <span class="legend-item"
+          ><span class="node node-sm node-run"></span>正常 / 已完成：8px 实心圆 + 3px 软晕</span
+        >
+        <span class="legend-item"
+          ><span class="node node-lg node-rose"></span>不可用 / 当前待办：实心圆 + 软晕（当前步骤
+          11px）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-sky"></span>进行中：实心圆 +
+          呼吸（这一屏上必须"在动"）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-amber"></span>需要注意：1.5px 空心环（无填充、无晕）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-skip"></span>已跳过：墨色空心环（不是状态）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-neutral"></span
+          >未确定（结果行）：同样是墨色空心环，靠文案区别</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-unknown"></span>测不出来：墨色虚线空心环（不是状态）</span
+        >
+      </div>
+
+      <!-- ============================================ §5.1 检查中 -->
+      <section class="sec" id="dark-checking">
+        <div class="sec-head">
+          <span class="sec-no">§5.1</span>
+          <span class="sec-title">检查中（第一份报告还没回来）</span>
+          <span class="sec-note"
+            >不空白、不画步骤清单、逃生口此刻就能点、「重新检测」这一轮不可用 —— 并给一句原因（视觉
+            §6.4 要求禁用必须看得到原因；具体措辞未定，这里写「第一轮检查还在进行中」）。</span
+          >
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <!-- 检查中不画节点；脊线在报告回来后"长出来"（§7.1），这里留一条空脊线 -->
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="spinner"></div>
+              <div class="screen-title" style="margin-top: 14px">正在检查这台电脑上的运行环境</div>
+              <div class="screen-sub">大约几秒钟，不会改动任何东西</div>
+              <div class="btnrow">
+                <span class="btn btn-small" style="opacity: 0.4">重新检测</span>
+                <span class="bar-hint">第一轮检查还在进行中</span>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+        <div class="flag">
+          <h4>规格待明确：内容列在真实窗口里会不会滚动</h4>
+          <p>
+            三份文档都没有写"内容列放不下时怎么办"。本预览按<b>内容列可滚、底条常驻</b>摆放，依据是交互规格
+            §2.7 要求逃生口"不需要滚动才能看到"；因此窗口较矮时（例如 828px
+            高）挡住页的下半部分需要滚动才看得到。请裁定：是把这句写进规格，还是允许底条以上整体滚动。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.2 / §5.3 / §5.4 挡住页 -->
+      <section class="sec" id="dark-blocked">
+        <div class="sec-head">
+          <span class="sec-no">§5.2 · §5.3 · §5.4</span>
+          <span class="sec-title">挡住页（当前步骤卡六块 + 确认区展开）</span>
+          <span class="sec-note">
+            交互规格 §2.4 / §4；冻结 R-01（左轨竖向队列）、R-05（当前步骤 =
+            第一个待办）、R-10（版本只有两档）、R-26（计划阶段不断言"没有数字签名"）。左轨自上而下三步，当前步骤卡是整屏唯一一张有阴影的卡。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-rose"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-rose">安装 Node.js · 待办</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="screen-title">运行环境还没准备好</div>
+              <div class="screen-sub">下面几步装好之后，就可以进入 DSH Console 了</div>
+
+              <div class="card" style="margin-top: 20px">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="card-why">没有它 dsh 起不来，也无法安装后面的东西</div>
+
+                <div class="fact">
+                  <span class="fact-lamp"><span class="node node-sm node-rose"></span></span>
+                  <span class="fact-main">
+                    <span class="fact-head">
+                      <span class="fact-name">外部 Node</span>
+                      <span class="fact-state state-missing">不可用</span>
+                    </span>
+                    <span class="fact-detail">这台电脑上没有找到 Node</span>
+                  </span>
+                  <span class="btn btn-tiny btn-ghost" style="flex: 0 0 auto">展开看详情</span>
+                </div>
+
+                <div class="opts">
+                  <div class="opt" data-on="true">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title">直接安装官方版本（会问一次管理员权限）</span>
+                      <span class="opt-note">
+                        官方安装包，装到系统的默认位置；这台电脑上原来的 Node 会被换成这个版本。
+                      </span>
+                    </span>
+                  </div>
+                  <div class="opt">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title"
+                        >用版本管理器安装（不用管理员权限，可以装多个版本）</span
+                      >
+                      <span class="opt-note">
+                        先装一个版本管理器（nvm），再用它装 Node；不会动系统里原有的
+                        Node，之后可以随时切换版本。
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="btnrow">
+                  <span class="btn btn-primary">安装</span>
+                  <span class="btn">我想自己去官网下载安装</span>
+                </div>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd"
+                    >Node.js 稳定版 v26.9.0 的官方安装包（node-v26.9.0-x64.msi）</code
+                  >
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">官方地址（nodejs.org）</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">会装到哪里</span>
+                      <span class="plan-val plan-val-mono">%ProgramFiles%\nodejs</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要联网</span>
+                      <span class="plan-val">是</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">需要 —— 接下来 Windows 会问你一次是否允许安装</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">会改什么</span>
+                      <span class="plan-val">这台电脑上原来的 Node 会被换成这个版本</span>
+                    </div>
+                  </div>
+                  <div class="notice">
+                    下载后校验 SHA-256 与官方清单，并读取数字签名；不一致就不安装。
+                  </div>
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn btn-primary">开始</span>
+                    <span class="btn">取消</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="outside">
+                装好之后，其它已经打开的终端窗口需要重开一次，才会用上新装的 Node。
+              </div>
+              <div class="reminder-row">
+                <span class="reminder">另外还有 2 项提醒（可稍后处理）</span>
+                <span class="linkbtn">去环境自检看详情</span>
+                <span class="spacer"></span>
+                <span class="btn btn-small">重新检测</span>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          上面是"直接安装官方版本"这一条路的确认区（冻结
+          R-26：官方直装的计划阶段不断言签名，只给中性的校验说明）。
+          下面是同一屏里"用版本管理器安装"那一条路的确认区变体：它与前者共用同一套确认区，但多了冻结
+          R-22 与 R-27 两句。
+        </p>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody" style="min-height: 520px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-rose"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-rose">安装 Node.js · 待办</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="card-why">没有它 dsh 起不来，也无法安装后面的东西</div>
+
+                <div class="fact">
+                  <span class="fact-lamp"><span class="node node-sm node-rose"></span></span>
+                  <span class="fact-main">
+                    <span class="fact-head">
+                      <span class="fact-name">外部 Node</span>
+                      <span class="fact-state state-missing">不可用</span>
+                    </span>
+                    <span class="fact-detail">这台电脑上没有找到 Node</span>
+                  </span>
+                  <span class="btn btn-tiny btn-ghost" style="flex: 0 0 auto">展开看详情</span>
+                </div>
+
+                <div class="opts">
+                  <div class="opt">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title">直接安装官方版本（会问一次管理员权限）</span>
+                      <span class="opt-note">
+                        官方安装包，装到系统的默认位置；这台电脑上原来的 Node 会被换成这个版本。
+                      </span>
+                    </span>
+                  </div>
+                  <div class="opt" data-on="true">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title"
+                        >用版本管理器安装（不用管理员权限，可以装多个版本）</span
+                      >
+                      <span class="opt-note">
+                        先装一个版本管理器（nvm），再用它装 Node；不会动系统里原有的
+                        Node，之后可以随时切换版本。
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="btnrow">
+                  <span class="btn btn-primary">安装</span>
+                  <span class="btn">我想自己去官网下载安装</span>
+                </div>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd">版本管理器（nvm-windows v2.0.0 社区版）的安装包</code>
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">官方地址（github.com）</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">不需要</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">会改什么</span>
+                      <span class="plan-val">
+                        这台电脑上原来的 Node 不会被删掉；之后 node
+                        走哪一个要看谁在系统查找路径里靠前
+                      </span>
+                    </div>
+                  </div>
+                  <div class="notice">
+                    版本管理器的安装包仍然从官方地址下载 ——
+                    「安装下载来源」只作用于我们自己发起的下载（冻结 R-22）。
+                  </div>
+                  <div class="decision">
+                    <b>这个安装包没有数字签名，确定要装吗？</b>
+                    依据是发布元数据（冻结
+                    R-27）；默认焦点在「取消」那一侧，按回车不会直接开始安装（冻结 R-12）。
+                    <div class="btnrow btnrow-tight">
+                      <span class="btn is-focus">取消</span>
+                      <span class="btn">仍然继续</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="outside">
+                装好之后，其它已经打开的终端窗口需要重开一次，才会用上新装的 Node。
+              </div>
+              <div class="reminder-row">
+                <span class="reminder">另外还有 2 项提醒（可稍后处理）</span>
+                <span class="linkbtn">去环境自检看详情</span>
+                <span class="spacer"></span>
+                <span class="btn btn-small">重新检测</span>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <div class="flag">
+          <h4>规格待明确：事实行第一行到底是"项名 + 状态词"还是"结论词"</h4>
+          <p>
+            视觉规格 §5.0 A 的表格行把第一行写成<code>结论词（--t-xs，状态色）</code>；而同一份规格
+            §5.2 的示意图与既有环境自检页的解剖是<code>项名 13.5/600 + 状态词 11.5</code
+            >，下面才是结论原文。本预览按<b>示意图 + 既有解剖</b
+            >摆（结构上更像"同一件事实在自检页与向导里长得一样"）。 冻结 R-15 本来就要改 §5.0 A
+            那一行（未转义的竖线字符），建议顺手把措辞统一。
+          </p>
+        </div>
+
+        <div class="flag">
+          <h4>规格待明确：卡片下面那两行的先后顺序</h4>
+          <p>
+            步骤 1 专属的那句交代（<code>装好之后，其它已经打开的终端窗口需要重开一次……</code>，视觉
+            §5.3 的"卡外一行"）与"提醒行 + 重新检测"（§5.2 第 6、7
+            条）都在卡片下方，规格没有写谁先谁后。本预览按<b>专属交代在前、提醒行在后</b>摆。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.5 进行中 -->
+      <section class="sec" id="dark-running">
+        <div class="sec-head">
+          <span class="sec-no">§5.5</span>
+          <span class="sec-title">进行中（进度区 / 输出井 / 两种"不再等"）</span>
+          <span class="sec-note">
+            冻结 R-02：进度条填充用进行中的状态色
+            <code>--sky</code>（既有更新卡不动）。算不出来就不画进度条；安装阶段没有"中断"两个字。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody" style="min-height: 620px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-sky"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-sky">安装 Node.js · 进行中</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="card-why">没有它 dsh 起不来，也无法安装后面的东西</div>
+
+                <div class="statline">
+                  <span class="node node-sm node-sky"></span>
+                  <span>正在下载 Node.js v26.9.0… <span class="statline-num">42%</span></span>
+                </div>
+                <div class="prog"><div class="prog-fill" style="width: 42%"></div></div>
+                <div class="prog-meta">38.2 MB / 90.4 MB</div>
+
+                <div class="btnrow">
+                  <span class="btn">取消下载</span>
+                  <span class="btn btn-tiny btn-ghost">显示详细输出</span>
+                </div>
+              </div>
+
+              <div class="out">
+                <div class="out-head">
+                  <span class="out-chip">node-v26.9.0-x64.msi</span>
+                  <span class="out-state">下载中…</span>
+                  <span class="spacer"></span>
+                  <span class="btn btn-tiny">收起</span>
+                </div>
+                <div class="out-body">
+                  已建立到 nodejs.org 的连接 正在接收数据：38.2 MB / 90.4
+                  MB（下载来源：本页上方「安装下载来源」留空，官方直连）
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          同一屏的另外两个进行中状态：<b>校验中</b>（没有进度条、不给假进度，按钮仍是"取消"）与<b
+            >等待安装程序 / 安装中</b
+          >（按钮当场换成"不再等待"，并给出后果说明）。
+        </p>
+        <div class="frame">
+          <div class="gatebody" style="min-height: 380px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-sky"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-sky">安装 Node.js · 进行中</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="statline">
+                  <span class="node node-sm node-sky"></span>
+                  <span>正在校验安装包完整性</span>
+                </div>
+                <div class="btnrow">
+                  <span class="btn">取消</span>
+                  <span class="btn btn-tiny btn-ghost">显示详细输出</span>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top: 16px">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="statline">
+                  <span class="node node-sm node-sky"></span>
+                  <span>正在等待安装程序</span>
+                </div>
+                <div class="notice">
+                  接下来 Windows 会问你一次是否允许安装（管理员权限）。按它的提示选择就好。
+                </div>
+                <div class="decision">
+                  <b>安装已经在进行，这里只能停止等待，不会去停止安装。</b>
+                  装完之后点「重新检测」看结果。
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn">不再等待（安装可能还在后台进行）</span>
+                    <span class="btn btn-tiny btn-ghost">显示详细输出</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+        <div class="flag">
+          <h4>规格待明确：进行中的按钮行与"卡片原有按钮行"的关系</h4>
+          <p>
+            视觉规格 §5.5 写"按钮行留在原位，只换词"，但没有写进度区自带的那两个按钮（取消 /
+            显示详细输出）是<b>替换</b>卡片原有的「安装 /
+            我想自己去官网下载安装」，还是另起一行。本预览按<b>替换</b>摆（同一行、同一位置），因为规格强调"卡片的位置与尺寸不变"。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.6 结果态 -->
+      <section class="sec" id="dark-result">
+        <div class="sec-head">
+          <span class="sec-no">§5.6 · §4.3</span>
+          <span class="sec-title">结果态（成功 / 失败 / 未确定 / 已跳过）</span>
+          <span class="sec-note">
+            成功、失败、未确定<b>共用同一个结果行槽位</b>（事实行正下方），不弹窗、不换屏。未确定是"我们没结论"，所以用中性墨色，不给绿也不给红（冻结
+            R-06 给它加了第三个按钮）。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="gatebody" style="min-height: 360px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="1">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-run">安装 Node.js · 已完成</span>
+                  </span>
+                </li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-rose"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state step-state-rose">安装 pnpm · 待办</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+
+                <div class="fact">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="fact-main">
+                    <span class="fact-head">
+                      <span class="fact-name">外部 Node</span>
+                      <span class="fact-state state-ok">正常</span>
+                    </span>
+                    <span class="fact-detail">v26.9.0 · D:\Program Files\nodejs\node.exe</span>
+                  </span>
+                  <span class="btn btn-tiny btn-ghost" style="flex: 0 0 auto">展开看详情</span>
+                </div>
+
+                <div class="result">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="fact-main">
+                    <span class="result-line"
+                      >Node.js v26.9.0 装好了，这一项已经变成「正常」。</span
+                    >
+                    <span class="result-note"
+                      >其它已经打开的终端窗口需要重开一次，才会用上新装的 Node。</span
+                    >
+                    <div class="btnrow">
+                      <span class="btn btn-primary">继续下一步</span>
+                      <span class="btn">再看看环境自检</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top: 16px">
+                <div class="card-title">第一步：安装 Node.js</div>
+
+                <div class="result" style="margin-top: 0">
+                  <span class="fact-lamp"><span class="node node-sm node-rose"></span></span>
+                  <span class="fact-main">
+                    <span class="result-line">你拒绝了管理员权限，这台电脑上什么都没改。</span>
+                    <span class="result-note">
+                      复检事实：外部 Node —— 这台电脑上仍然没有找到 Node。
+                    </span>
+                    <div class="btnrow">
+                      <span class="btn">改用不用管理员权限的方式安装</span>
+                      <span class="btn">重新检测</span>
+                      <span class="btn btn-tiny btn-ghost">打开官方下载页</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top: 16px">
+                <div class="card-title">第一步：安装 Node.js</div>
+
+                <div class="result" style="margin-top: 0">
+                  <span class="fact-lamp"><span class="node node-sm node-neutral"></span></span>
+                  <span class="fact-main">
+                    <span class="result-line">
+                      我们不等了：安装可能还在后台进行，请按它自己的提示把它做完，做完点「重新检测」。
+                    </span>
+                    <span class="result-note">
+                      这一条既不是成功也不是失败 ——
+                      我们没有结论，所以按钮里多了一个用来解除"忙"位的动作（冻结 R-06）。
+                    </span>
+                    <div class="btnrow">
+                      <span class="btn">重新检测</span>
+                      <span class="btn">打开官方下载页</span>
+                      <span class="btn">我确认安装已经结束</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          「已跳过」不是结果行：它出现在三处 ——
+          左轨的节点、环境自检页那一行（带恢复入口）、以及放行页的一句提醒。下面是这三处摆在一起的样子（并排是为了评审时一次看全，实际不会同时出现在一屏）。
+        </p>
+        <p class="frame-cap">
+          上面的结果态区里那三张卡是<b>三种不同的结局</b>（成功 / 失败 /
+          未确定），并排摆只为一次看全：实际一次只出现其中一张，事实行与结果行始终在同一个位置上。
+        </p>
+        <div class="frame">
+          <div class="gatebody" style="min-height: 260px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="1">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-run">安装 Node.js · 已完成</span>
+                  </span>
+                </li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 已跳过</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-unknown"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 没测出来</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="panel">
+                <div class="panel-head">环境自检页的那一行（恢复入口在这里）</div>
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-skip"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">pnpm</span>
+                      <span class="envrow-state state-neutral">已跳过</span>
+                    </span>
+                    <span class="envrow-detail">
+                      跳过之后，插件页的装 / 卸 / 升级仍然用不了（以后随时可以回来补上）。
+                    </span>
+                  </span>
+                  <span class="envrow-actions">
+                    <span class="btn btn-small">把这一步加回来？</span>
+                  </span>
+                </div>
+              </div>
+              <div class="notice" style="margin-top: 16px">
+                pnpm 这一步你选择了跳过：插件页的装 / 卸 / 升级还用不了，以后可以回来补上。
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <div class="flag">
+          <h4>规格待空缺：成功之后那颗按钮的文案</h4>
+          <p>
+            视觉规格 §5.0 D 只写了"成功时给 1 个主操作（进入下一步 /
+            进入界面）"，但交互规格没有给这条的<b>原样文案</b>（第二步、第三步的下一步该叫什么也没写）。本预览用<code>继续下一步</code>占位
+            —— 请补一句原样文案，免得三个模块各自发明。
+          </p>
+        </div>
+        <div class="flag">
+          <h4>规格间的差异：R-06 的第三个按钮</h4>
+          <p>
+            「我确认安装已经结束」来自冻结 R-06（并已写进冻结文档 §1.3 对视觉规格 §5.6
+            的修订清单），视觉规格原文里还没有这一条。本预览按冻结摆。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.7 放行页 -->
+      <section class="sec" id="dark-released">
+        <div class="sec-head">
+          <span class="sec-no">§5.7</span>
+          <span class="sec-title">放行页（三步完成，原地变成结果页）</span>
+          <span class="sec-note">
+            不自动跳走；三行成果卡<b>不给阴影</b>（阴影是"当前要你处理的那一张"的专属）；底条只剩一条边
+            —— 没有东西要逃了。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody" style="min-height: 430px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境已就绪</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="3">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-run">安装 Node.js · 已完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state step-state-run">安装 pnpm · 已完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state step-state-run">安装 dsh · 已完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="screen-title">运行环境已经就绪</div>
+              <div class="screen-sub">
+                三步都完成了（可跳过的项按你的选择处理），现在可以进入了。
+              </div>
+
+              <div class="panel" style="margin-top: 20px">
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">安装 Node.js</span>
+                      <span class="envrow-state state-ok">已完成</span>
+                    </span>
+                    <span class="envrow-detail">v26.9.0</span>
+                  </span>
+                </div>
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">安装 pnpm</span>
+                      <span class="envrow-state state-ok">已完成</span>
+                    </span>
+                    <span class="envrow-detail">v10.15.0</span>
+                  </span>
+                </div>
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">安装 dsh</span>
+                      <span class="envrow-state state-ok">已完成</span>
+                    </span>
+                    <span class="envrow-detail">dsh 本体找得到，并且实测跑得动</span>
+                  </span>
+                </div>
+              </div>
+
+              <div class="btnrow" style="margin-top: 16px">
+                <span class="btn btn-primary">进入 DSH Console</span>
+                <span class="btn">再看看环境自检</span>
+              </div>
+
+              <div class="notice" style="margin-top: 16px">
+                pnpm 这一步你选择了跳过：插件页的装 / 卸 / 升级还用不了，以后可以回来补上。
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="floor-note">（底条只剩一条边：没有东西要逃了）</span>
+          </div>
+        </div>
+        <div class="flag">
+          <h4>规格待明确：成果卡的表面与形态</h4>
+          <p>
+            视觉规格 §5.7 写"一张 <code>--surface</code> 卡（圆角
+            14，不给阴影）"，但没写它是"卡"还是既有环境自检页那种"面板 + 分行"（<code>.panel</code>
+            +
+            <code>.envrow</code
+            >）。本预览用了既有面板形态（因为三行成果读起来就是自检页的同一套解剖）；若冻结时想用独立的卡，只需要换外层形态，行内容不变。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.8 常驻横幅 -->
+      <section class="sec" id="dark-banner">
+        <div class="sec-head">
+          <span class="sec-no">§5.8</span>
+          <span class="sec-title">主界面常驻横幅（逃生之后 / 没测全）</span>
+          <span class="sec-note">
+            不可关闭：没有
+            ✕、不浮起、不动画、不随内容滚走；它只在"现在仍然成立的事实"还在时出现。左栏 / 顶栏 /
+            状态栏是既有界面，这里按原样保留位置。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="shell">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub"></span>
+              </div>
+              <nav class="nav">
+                <span class="nav-item" data-on="true">控制台</span>
+                <span class="nav-item">dsh 终端</span>
+                <span class="nav-item">本地 Shell</span>
+                <span class="nav-item">DeepSeek Harness</span>
+                <span class="nav-item">DeepSeek 用量</span>
+                <span class="nav-item">归档会话</span>
+                <span class="nav-item">插件</span>
+                <span class="nav-item">环境自检</span>
+                <span class="nav-item">设置</span>
+              </nav>
+            </aside>
+            <div class="workspace">
+              <div class="topbar">
+                <span class="topbar-title">控制台</span>
+                <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+              </div>
+              <div class="main">
+                <div class="dash">
+                  <div class="banner" style="margin: 0">
+                    <span class="banner-i">▲</span>
+                    <span class="banner-body">
+                      <b>运行环境还没准备好：</b>这台电脑上没有找到 Node
+                    </span>
+                    <span class="banner-actions">
+                      <span class="btn btn-small btn-primary">继续配置</span>
+                    </span>
+                  </div>
+                  <div class="grid2">
+                    <div class="panel">
+                      <div class="panel-head">控制台内容</div>
+                      <div class="panel-block">
+                        <span class="placeholder">
+                          （这一页的其余内容是既有控制台页，与本次设计无关；这里只为了看清横幅的位置与宽高。）
+                        </span>
+                      </div>
+                    </div>
+                    <div class="panel">
+                      <div class="panel-head">进程操作</div>
+                      <div class="panel-block">
+                        <span class="placeholder">（既有界面，不参与评审）</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="statusbar">
+                <span>运行中，http://127.0.0.1:3080</span>
+                <span class="spacer"></span>
+                <span>Ctrl+1~9 切换页面</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="frame-cap">第二种横幅（没测全）：它不挡人，右侧给两个动作。</p>
+        <div class="frame">
+          <div class="dash" style="padding: 16px 20px 20px">
+            <div class="banner" style="margin: 0">
+              <span class="banner-i">▲</span>
+              <span class="banner-body">
+                <b>这一轮没测全（原因：这一轮没能起来一次子进程）。</b>下面的结论可能不准。
+              </span>
+              <span class="banner-actions">
+                <span class="btn btn-small">重新检测</span>
+                <span class="btn btn-small">打开环境向导</span>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="flag">
+          <h4>规格待明确：横幅在哪些页面顶部出现</h4>
+          <p>
+            交互规格 §2.8 说"控制台页顶部的常驻横幅"，§2.6
+            说"主界面顶部常驻一条黄条"，而环境自检页自己另有一条<code>这一轮没测全</code>的横幅（既有实现）。三处的关系没有写清：是"所有页面都显示同一条"，还是"只有控制台页
+            + 自检页各自的"。本预览只按控制台页摆。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.9 更新入口与确认 -->
+      <section class="sec" id="dark-update">
+        <div class="sec-head">
+          <span class="sec-no">§5.9 · §6.4</span>
+          <span class="sec-title">环境自检页：更新入口、来源控件与更新确认区</span>
+          <span class="sec-note">
+            只画页面区域（左栏 / 顶栏 / 状态栏见上一屏）。冻结 R-11（pnpm
+            不显示具体目标版本）、R-17（「已经是最新版」是读数态，不可聚焦不可点）、R-21（提醒数用报告里的
+            warn 计数）。
+          </span>
+        </div>
+        <div class="frame">
+          <div style="padding: 4px 20px 20px">
+            <div class="bar">
+              <span class="btn btn-small btn-primary">重新检测</span>
+              <span class="btn btn-small">重新打开环境向导</span>
+              <span class="spacer"></span>
+              <span class="bar-note">5 项正常 · 1 项不正常 · 2 项需要注意</span>
+              <span class="bar-hint">上次检查：2 分钟前</span>
+            </div>
+
+            <div class="panel">
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">外部 Node</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v24.4.0 · D:\Program Files\nodejs\node.exe</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">更新 Node.js</span>
+                </span>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">pnpm</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v10.15.0</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="readout">已经是最新版（v10.15.0）</span>
+                </span>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-skip"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">dsh 能不能跑</span>
+                    <span class="envrow-state state-neutral">已跳过</span>
+                  </span>
+                  <span class="envrow-detail">跳过之后，插件页的装 / 卸 / 升级仍然用不了。</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">把这一步加回来？</span>
+                </span>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-amber"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">本地 Shell</span>
+                    <span class="envrow-state state-warn">需要注意</span>
+                  </span>
+                  <span class="envrow-detail">找到了 pwsh，但这一轮没能确认它能不能起来。</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="pill">不影响进入界面</span>
+                </span>
+              </div>
+            </div>
+
+            <div class="panel" style="margin-top: 16px">
+              <div class="panel-head">安装下载来源</div>
+              <div class="panel-block">
+                留空 =
+                从官方地址直接下载。填了就用你填的那个地址下载，只影响我们自己发起的下载，不改这台电脑上的任何配置。
+                <div class="btnrow btnrow-tight">
+                  <span class="input">（留空 = 官方地址）</span>
+                  <span class="btn btn-small">保存</span>
+                  <span class="bar-hint">改了还没保存</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          点是行右侧的「更新
+          Node.js」之后，确认区在<b>同一行下面原地展开</b>（与向导的确认区同一套件）；下面是 Node 与
+          pnpm 两个变体。
+        </p>
+        <div class="frame">
+          <div style="padding: 4px 20px 20px">
+            <div class="panel">
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">外部 Node</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v24.4.0 · D:\Program Files\nodejs\node.exe</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">更新 Node.js</span>
+                </span>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd"
+                    >Node.js 稳定版 v26.9.0 的官方安装包（node-v26.9.0-x64.msi）</code
+                  >
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">版本</span>
+                      <span class="plan-val">
+                        <span class="verpair">
+                          <span class="ver-old">v24.4.0</span>
+                          <span class="ver-arrow">→</span>
+                          <span class="ver-new">v26.9.0</span>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">官方地址（nodejs.org）</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">需要 —— 接下来 Windows 会问你一次是否允许安装</span>
+                    </div>
+                  </div>
+                  <div class="notice">
+                    更新会先停掉正在运行的 dsh，更新完再问你要不要重新启动它。
+                  </div>
+                  <div class="notice">这台电脑上可能还有别的程序在用这个 Node。</div>
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn btn-primary">开始</span>
+                    <span class="btn">取消</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">pnpm</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v10.15.0</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">更新 pnpm</span>
+                </span>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd">npm i -g pnpm</code>
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">版本</span>
+                      <span class="plan-val">
+                        <span class="verpair">
+                          <span class="ver-old">v10.15.0</span>
+                          <span class="ver-arrow">→</span>
+                          <span class="ver-new">最新版（由你的安装源决定）</span>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">
+                        本次使用你设置的安装源：registry.npmmirror.com
+                      </span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">不需要</span>
+                    </div>
+                  </div>
+                  <div class="notice">就是给这台电脑上的 pnpm 装最新版，不改别的东西。</div>
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn btn-primary">开始</span>
+                    <span class="btn">取消</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p class="frame-cap">
+              第三条分支：认不出这个 Node 是怎么装的，所以不做自动更新（交互 §10.5 第 6 条 / 需求
+              §8.3）。
+            </p>
+            <div class="panel">
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">外部 Node</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail"
+                    >v24.4.0 · D:\tools\node\node.exe（不在官方默认位置，也不在版本管理器下）</span
+                  >
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">打开官方下载页</span>
+                  <span class="btn btn-small">重新检测</span>
+                </span>
+              </div>
+              <div class="panel-block">
+                我们认不出这个 Node 是怎么装的，所以不会替它做自动更新。
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="flag">
+          <h4>规格待明确：更新确认区的"决策块"里有没有主按钮</h4>
+          <p>
+            视觉规格 §6.3 说"需要用户明确确认的场合不出现主按钮"，而 §5.9 的更新确认区画的是<code
+              >[开始] [取消]</code
+            >（开始是主按钮）。本预览按 §5.9
+            摆（更新不是"我们没能给你足够证据"的场合，用户点行里的按钮就已经表达了意图）。请裁定两处的边界，免得实现时一处有主按钮、一处没有。
+          </p>
+        </div>
+      </section>
+    </section>
+
+    <!-- ==================================================================== 浅色主题 -->
+    <section class="theme theme-light" id="light">
+      <div class="theme-head">
+        <h2>浅色主题（<code>data-theme="light"</code>）</h2>
+        <p>
+          与深色块逐屏一一对应，结构与尺寸完全相同，只换变量取值。这一块里的四个状态语义色是冻结
+          R-04 <b>采纳的加深取值</b>（<code>--run #047857</code> / <code>--sky #0369a1</code> /
+          <code>--rose #be123c</code> / <code>--amber #92400e</code>），软底色相同步 ——
+          请重点看左轨那几行 11.5px 的状态词在这套取值下是否读得清。
+        </p>
+      </div>
+
+      <div class="legend">
+        <span class="legend-item"
+          ><span class="node node-sm node-run"></span>正常 / 已完成：8px 实心圆 + 3px 软晕</span
+        >
+        <span class="legend-item"
+          ><span class="node node-lg node-rose"></span>不可用 / 当前待办：实心圆 + 软晕（当前步骤
+          11px）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-sky"></span>进行中：实心圆 +
+          呼吸（这一屏上必须"在动"）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-amber"></span>需要注意：1.5px 空心环（无填充、无晕）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-skip"></span>已跳过：墨色空心环（不是状态）</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-neutral"></span
+          >未确定（结果行）：同样是墨色空心环，靠文案区别</span
+        >
+        <span class="legend-item"
+          ><span class="node node-sm node-unknown"></span>测不出来：墨色虚线空心环（不是状态）</span
+        >
+      </div>
+
+      <!-- ============================================ §5.1 检查中 -->
+      <section class="sec" id="light-checking">
+        <div class="sec-head">
+          <span class="sec-no">§5.1</span>
+          <span class="sec-title">检查中（第一份报告还没回来）</span>
+          <span class="sec-note"
+            >不空白、不画步骤清单、逃生口此刻就能点、「重新检测」这一轮不可用 —— 并给一句原因（视觉
+            §6.4 要求禁用必须看得到原因；具体措辞未定，这里写「第一轮检查还在进行中」）。</span
+          >
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="spinner"></div>
+              <div class="screen-title" style="margin-top: 14px">正在检查这台电脑上的运行环境</div>
+              <div class="screen-sub">大约几秒钟，不会改动任何东西</div>
+              <div class="btnrow">
+                <span class="btn btn-small" style="opacity: 0.4">重新检测</span>
+                <span class="bar-hint">第一轮检查还在进行中</span>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.2 / §5.3 / §5.4 挡住页 -->
+      <section class="sec" id="light-blocked">
+        <div class="sec-head">
+          <span class="sec-no">§5.2 · §5.3 · §5.4</span>
+          <span class="sec-title">挡住页（当前步骤卡六块 + 确认区展开）</span>
+          <span class="sec-note">
+            交互规格 §2.4 / §4；冻结 R-01（左轨竖向队列）、R-05（当前步骤 =
+            第一个待办）、R-26（计划阶段不断言"没有数字签名"）。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-rose"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-rose">安装 Node.js · 待办</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="screen-title">运行环境还没准备好</div>
+              <div class="screen-sub">下面几步装好之后，就可以进入 DSH Console 了</div>
+
+              <div class="card" style="margin-top: 20px">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="card-why">没有它 dsh 起不来，也无法安装后面的东西</div>
+
+                <div class="fact">
+                  <span class="fact-lamp"><span class="node node-sm node-rose"></span></span>
+                  <span class="fact-main">
+                    <span class="fact-head">
+                      <span class="fact-name">外部 Node</span>
+                      <span class="fact-state state-missing">不可用</span>
+                    </span>
+                    <span class="fact-detail">这台电脑上没有找到 Node</span>
+                  </span>
+                  <span class="btn btn-tiny btn-ghost" style="flex: 0 0 auto">展开看详情</span>
+                </div>
+
+                <div class="opts">
+                  <div class="opt" data-on="true">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title">直接安装官方版本（会问一次管理员权限）</span>
+                      <span class="opt-note">
+                        官方安装包，装到系统的默认位置；这台电脑上原来的 Node 会被换成这个版本。
+                      </span>
+                    </span>
+                  </div>
+                  <div class="opt">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title"
+                        >用版本管理器安装（不用管理员权限，可以装多个版本）</span
+                      >
+                      <span class="opt-note">
+                        先装一个版本管理器（nvm），再用它装 Node；不会动系统里原有的
+                        Node，之后可以随时切换版本。
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="btnrow">
+                  <span class="btn btn-primary">安装</span>
+                  <span class="btn">我想自己去官网下载安装</span>
+                </div>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd"
+                    >Node.js 稳定版 v26.9.0 的官方安装包（node-v26.9.0-x64.msi）</code
+                  >
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">官方地址（nodejs.org）</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">会装到哪里</span>
+                      <span class="plan-val plan-val-mono">%ProgramFiles%\nodejs</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要联网</span>
+                      <span class="plan-val">是</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">需要 —— 接下来 Windows 会问你一次是否允许安装</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">会改什么</span>
+                      <span class="plan-val">这台电脑上原来的 Node 会被换成这个版本</span>
+                    </div>
+                  </div>
+                  <div class="notice">
+                    下载后校验 SHA-256 与官方清单，并读取数字签名；不一致就不安装。
+                  </div>
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn btn-primary">开始</span>
+                    <span class="btn">取消</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="outside">
+                装好之后，其它已经打开的终端窗口需要重开一次，才会用上新装的 Node。
+              </div>
+              <div class="reminder-row">
+                <span class="reminder">另外还有 2 项提醒（可稍后处理）</span>
+                <span class="linkbtn">去环境自检看详情</span>
+                <span class="spacer"></span>
+                <span class="btn btn-small">重新检测</span>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          下面是同一屏里"用版本管理器安装"那一条路的确认区变体（冻结 R-22 / R-27 / R-12）。
+        </p>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody" style="min-height: 520px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-rose"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-rose">安装 Node.js · 待办</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="card-why">没有它 dsh 起不来，也无法安装后面的东西</div>
+
+                <div class="fact">
+                  <span class="fact-lamp"><span class="node node-sm node-rose"></span></span>
+                  <span class="fact-main">
+                    <span class="fact-head">
+                      <span class="fact-name">外部 Node</span>
+                      <span class="fact-state state-missing">不可用</span>
+                    </span>
+                    <span class="fact-detail">这台电脑上没有找到 Node</span>
+                  </span>
+                  <span class="btn btn-tiny btn-ghost" style="flex: 0 0 auto">展开看详情</span>
+                </div>
+
+                <div class="opts">
+                  <div class="opt">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title">直接安装官方版本（会问一次管理员权限）</span>
+                      <span class="opt-note">
+                        官方安装包，装到系统的默认位置；这台电脑上原来的 Node 会被换成这个版本。
+                      </span>
+                    </span>
+                  </div>
+                  <div class="opt" data-on="true">
+                    <span class="radio"></span>
+                    <span class="opt-body">
+                      <span class="opt-title"
+                        >用版本管理器安装（不用管理员权限，可以装多个版本）</span
+                      >
+                      <span class="opt-note">
+                        先装一个版本管理器（nvm），再用它装 Node；不会动系统里原有的
+                        Node，之后可以随时切换版本。
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="btnrow">
+                  <span class="btn btn-primary">安装</span>
+                  <span class="btn">我想自己去官网下载安装</span>
+                </div>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd">版本管理器（nvm-windows v2.0.0 社区版）的安装包</code>
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">官方地址（github.com）</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">不需要</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">会改什么</span>
+                      <span class="plan-val">
+                        这台电脑上原来的 Node 不会被删掉；之后 node
+                        走哪一个要看谁在系统查找路径里靠前
+                      </span>
+                    </div>
+                  </div>
+                  <div class="notice">
+                    版本管理器的安装包仍然从官方地址下载 ——
+                    「安装下载来源」只作用于我们自己发起的下载（冻结 R-22）。
+                  </div>
+                  <div class="decision">
+                    <b>这个安装包没有数字签名，确定要装吗？</b>
+                    依据是发布元数据（冻结
+                    R-27）；默认焦点在「取消」那一侧，按回车不会直接开始安装（冻结 R-12）。
+                    <div class="btnrow btnrow-tight">
+                      <span class="btn is-focus">取消</span>
+                      <span class="btn">仍然继续</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="outside">
+                装好之后，其它已经打开的终端窗口需要重开一次，才会用上新装的 Node。
+              </div>
+              <div class="reminder-row">
+                <span class="reminder">另外还有 2 项提醒（可稍后处理）</span>
+                <span class="linkbtn">去环境自检看详情</span>
+                <span class="spacer"></span>
+                <span class="btn btn-small">重新检测</span>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.5 进行中 -->
+      <section class="sec" id="light-running">
+        <div class="sec-head">
+          <span class="sec-no">§5.5</span>
+          <span class="sec-title">进行中（进度区 / 输出井 / 两种"不再等"）</span>
+          <span class="sec-note">
+            冻结 R-02：进度条填充用 <code>--sky</code>（浅色下是加深后的
+            <code>#0369a1</code>）。这里是最该盯浅色小字的一屏。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody" style="min-height: 620px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-sky"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-sky">安装 Node.js · 进行中</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="card-why">没有它 dsh 起不来，也无法安装后面的东西</div>
+
+                <div class="statline">
+                  <span class="node node-sm node-sky"></span>
+                  <span>正在下载 Node.js v26.9.0… <span class="statline-num">42%</span></span>
+                </div>
+                <div class="prog"><div class="prog-fill" style="width: 42%"></div></div>
+                <div class="prog-meta">38.2 MB / 90.4 MB</div>
+
+                <div class="btnrow">
+                  <span class="btn">取消下载</span>
+                  <span class="btn btn-tiny btn-ghost">显示详细输出</span>
+                </div>
+              </div>
+
+              <div class="out">
+                <div class="out-head">
+                  <span class="out-chip">node-v26.9.0-x64.msi</span>
+                  <span class="out-state">下载中…</span>
+                  <span class="spacer"></span>
+                  <span class="btn btn-tiny">收起</span>
+                </div>
+                <div class="out-body">
+                  已建立到 nodejs.org 的连接 正在接收数据：38.2 MB / 90.4
+                  MB（下载来源：本页上方「安装下载来源」留空，官方直连）
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          校验中（没有进度条）与等待安装程序 / 安装中（按钮换成"不再等待"）。<b
+            >这两张卡是同一屏的两个状态，并排摆只为一次看全：实际一次只出现其中一张，阴影也只有一处。</b
+          >
+        </p>
+        <div class="frame">
+          <div class="gatebody" style="min-height: 380px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="0">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-sky"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-sky">安装 Node.js · 进行中</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 等上一步完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="statline">
+                  <span class="node node-sm node-sky"></span>
+                  <span>正在校验安装包完整性</span>
+                </div>
+                <div class="btnrow">
+                  <span class="btn">取消</span>
+                  <span class="btn btn-tiny btn-ghost">显示详细输出</span>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top: 16px">
+                <div class="card-title">第一步：安装 Node.js</div>
+                <div class="statline">
+                  <span class="node node-sm node-sky"></span>
+                  <span>正在等待安装程序</span>
+                </div>
+                <div class="notice">
+                  接下来 Windows 会问你一次是否允许安装（管理员权限）。按它的提示选择就好。
+                </div>
+                <div class="decision">
+                  <b>安装已经在进行，这里只能停止等待，不会去停止安装。</b>
+                  装完之后点「重新检测」看结果。
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn">不再等待（安装可能还在后台进行）</span>
+                    <span class="btn btn-tiny btn-ghost">显示详细输出</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.6 结果态 -->
+      <section class="sec" id="light-result">
+        <div class="sec-head">
+          <span class="sec-no">§5.6 · §4.3</span>
+          <span class="sec-title">结果态（成功 / 失败 / 未确定 / 已跳过）</span>
+          <span class="sec-note">
+            三种结果共用同一个槽位；未确定用中性墨色（冻结 R-06 给它加了第三个按钮）。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="gatebody" style="min-height: 360px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="1">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-run">安装 Node.js · 已完成</span>
+                  </span>
+                </li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-lg node-rose"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state step-state-rose">安装 pnpm · 待办</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 等上一步完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="card">
+                <div class="card-title">第一步：安装 Node.js</div>
+
+                <div class="fact">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="fact-main">
+                    <span class="fact-head">
+                      <span class="fact-name">外部 Node</span>
+                      <span class="fact-state state-ok">正常</span>
+                    </span>
+                    <span class="fact-detail">v26.9.0 · D:\Program Files\nodejs\node.exe</span>
+                  </span>
+                  <span class="btn btn-tiny btn-ghost" style="flex: 0 0 auto">展开看详情</span>
+                </div>
+
+                <div class="result">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="fact-main">
+                    <span class="result-line"
+                      >Node.js v26.9.0 装好了，这一项已经变成「正常」。</span
+                    >
+                    <span class="result-note"
+                      >其它已经打开的终端窗口需要重开一次，才会用上新装的 Node。</span
+                    >
+                    <div class="btnrow">
+                      <span class="btn btn-primary">继续下一步</span>
+                      <span class="btn">再看看环境自检</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top: 16px">
+                <div class="card-title">第一步：安装 Node.js</div>
+
+                <div class="result" style="margin-top: 0">
+                  <span class="fact-lamp"><span class="node node-sm node-rose"></span></span>
+                  <span class="fact-main">
+                    <span class="result-line">你拒绝了管理员权限，这台电脑上什么都没改。</span>
+                    <span class="result-note">
+                      复检事实：外部 Node —— 这台电脑上仍然没有找到 Node。
+                    </span>
+                    <div class="btnrow">
+                      <span class="btn">改用不用管理员权限的方式安装</span>
+                      <span class="btn">重新检测</span>
+                      <span class="btn btn-tiny btn-ghost">打开官方下载页</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top: 16px">
+                <div class="card-title">第一步：安装 Node.js</div>
+
+                <div class="result" style="margin-top: 0">
+                  <span class="fact-lamp"><span class="node node-sm node-neutral"></span></span>
+                  <span class="fact-main">
+                    <span class="result-line">
+                      我们不等了：安装可能还在后台进行，请按它自己的提示把它做完，做完点「重新检测」。
+                    </span>
+                    <span class="result-note">
+                      这一条既不是成功也不是失败 ——
+                      我们没有结论，所以按钮里多了一个用来解除"忙"位的动作（冻结 R-06）。
+                    </span>
+                    <div class="btnrow">
+                      <span class="btn">重新检测</span>
+                      <span class="btn">打开官方下载页</span>
+                      <span class="btn">我确认安装已经结束</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          「已跳过」不是结果行：它出现在三处 ——
+          左轨的节点、环境自检页那一行（带恢复入口）、以及放行页的一句提醒。下面是这三处摆在一起的样子（并排是为了评审时一次看全，实际不会同时出现在一屏）。
+        </p>
+        <p class="frame-cap">
+          上面的结果态区里那三张卡是<b>三种不同的结局</b>（成功 / 失败 /
+          未确定），并排摆只为一次看全：实际一次只出现其中一张，事实行与结果行始终在同一个位置上。
+        </p>
+        <div class="frame">
+          <div class="gatebody" style="min-height: 260px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境准备</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="1">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-run">安装 Node.js · 已完成</span>
+                  </span>
+                </li>
+                <li class="step" data-current="true">
+                  <span class="step-dot"><span class="node node-sm node-skip"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state">安装 pnpm · 已跳过</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-unknown"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state">安装 dsh · 没测出来</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="panel">
+                <div class="panel-head">环境自检页的那一行（恢复入口在这里）</div>
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-skip"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">pnpm</span>
+                      <span class="envrow-state state-neutral">已跳过</span>
+                    </span>
+                    <span class="envrow-detail">
+                      跳过之后，插件页的装 / 卸 / 升级仍然用不了（以后随时可以回来补上）。
+                    </span>
+                  </span>
+                  <span class="envrow-actions">
+                    <span class="btn btn-small">把这一步加回来？</span>
+                  </span>
+                </div>
+              </div>
+              <div class="notice" style="margin-top: 16px">
+                pnpm 这一步你选择了跳过：插件页的装 / 卸 / 升级还用不了，以后可以回来补上。
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="btn btn-small">先进入界面（环境还没准备好，我稍后自己处理）</span>
+            <span class="floor-note">点了不改动这台电脑上的任何东西</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.7 放行页 -->
+      <section class="sec" id="light-released">
+        <div class="sec-head">
+          <span class="sec-no">§5.7</span>
+          <span class="sec-title">放行页（三步完成，原地变成结果页）</span>
+          <span class="sec-note">
+            不自动跳走；成果卡不给阴影；底条只剩一条边 —— 没有东西要逃了。
+          </span>
+        </div>
+        <div class="frame">
+          <div class="topbar">
+            <span class="topbar-title">运行环境准备</span>
+            <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+          </div>
+          <div class="gatebody" style="min-height: 430px">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub">运行环境已就绪</span>
+              </div>
+              <div class="rail-rule"></div>
+              <ol class="steps" data-done="3">
+                <li class="spine"></li>
+                <li class="spine-done"></li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第一步</span>
+                    <span class="step-state step-state-run">安装 Node.js · 已完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第二步</span>
+                    <span class="step-state step-state-run">安装 pnpm · 已完成</span>
+                  </span>
+                </li>
+                <li class="step">
+                  <span class="step-dot"><span class="node node-sm node-run"></span></span>
+                  <span class="step-text">
+                    <span class="step-title">第三步</span>
+                    <span class="step-state step-state-run">安装 dsh · 已完成</span>
+                  </span>
+                </li>
+              </ol>
+            </aside>
+            <div class="col">
+              <div class="screen-title">运行环境已经就绪</div>
+              <div class="screen-sub">
+                三步都完成了（可跳过的项按你的选择处理），现在可以进入了。
+              </div>
+
+              <div class="panel" style="margin-top: 20px">
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">安装 Node.js</span>
+                      <span class="envrow-state state-ok">已完成</span>
+                    </span>
+                    <span class="envrow-detail">v26.9.0</span>
+                  </span>
+                </div>
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">安装 pnpm</span>
+                      <span class="envrow-state state-ok">已完成</span>
+                    </span>
+                    <span class="envrow-detail">v10.15.0</span>
+                  </span>
+                </div>
+                <div class="envrow">
+                  <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                  <span class="envrow-main">
+                    <span class="envrow-head">
+                      <span class="envrow-name">安装 dsh</span>
+                      <span class="envrow-state state-ok">已完成</span>
+                    </span>
+                    <span class="envrow-detail">dsh 本体找得到，并且实测跑得动</span>
+                  </span>
+                </div>
+              </div>
+
+              <div class="btnrow" style="margin-top: 16px">
+                <span class="btn btn-primary">进入 DSH Console</span>
+                <span class="btn">再看看环境自检</span>
+              </div>
+
+              <div class="notice" style="margin-top: 16px">
+                pnpm 这一步你选择了跳过：插件页的装 / 卸 / 升级还用不了，以后可以回来补上。
+              </div>
+            </div>
+          </div>
+          <div class="floor">
+            <span class="floor-note">（底条只剩一条边：没有东西要逃了）</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.8 常驻横幅 -->
+      <section class="sec" id="light-banner">
+        <div class="sec-head">
+          <span class="sec-no">§5.8</span>
+          <span class="sec-title">主界面常驻横幅（逃生之后 / 没测全）</span>
+          <span class="sec-note">不可关闭：没有 ✕、不浮起、不动画、不随内容滚走。</span>
+        </div>
+        <div class="frame">
+          <div class="shell">
+            <aside class="rail">
+              <div class="brand">
+                <span class="brand-logo">DSH Console</span>
+                <span class="brand-sub"></span>
+              </div>
+              <nav class="nav">
+                <span class="nav-item" data-on="true">控制台</span>
+                <span class="nav-item">dsh 终端</span>
+                <span class="nav-item">本地 Shell</span>
+                <span class="nav-item">DeepSeek Harness</span>
+                <span class="nav-item">DeepSeek 用量</span>
+                <span class="nav-item">归档会话</span>
+                <span class="nav-item">插件</span>
+                <span class="nav-item">环境自检</span>
+                <span class="nav-item">设置</span>
+              </nav>
+            </aside>
+            <div class="workspace">
+              <div class="topbar">
+                <span class="topbar-title">控制台</span>
+                <span class="winbtns"><span>—</span><span>▢</span><span>✕</span></span>
+              </div>
+              <div class="main">
+                <div class="dash">
+                  <div class="banner" style="margin: 0">
+                    <span class="banner-i">▲</span>
+                    <span class="banner-body">
+                      <b>运行环境还没准备好：</b>这台电脑上没有找到 Node
+                    </span>
+                    <span class="banner-actions">
+                      <span class="btn btn-small btn-primary">继续配置</span>
+                    </span>
+                  </div>
+                  <div class="grid2">
+                    <div class="panel">
+                      <div class="panel-head">控制台内容</div>
+                      <div class="panel-block">
+                        <span class="placeholder">
+                          （这一页的其余内容是既有控制台页，与本次设计无关；这里只为了看清横幅的位置与宽高。）
+                        </span>
+                      </div>
+                    </div>
+                    <div class="panel">
+                      <div class="panel-head">进程操作</div>
+                      <div class="panel-block">
+                        <span class="placeholder">（既有界面，不参与评审）</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="statusbar">
+                <span>运行中，http://127.0.0.1:3080</span>
+                <span class="spacer"></span>
+                <span>Ctrl+1~9 切换页面</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="frame-cap">第二种横幅（没测全）：它不挡人，右侧给两个动作。</p>
+        <div class="frame">
+          <div class="dash" style="padding: 16px 20px 20px">
+            <div class="banner" style="margin: 0">
+              <span class="banner-i">▲</span>
+              <span class="banner-body">
+                <b>这一轮没测全（原因：这一轮没能起来一次子进程）。</b>下面的结论可能不准。
+              </span>
+              <span class="banner-actions">
+                <span class="btn btn-small">重新检测</span>
+                <span class="btn btn-small">打开环境向导</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ §5.9 更新入口与确认 -->
+      <section class="sec" id="light-update">
+        <div class="sec-head">
+          <span class="sec-no">§5.9 · §6.4</span>
+          <span class="sec-title">环境自检页：更新入口、来源控件与更新确认区</span>
+          <span class="sec-note">
+            只画页面区域。冻结 R-11（pnpm
+            不显示具体目标版本）、R-17（读数态）、R-21（提醒数用报告里的 warn 计数）。
+          </span>
+        </div>
+        <div class="frame">
+          <div style="padding: 4px 20px 20px">
+            <div class="bar">
+              <span class="btn btn-small btn-primary">重新检测</span>
+              <span class="btn btn-small">重新打开环境向导</span>
+              <span class="spacer"></span>
+              <span class="bar-note">5 项正常 · 1 项不正常 · 2 项需要注意</span>
+              <span class="bar-hint">上次检查：2 分钟前</span>
+            </div>
+
+            <div class="panel">
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">外部 Node</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v24.4.0 · D:\Program Files\nodejs\node.exe</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">更新 Node.js</span>
+                </span>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">pnpm</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v10.15.0</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="readout">已经是最新版（v10.15.0）</span>
+                </span>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-skip"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">dsh 能不能跑</span>
+                    <span class="envrow-state state-neutral">已跳过</span>
+                  </span>
+                  <span class="envrow-detail">跳过之后，插件页的装 / 卸 / 升级仍然用不了。</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">把这一步加回来？</span>
+                </span>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-amber"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">本地 Shell</span>
+                    <span class="envrow-state state-warn">需要注意</span>
+                  </span>
+                  <span class="envrow-detail">找到了 pwsh，但这一轮没能确认它能不能起来。</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="pill">不影响进入界面</span>
+                </span>
+              </div>
+            </div>
+
+            <div class="panel" style="margin-top: 16px">
+              <div class="panel-head">安装下载来源</div>
+              <div class="panel-block">
+                留空 =
+                从官方地址直接下载。填了就用你填的那个地址下载，只影响我们自己发起的下载，不改这台电脑上的任何配置。
+                <div class="btnrow btnrow-tight">
+                  <span class="input">（留空 = 官方地址）</span>
+                  <span class="btn btn-small">保存</span>
+                  <span class="bar-hint">改了还没保存</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="frame-cap">
+          确认区在同一行下面原地展开；下面是 Node 与 pnpm 两个变体，以及"认不出这个 Node
+          怎么装的"那条分支。
+        </p>
+        <div class="frame">
+          <div style="padding: 4px 20px 20px">
+            <div class="panel">
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">外部 Node</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v24.4.0 · D:\Program Files\nodejs\node.exe</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">更新 Node.js</span>
+                </span>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd"
+                    >Node.js 稳定版 v26.9.0 的官方安装包（node-v26.9.0-x64.msi）</code
+                  >
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">版本</span>
+                      <span class="plan-val">
+                        <span class="verpair">
+                          <span class="ver-old">v24.4.0</span>
+                          <span class="ver-arrow">→</span>
+                          <span class="ver-new">v26.9.0</span>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">官方地址（nodejs.org）</span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">需要 —— 接下来 Windows 会问你一次是否允许安装</span>
+                    </div>
+                  </div>
+                  <div class="notice">
+                    更新会先停掉正在运行的 dsh，更新完再问你要不要重新启动它。
+                  </div>
+                  <div class="notice">这台电脑上可能还有别的程序在用这个 Node。</div>
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn btn-primary">开始</span>
+                    <span class="btn">取消</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">pnpm</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail">v10.15.0</span>
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">更新 pnpm</span>
+                </span>
+
+                <div class="confirm">
+                  <div class="confirm-label">将要执行</div>
+                  <code class="cmd">npm i -g pnpm</code>
+                  <div class="plan-facts">
+                    <div class="plan-fact">
+                      <span class="plan-key">版本</span>
+                      <span class="plan-val">
+                        <span class="verpair">
+                          <span class="ver-old">v10.15.0</span>
+                          <span class="ver-arrow">→</span>
+                          <span class="ver-new">最新版（由你的安装源决定）</span>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">下载来源</span>
+                      <span class="plan-val plan-val-mono">
+                        本次使用你设置的安装源：registry.npmmirror.com
+                      </span>
+                    </div>
+                    <div class="plan-fact">
+                      <span class="plan-key">要不要管理员权限</span>
+                      <span class="plan-val">不需要</span>
+                    </div>
+                  </div>
+                  <div class="notice">就是给这台电脑上的 pnpm 装最新版，不改别的东西。</div>
+                  <div class="btnrow btnrow-tight">
+                    <span class="btn btn-primary">开始</span>
+                    <span class="btn">取消</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p class="frame-cap">
+              第三条分支：认不出这个 Node 是怎么装的，所以不做自动更新（交互 §10.5 第 6 条 / 需求
+              §8.3）。
+            </p>
+            <div class="panel">
+              <div class="envrow">
+                <span class="fact-lamp"><span class="node node-sm node-run"></span></span>
+                <span class="envrow-main">
+                  <span class="envrow-head">
+                    <span class="envrow-name">外部 Node</span>
+                    <span class="envrow-state state-ok">正常</span>
+                  </span>
+                  <span class="envrow-detail"
+                    >v24.4.0 · D:\tools\node\node.exe（不在官方默认位置，也不在版本管理器下）</span
+                  >
+                </span>
+                <span class="envrow-actions">
+                  <span class="btn btn-small">打开官方下载页</span>
+                  <span class="btn btn-small">重新检测</span>
+                </span>
+              </div>
+              <div class="panel-block">
+                我们认不出这个 Node 是怎么装的，所以不会替它做自动更新。
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <footer class="page-foot">
+      <b>这一页没有做的事</b>：没有脚本（没有任何
+      <code>&lt;script&gt;</code>、没有主题切换按钮、没有动态渲染）、没有外部资源（没有
+      CDN、没有外链字体 /
+      图片）、没有任何网络请求；两套主题靠同一页里上下两块各自的变量作用域呈现，因此你看到的就是"关掉
+      JS 之后它长什么样"。<br />
+      <b>它不能替代什么</b>：真实窗口里的滚动、键盘走查（<code>Tab</code> 顺序与焦点落点）、呼吸 /
+      进度条等动效、Windows 真正画出来的最小化 / 最大化 / 关闭按钮、以及随包分发的 IBM Plex Sans /
+      Mono 拉丁字形（本页拉丁字形走的是系统回退），都只有应用里才算数。<br />
+      <b>怎么用它</b>：逐块对照 <code>docs/env-wizard-visual.md</code> 的 §5.1 ~ §5.9
+      看；任何"这里不对"都请指到具体那一块与那一条间距 / 字号 /
+      颜色，好让我们决定是改设计还是改实现。凡是规格没讲清的地方，都已用琥珀色「规格待明确」框标在对应那一屏旁边（深色块里），没有替它拍板。
+    </footer>
+  </body>
+</html>
