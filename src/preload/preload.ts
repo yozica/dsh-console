@@ -82,6 +82,23 @@ const api: DshConsoleApi = {
   pluginBundleEdit: (request) => ipcRenderer.invoke('plugin:bundle-edit', request),
   pluginRescue: (request) => ipcRenderer.invoke('plugin:rescue', request),
 
+  // 运行环境自检 + 一键修复（报告靠 envCheck 拉，修复过程靠两条订阅推）
+  envCheck: (options) => ipcRenderer.invoke('env:check', options || {}),
+  envFix: (request) => ipcRenderer.invoke('env:fix', request),
+  envFixCancel: () => ipcRenderer.invoke('env:fix-cancel'),
+  onEnvFixState: (handler) => subscribe('env:fix-state', handler),
+  onEnvFixOutput: (handler) => subscribe('env:fix-output', handler),
+
+  // 首启环境向导（门禁）+ Node 安装 / 更新通道（见 docs/env-wizard-freeze.md §3.3）。
+  // 门禁状态与安装状态都是"拉一份 + 订阅"：报告类的靠 invoke，过程类的靠事件。
+  envWizard: (options) => ipcRenderer.invoke('env:wizard', options || {}),
+  envWizardSkip: (request) => ipcRenderer.invoke('env:wizard-skip', request),
+  envNodePlan: (request) => ipcRenderer.invoke('env:node-plan', request),
+  envNodeInstall: (request) => ipcRenderer.invoke('env:node-install', request),
+  envNodeStop: () => ipcRenderer.invoke('env:node-stop'),
+  onEnvInstallState: (handler) => subscribe('env:install-state', handler),
+  onEnvInstallOutput: (handler) => subscribe('env:install-output', handler),
+
   // 事件
   onState: (handler) => subscribe('dsh:state', handler),
   onOutput: (handler) => subscribe('dsh:output', handler),

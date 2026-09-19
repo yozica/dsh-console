@@ -39,11 +39,12 @@ import {
 } from './patch-layer';
 import { applyBundleEdit, type BundleEditResult } from './profile-bundles';
 import {
-  dshArgsFor,
+  dshLaunchSpec,
   envWithKnownBins,
   findPnpm,
   homeDir,
   resolveDshLauncher,
+  type LaunchSpec,
 } from './process-utils';
 import { resolveDshHome } from './session-archive';
 import type { Settings, SettingsValues } from './settings';
@@ -324,7 +325,9 @@ export function checkDumpResult(code: number, stdout: string, stderr: string): s
 async function runDump(settings: SettingsValues, defaultOnly = false): Promise<DumpRun> {
   const launcher = resolveDshLauncher(settings);
   const flag = defaultOnly ? '--dump-default-config' : '--dump-config';
-  const args = dshArgsFor(launcher, ['web', flag]);
+  // 经统一包装器：Windows 上 shim / npx / 自定义 shim 这三条回退分支给的是 cmd.exe + `/d /s /c`，
+  // 直接 execFile 会让 Node 再转义一遍引号，cmd 报 `'"…dsh.cmd"' is not recognized`。
+  const spec = dshLaunchSpec(launcher, ['web', flag], process.platform);
   const display = [launcher.display, 'web', flag].join(' ');
   const env: NodeJS.ProcessEnv = { ...process.env };
   env.PATH = [path.dirname(launcher.file), env.PATH].filter(Boolean).join(path.delimiter);
@@ -332,9 +335,16 @@ async function runDump(settings: SettingsValues, defaultOnly = false): Promise<D
   const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
     (resolve, reject) => {
       execFile(
-        launcher.file,
-        args,
-        { timeout: DUMP_TIMEOUT_MS, maxBuffer: DUMP_MAX_BUFFER, windowsHide: true, env },
+        spec.file,
+        spec.args,
+        {
+          timeout: DUMP_TIMEOUT_MS,
+          maxBuffer: DUMP_MAX_BUFFER,
+          windowsHide: true,
+          // 命令行是我们按 cmd 规则拼好的，Node 不要再加引号（见 process-utils 的 launchSpec）
+          windowsVerbatimArguments: spec.windowsVerbatimArguments,
+          env,
+        },
         (error, stdout, stderr) => {
           if (error && typeof (error as { code?: unknown }).code !== 'number') {
             reject(error);
@@ -705,10 +715,14 @@ class PluginRunner {
   /**
    * 真跑一次 `dsh plugin --profile web <args>`，把输出边读边推给界面。
    * 返回退出码与输出尾部（尾部用于归纳失败原因）。
+   *
+   * 收的是**统一包装器算好的 spec**（`dshLaunchSpec`）而不是裸的 file/args：Windows 上
+   * shim / npx / 自定义 shim 这三条回退 launcher 给的是 `cmd.exe` + `/d /s /c`，
+   * 不带 `windowsVerbatimArguments` 时 Node 会把内嵌引号再转义一遍，cmd 直接报
+   * `'"…dsh.cmd"' is not recognized` —— 那正是"用户自己装了 dsh 却解析不到"时插件页全废的原因。
    */
   private async spawnOnce(
-    file: string,
-    args: string[],
+    spec: LaunchSpec,
     env: NodeJS.ProcessEnv,
     onOutput: (chunk: string) => void,
   ): Promise<{ code: number | null; tail: string; error?: string }> {
@@ -720,13 +734,15 @@ class PluginRunner {
     };
 
     return await new Promise((resolve) => {
-      const child = spawn(file, args, {
+      const child = spawn(spec.file, spec.args, {
         env,
         // cwd 必须固定：相对路径（`./hello-plugin`）由 dsh 按**调用目录**解析，
         // 而继承来的 cwd 是 Electron 的启动目录（从 Finder 起可能是 /）—— 那样
         // 用户填的相对路径会莫名其妙地找不到。固定成主目录，界面上也这么写。
         cwd: homeDir(),
         windowsHide: true,
+        // 命令行是 launchSpec 按 cmd 规则拼好的，Node 不要再加引号
+        windowsVerbatimArguments: spec.windowsVerbatimArguments,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       this.child = child;
@@ -806,15 +822,21 @@ class PluginRunner {
     // `-w` 只在 pnpm 自己要求时加（见下面重试）：profile 里那份 pnpm-workspace.yaml 是
     // dsh 模板写的（`packages: [.]`，没有 ignore-workspace-root-check），pnpm 9 会把它
     // 当 workspace root，于是 `add` 直接报 ERR_PNPM_ADDING_TO_ROOT。
-    const argsFor = (extra: string[]): string[] =>
-      dshArgsFor(launcher, [
-        'plugin',
-        '--profile',
-        PLUGIN_PROFILE,
-        action,
-        ...extra,
-        ...(action === 'update' && spec.trim() === '' ? [] : [spec]),
-      ]);
+    // 经 `dshLaunchSpec` 统一包装：Windows 上回退 launcher（shim / npx / 自定义 shim）是
+    // `cmd.exe` + `/d /s /c`，必须带 `windowsVerbatimArguments`，见 spawnOnce 的说明。
+    const specFor = (extra: string[]): LaunchSpec =>
+      dshLaunchSpec(
+        launcher,
+        [
+          'plugin',
+          '--profile',
+          PLUGIN_PROFILE,
+          action,
+          ...extra,
+          ...(action === 'update' && spec.trim() === '' ? [] : [spec]),
+        ],
+        process.platform,
+      );
     // 安装源：设置里填了才覆盖，且只覆盖这一个子进程（见 pluginRegistryEnv）
     const registryOverride = pluginRegistryEnv(this.settings.all().pluginRegistry);
     const env: NodeJS.ProcessEnv = {
@@ -825,13 +847,13 @@ class PluginRunner {
     const registry = registryOverride.npm_config_registry;
     if (registry) onOutput(`（本次操作使用 registry：${registry}）\n`);
 
-    const first = await this.spawnOnce(launcher.file, argsFor([]), env, onOutput);
+    const first = await this.spawnOnce(specFor([]), env, onOutput);
     if (first.error) return { ok: false, code: null, error: first.error };
     if (first.code === 0) return { ok: true, code: first.code };
 
     if (/ADDING_TO_ROOT|workspace root/i.test(first.tail)) {
       onOutput('\n（pnpm 说这是 workspace root，加 -w 重试）\n');
-      const retry = await this.spawnOnce(launcher.file, argsFor(['-w']), env, onOutput);
+      const retry = await this.spawnOnce(specFor(['-w']), env, onOutput);
       if (retry.error) return { ok: false, code: null, error: retry.error };
       if (retry.code === 0) return { ok: true, code: retry.code };
       return {
