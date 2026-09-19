@@ -2840,44 +2840,52 @@ async function main(): Promise<void> {
       );
     })(),
   );
+  const vcEnv: NodeJS.ProcessEnv = { SystemRoot: 'D:\\Windows' };
+  const vcPaths = processUtils.vcRuntimePaths(vcEnv);
+  const vcEvery = processUtils.hasVcRuntime(vcEnv, () => true);
+  const vcOneMissing = processUtils.hasVcRuntime(vcEnv, (file) =>
+    file.endsWith('vcruntime140.dll'),
+  );
+  const vcNone = processUtils.hasVcRuntime(vcEnv, () => false);
   check(
     '环境自检（VM-09）：VC++ 运行库只读地认两个 DLL，两支分支都能离线跑出来',
-    (() => {
-      const env: NodeJS.ProcessEnv = { SystemRoot: 'D:\\Windows' };
-      const paths = processUtils.vcRuntimePaths(env);
-      return (
-        processUtils.VC_RUNTIME_DLLS.join(',') === 'vcruntime140.dll,msvcp140.dll' &&
-        paths.length === 2 &&
-        paths[0] === path.join('D:\\Windows', 'System32', 'vcruntime140.dll') &&
-        paths[1] === path.join('D:\\Windows', 'System32', 'msvcp140.dll') &&
-        // 两个都在才算有（缺一个就不能跑原生 exe）
-        processUtils.hasVcRuntime(env, () => true) === true &&
-        processUtils.hasVcRuntime(env, (file) => file.endsWith('vcruntime140.dll')) === false &&
-        processUtils.hasVcRuntime(env, () => false) === false &&
-        // `windir` 也认（大小写不敏感）
-        processUtils.vcRuntimePaths({ windir: 'C:\\Win' })[0].startsWith('C:\\Win')
-      );
-    })(),
+    processUtils.VC_RUNTIME_DLLS.join(',') === 'vcruntime140.dll,msvcp140.dll' &&
+      vcPaths.length === 2 &&
+      vcPaths[0] === path.win32.join('D:\\Windows', 'System32', 'vcruntime140.dll') &&
+      vcPaths[1] === path.win32.join('D:\\Windows', 'System32', 'msvcp140.dll') &&
+      // 两个都在才算有（缺一个就不能跑原生 exe）
+      vcEvery === true &&
+      // ⚠️ 「缺一个 / 一个都没有 → false」**只在 Windows 上成立**：`hasVcRuntime` 在非 Windows 上
+      // **恒为 true**（源码里写死的语义：VC++ 运行库这条只对 Windows 有意义，POSIX 的 pnpm 是 JS 入口）。
+      vcOneMissing === (IS_WINDOWS ? false : true) &&
+      vcNone === (IS_WINDOWS ? false : true) &&
+      // `windir` 也认（大小写不敏感）
+      processUtils.vcRuntimePaths({ windir: 'C:\\Win' })[0].startsWith('C:\\Win'),
+    `paths=${vcPaths.join(' | ')} every=${vcEvery} oneMissing=${vcOneMissing} none=${vcNone} isWindows=${IS_WINDOWS}`,
+  );
+  // 夹具里的 `dir` 是 **Windows** 路径，所以两边都用 `path.win32.join` 拼（实现内部同理）——
+  // 用 `path.join` 的话，在 Linux CI 上夹具与实现会拼出不同的分隔符，这条就假红。
+  const pnpmDir = 'C:\\fake\\pnpm-home';
+  const pnpmEnv: NodeJS.ProcessEnv = { Path: pnpmDir };
+  const pnpmBoth = new Set([
+    path.win32.join(pnpmDir, 'pnpm.exe'),
+    path.win32.join(pnpmDir, 'pnpm.cmd'),
+  ]);
+  const pnpmExists = (file: string): boolean => pnpmBoth.has(file);
+  const pnpmWithoutRuntime = processUtils.findPnpmWindows(false, pnpmEnv, pnpmExists);
+  const pnpmWithRuntime = processUtils.findPnpmWindows(true, pnpmEnv, pnpmExists);
+  const pnpmOnlyExe = processUtils.findPnpmWindows(false, pnpmEnv, (file) =>
+    file.endsWith('pnpm.exe'),
   );
   check(
     '环境自检（VM-09）：查找 pnpm 用同一套偏好 —— 缺运行库时选能跑的 `pnpm.cmd`（哪怕同目录里有坏的原生 exe）',
-    (() => {
-      const dir = 'C:\\fake\\pnpm-home';
-      const env: NodeJS.ProcessEnv = { Path: dir };
-      const both = new Set([path.join(dir, 'pnpm.exe'), path.join(dir, 'pnpm.cmd')]);
-      const exists = (file: string): boolean => both.has(file);
-      const withoutRuntime = processUtils.findPnpmWindows(false, env, exists);
-      const withRuntime = processUtils.findPnpmWindows(true, env, exists);
-      return (
-        processUtils.pnpmExeNames(true).join(',') === 'pnpm.exe,pnpm.cmd' &&
-        processUtils.pnpmExeNames(false).join(',') === 'pnpm.cmd,pnpm.exe' &&
-        withoutRuntime === path.join(dir, 'pnpm.cmd') &&
-        withRuntime === path.join(dir, 'pnpm.exe') &&
-        // 只有原生 exe 时（缺运行库）也得把它找出来 —— 如实报告"找到了但跑不起来"，而不是假装没装
-        processUtils.findPnpmWindows(false, env, (file) => file.endsWith('pnpm.exe')) ===
-          path.join(dir, 'pnpm.exe')
-      );
-    })(),
+    processUtils.pnpmExeNames(true).join(',') === 'pnpm.exe,pnpm.cmd' &&
+      processUtils.pnpmExeNames(false).join(',') === 'pnpm.cmd,pnpm.exe' &&
+      pnpmWithoutRuntime === path.win32.join(pnpmDir, 'pnpm.cmd') &&
+      pnpmWithRuntime === path.win32.join(pnpmDir, 'pnpm.exe') &&
+      // 只有原生 exe 时（缺运行库）也得把它找出来 —— 如实报告"找到了但跑不起来"，而不是假装没装
+      pnpmOnlyExe === path.win32.join(pnpmDir, 'pnpm.exe'),
+    `without=${pnpmWithoutRuntime} with=${pnpmWithRuntime} onlyExe=${pnpmOnlyExe}`,
   );
   check(
     '环境自检（VM-09）：「找到了但跑不起来」认得出真机那两种信号，并给出人话 + 两条出路',
@@ -4607,32 +4615,29 @@ async function main(): Promise<void> {
       );
     })(),
   );
+  // 客机那条"界面报的路径"不在磁盘上 —— 绝不能被返回
+  const vmGuessed = 'C:\\Users\\tester\\AppData\\Local\\Software\\nvm\\nodejs\\node.exe';
+  const vmFound = envDoctor.findNodePathWindows(guestEnv, 'C:\\Users\\tester', (file) =>
+    guestRealFiles.has(file),
+  );
+  const vmNothing = envDoctor.findNodePathWindows(
+    { Path: `C:\\Users\\tester\\AppData\\Local\\Software\\nvm\\nodejs`, PATHEXT: '.EXE' },
+    'C:\\Users\\tester',
+    (file) => guestRealFiles.has(file),
+  );
+  // 候选目录里必须包含 v2 的 `.nodejs`（从 PATH 里那个 `…\nvm` 推出来）
+  const vmCandidates = processUtils.windowsBinCandidates(guestEnv, 'C:\\Users\\tester');
+  const vmFoundText: string = vmFound ?? '';
   check(
     '首启门禁：界面上报的 node 路径一定是探测到的真路径（VM-12）',
-    (() => {
-      // 客机那条"界面报的路径"不在磁盘上 —— 绝不能被返回
-      const guessed = 'C:\\Users\\tester\\AppData\\Local\\Software\\nvm\\nodejs\\node.exe';
-      const found = envDoctor.findNodePathWindows(guestEnv, 'C:\\Users\\tester', (file) =>
-        guestRealFiles.has(file),
-      );
-      const nothing = envDoctor.findNodePathWindows(
-        { Path: `C:\\Users\\tester\\AppData\\Local\\Software\\nvm\\nodejs`, PATHEXT: '.EXE' },
-        'C:\\Users\\tester',
-        (file) => guestRealFiles.has(file),
-      );
-      // 候选目录里必须包含 v2 的 `.nodejs`（从 PATH 里那个 `…\nvm` 推出来）
-      const candidates = processUtils.windowsBinCandidates(guestEnv, 'C:\\Users\\tester');
-      const foundText: string = found ?? '';
-      return (
-        found === `${guestRoot}\\.nodejs\\node.exe` &&
-        // 客机那条"界面报的路径"（不存在的推测路径）绝不能被返回
-        foundText !== guessed &&
-        // 只有一条不存在的 PATH 目录时：返回 null（不是那条路径）
-        nothing === null &&
-        candidates.includes(`${guestRoot}\\.nodejs`) &&
-        !candidates.includes(guessed)
-      );
-    })(),
+    vmFound === `${guestRoot}\\.nodejs\\node.exe` &&
+      // 客机那条"界面报的路径"（不存在的推测路径）绝不能被返回
+      vmFoundText !== vmGuessed &&
+      // 只有一条不存在的 PATH 目录时：返回 null（不是那条路径）
+      vmNothing === null &&
+      vmCandidates.includes(`${guestRoot}\\.nodejs`) &&
+      !vmCandidates.includes(vmGuessed),
+    `found=${vmFound} nothing=${vmNothing} candidates=${vmCandidates.join(' | ')}`,
   );
   check(
     '首启门禁：界面词表里不出现内部术语（模板与文案，注释不算）',

@@ -1167,8 +1167,10 @@ function whichWindowsExe(name: string, dirs: string[]): string | null {
       // 小写优先（Node / npm 的 shim 都是小写，界面上显示的就是磁盘上的原名），
       // 再试 PATHEXT 里的大小写 —— 卷上开了区分大小写时靠它兜底
       const found = firstFile([
-        path.join(dir, `${name}${ext.toLowerCase()}`),
-        path.join(dir, `${name}${ext}`),
+        // Windows 路径一律用 `path.win32` 拼：用 `path.join` 会跟着跑测试的机器走，
+        // 于是同一份逻辑在 Linux CI 上会拼出正斜杠、查不到文件（见 `windowsBinCandidates` 的同款注释）
+        path.win32.join(dir, `${name}${ext.toLowerCase()}`),
+        path.win32.join(dir, `${name}${ext}`),
       ]);
       if (found) return found;
     }
@@ -1193,9 +1195,9 @@ export function whichWindowsExeWith(
   for (const dir of dirs) {
     for (const ext of exts) {
       const found = [`${name}${ext.toLowerCase()}`, `${name}${ext}`].find((file) =>
-        exists(path.join(dir, file)),
+        exists(path.win32.join(dir, file)),
       );
-      if (found) return path.join(dir, found);
+      if (found) return path.win32.join(dir, found);
     }
   }
   return null;
@@ -1211,7 +1213,9 @@ function windowsSearchDirsFor(
   const push = (dir: string): void => {
     if (dir && !dirs.includes(dir)) dirs.push(dir);
   };
-  for (const dir of String(env.Path ?? env.PATH ?? '').split(path.delimiter)) push(dir);
+  // PATH 里的分隔符是 Windows 的 `;`（不是 `path.delimiter` —— 那在 POSIX 上是 `:`，
+  // 会把整条 Windows PATH 当成一个目录，候选目录就全丢了）
+  for (const dir of String(env.Path ?? env.PATH ?? '').split(path.win32.delimiter)) push(dir);
   for (const dir of windowsBinCandidates(env, home)) {
     // **只有真的存在的候选目录才进搜索列表** —— 猜出来的一律不参与，也不会上屏（VM-12）
     if (exists(dir)) push(dir);

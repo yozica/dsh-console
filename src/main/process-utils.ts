@@ -346,14 +346,16 @@ export function findPnpmWindows(
   const pathDirs: string[] = [];
   for (const [key, value] of Object.entries(env)) {
     if (key.toLowerCase() !== 'path' || typeof value !== 'string') continue;
-    for (const dir of value.split(path.delimiter)) {
+    for (const dir of value.split(path.win32.delimiter)) {
       if (dir.trim()) pathDirs.push(dir.trim());
     }
   }
   const known = windowsBinCandidates(env, homeDir()).filter((dir) => fs.existsSync(dir));
   for (const name of names) {
     for (const dir of [...pathDirs, ...known]) {
-      const full = path.join(dir, name);
+      // 这些是 **Windows** 路径：用 `path.win32` 拼，别用 `path.join` —— 后者跟着**跑测试的这台机器**
+      // 的分隔符走，于是同一条断言在 Windows 上绿、在 macOS / Linux 上假红（VM-09 的自检就踩过）。
+      const full = path.win32.join(dir, name);
       if (exists(full)) return full;
     }
   }
