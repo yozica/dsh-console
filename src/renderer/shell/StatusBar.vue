@@ -44,8 +44,8 @@ const env = computed(() => {
   return `Electron ${versions.electron}，Node ${versions.node}，命令解析方式 ${kind}`;
 });
 
-/** 快捷键提示按平台写：macOS 是 ⌘1~8，其它平台是 Ctrl+1~8（页面数见 app.ts 的 TAB_ORDER） */
-const tabHint = computed(() => `${shortcutLabel('1~8')} 切换页面`);
+/** 快捷键提示按平台写：macOS 是 ⌘1~9，其它平台是 Ctrl+1~9（页面数见 app.ts 的 TAB_ORDER） */
+const tabHint = computed(() => `${shortcutLabel('1~9')} 切换页面`);
 
 /**
  * 有新版本（发现 / 已下载）时在底栏加一句可点的提示，点它去设置页的更新卡片。

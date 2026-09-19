@@ -112,7 +112,13 @@
       <div class="workspace">
         <div id="topbar-root"></div>
 
-        <main>
+        <!-- 主界面常驻横幅（没测全 / 逃生之后）：不可关闭，所以它不浮起、不随内容滚走。
+             挂在 main 之上、顶栏之下，切到哪一页都看得见（交互 §2.6、§2.8）。 -->
+        <div id="gate-banner-root"></div>
+
+        <!-- tabindex=-1：门禁层收起时把焦点交给主内容区（交互 §11.5）。
+             它不是可 Tab 到的元素，只用于程序化聚焦。 -->
+        <main tabindex="-1">
           <!-- ============================ 控制台 ============================ -->
           <!-- 这一页已迁到 Vue（src/renderer/panes/），这里只留挂载点 -->
           <section class="pane active" id="pane-dashboard">
@@ -155,6 +161,12 @@
             <div id="plugin-root"></div>
           </section>
 
+          <!-- ============================ 环境自检 ============================ -->
+          <!-- 这台机器的基础环境（node / npm / pnpm / dsh / 自带运行时）怎么样、怎么修 -->
+          <section class="pane" id="pane-env">
+            <div id="env-root"></div>
+          </section>
+
           <!-- ============================ 设置 ============================ -->
           <!-- 这一页已迁到 Vue（src/renderer/panes/SettingsPane.vue），这里只留挂载点 -->
           <section class="pane" id="pane-settings">
@@ -168,6 +180,11 @@
 
     <!-- 关闭确认卡片的挂载点：组件自己 Teleport 到 body，这个 div 只是个锚 -->
     <div id="close-dialog-root"></div>
+
+    <!-- 首启环境向导 / 入口门禁：与 #boot-lock 同级的整屏覆盖层（不是左栏第 10 页）。
+         盖住顶栏以下的全部内容（含左栏与状态栏），顶栏不设 z-index、窗口还能拖能关；
+         层号 --z-gate 低于启动锁，两者互斥。见 docs/env-wizard-freeze.md §1 R-08。 -->
+    <div id="gate-root"></div>
 
     <!-- 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住标题栏以下的所有内容。
          标题栏（顶栏）不锁，窗口还能拖动和关闭。 -->

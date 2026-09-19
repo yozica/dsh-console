@@ -1,0 +1,1191 @@
+<script setup lang="ts">
+/**
+ * 环境自检页（左栏第 8 项，Ctrl+8）。
+ *
+ * 回答的是"打开 DSH 时这台机器到底行不行"：外部 node 在不在、版本够不够、npm / pnpm /
+ * dsh 本体能不能用、应用自带的运行时是什么、本地 Shell 能不能起。八项都由主进程实测
+ * （`main/env-doctor.ts`），这一页只负责**显示结论 + 给可执行的修法**。
+ *
+ * 三条刻意的设计：
+ *   1. **状态用颜色区分三档**，不让人去读 detail 那串人话判断严重程度：
+ *      `ok` 绿实心 / `warn` 黄空心 / `missing` 红实心（复用外壳的 `.lamp` 语义）。
+ *   2. **确认区在页内**，而且显示命令原文与目标目录 —— 命令由主进程的 plan 给，这一页不拼命令
+ *      （与插件页同一条原则：渲染层递回去的路径一概不采信）。装什么、装到哪，用户点之前就看得见。
+ *   3. **页面级内边距由这一页自己给**（`.pane` 没有任何 padding，见 AGENTS 7.14）。
+ *
+ * 阶段二在这一页上**只加不改造**（冻结 §4.5，视觉 §5.9），加的是四样：
+ *   - 「重新打开环境向导」：把首启门禁层重新显示出来（逃生之后回得来的三条路之一）；
+ *   - 行内的版本更新入口（Node / pnpm）：只在对应项**可用**时出现，缺失时给的是既有的"一键安装"；
+ *   - 被跳过的步骤上「把这一步加回来？」：恢复只改那一个设置项，不做别的任何事；
+ *   - 「安装下载来源」小面板：**全应用只有这一处控件**，改完要保存才生效，不静默换源。
+ */
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+
+import { envFocus } from '../lib/env-anchor.js';
+import {
+  cancelEnvFix,
+  clearEnvFixOutput,
+  envFix,
+  envFixOutput,
+  envReport,
+  envReportError,
+  envReportLoading,
+  loadEnvReport,
+  runEnvFix,
+  wireEnvDoctor,
+} from '../lib/env-doctor.js';
+import {
+  anyoneBusy,
+  install,
+  loadNodePlan,
+  reopenGate,
+  runNodeInstall,
+  skipStep,
+  stopNodeInstall,
+  wizard,
+} from '../lib/env-wizard.js';
+import { formatAgo } from '../lib/format.js';
+import { platform } from '../lib/platform.js';
+import { dsh, phase, settings } from '../lib/store.js';
+import type {
+  EnvCheck,
+  EnvCheckId,
+  EnvCheckStatus,
+  EnvFixAction,
+  EnvFixPlan,
+  EnvInstallPhase,
+  EnvInstallState,
+  EnvNodeChannel,
+  EnvNodeOwner,
+  EnvNodePlan,
+  EnvWizardStepId,
+} from '../../shared/ipc.js';
+
+const api = window.dshConsole;
+
+/** 官方下载页：认不出这个 Node 是怎么装的 / 不想让我们动时的出路 */
+const NODE_DOWNLOAD_URL = 'https://nodejs.org/en/download';
+
+/** 后台忙时的统一说明：与被禁用的按钮成对出现，禁用必须看得到原因（交互 §2.9 / §11.6） */
+const BUSY_HINT = '正在执行上一步的操作，完成后按钮会自动恢复';
+
+/**
+ * 归属事实的人话。读的是主进程给的字段（报告里的 `nodeOwner`、计划里的 `owner`），
+ * 这一页**不自己判路径** —— 判据只有主进程那一份纯函数（需求 §7.7 第 1 条）。
+ */
+const OWNER_WORDS: Record<EnvNodeOwner, string> = {
+  nvm: '版本管理器（nvm）管的',
+  system: '官方安装包装的',
+  unknown: '我们认不出这个 Node 是怎么装的。',
+};
+
+/** 归属判不出来时那句话（需求 §7.7 第 3 条 / 交互 §10.2） */
+const UNKNOWN_OWNER_NOTE = '我们认不出这个 Node 是怎么装的，所以不会替它做自动更新。';
+
+/**
+ * 档位的短词（并排显示与换档句用它；选择区的控件用的是「最新稳定版 / 最新当前版」）。
+ * 档位与版本号大小无关，只与官方清单里那一条的档有关，所以这里只做翻译、不做判断。
+ */
+const CHANNEL_SHORT: Record<EnvNodeChannel, string> = {
+  lts: '稳定版',
+  current: '当前版',
+};
+
+/** 八项的标题。写成 Record 是为了漏一个 id 就 tsc 报错（与契约里的联合类型对齐） */
+const TITLES: Record<EnvCheckId, string> = {
+  node: '外部 Node',
+  'node-version': 'Node 版本',
+  npm: 'npm',
+  pnpm: 'pnpm',
+  dsh: 'dsh 本体',
+  'dsh-run': 'dsh 能不能跑',
+  'bundled-runtime': '应用自带运行时',
+  shell: '本地 Shell',
+};
+
+const STATUS_TEXT: Record<EnvCheckStatus, string> = {
+  ok: '正常',
+  warn: '需要注意',
+  missing: '不可用',
+};
+
+/** 安装通道里"还在跑"的相位 */
+const INSTALL_BUSY_PHASES: EnvInstallPhase[] = [
+  'preparing',
+  'downloading',
+  'verifying',
+  'installing',
+  'waiting',
+  'rechecking',
+];
+
+function installRunning(state: EnvInstallState): boolean {
+  return !state.detached && INSTALL_BUSY_PHASES.includes(state.phase);
+}
+
+function installSettled(state: EnvInstallState): boolean {
+  return (
+    state.detached ||
+    state.phase === 'done' ||
+    state.phase === 'cancelled' ||
+    state.phase === 'error'
+  );
+}
+
+const confirming = ref<EnvFixAction | null>(null);
+const outputOpen = ref(false);
+const listRef = ref<HTMLElement | null>(null);
+const outRef = ref<HTMLElement | null>(null);
+/** 「安装下载来源」那个输入框：确认区里的「换一个下载源再试」把焦点交给它 */
+const sourceRef = ref<HTMLInputElement | null>(null);
+/** 每 30 秒自增一次，让「x 分钟前」自己走字（判定的时刻由主进程给，界面只负责说人话） */
+const tick = ref(0);
+
+/** 正在展开确认区的是哪一项的更新入口（Node / pnpm） */
+const updateOpen = ref<'node' | 'pnpm' | null>(null);
+const nodeUpdatePlan = ref<EnvNodePlan | null>(null);
+/** 这次更新用户**显式指名**的档位；null = 跟随当前档位（默认，也是 VM-15 的修法） */
+const nodeUpdateChannel = ref<EnvNodeChannel | null>(null);
+const nodeUpdateLoading = ref(false);
+const nodeUpdateError = ref('');
+const restartDismissed = ref(false);
+
+/** 「安装下载来源」的草稿与已保存值：有未保存的改动时明说，不改显示中的来源 */
+const sourceDraft = ref('');
+const sourceSaved = ref('');
+const sourceStatus = ref('');
+
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+
+const checks = computed<EnvCheck[]>(() => envReport.value?.checks ?? []);
+const counts = computed(() => envReport.value?.counts ?? { ok: 0, warn: 0, missing: 0 });
+const running = computed(() => envFix.value.phase === 'running');
+/** 全局忙位：既有的一键修复 + 安装通道（含"我们不等了但机器上可能还在装"） */
+const busy = computed(() => anyoneBusy.value || running.value);
+
+/** Node 的更新进行中 / 有结论了（`mode === 'update'` 才是更新，装第一次不算） */
+const nodeUpdateRunning = computed(
+  () => install.value.mode === 'update' && installRunning(install.value),
+);
+const nodeUpdateSettled = computed(
+  () =>
+    install.value.mode === 'update' &&
+    install.value.method !== null &&
+    install.value.phase !== 'idle' &&
+    installSettled(install.value),
+);
+/** 更新完该不该问一句"要不要重新启动 dsh"（只有本应用启动的 dsh 才轮得到我们管） */
+const asksRestartDsh = computed(() => {
+  if (!nodeUpdateSettled.value || restartDismissed.value) return false;
+  const current = dsh.value;
+  return Boolean(current && current.owned) && phase.value !== 'running';
+});
+
+const lastChecked = computed(() => {
+  void tick.value;
+  return envReport.value ? formatAgo(envReport.value.checkedAt) : '—';
+});
+
+const fixPhaseLabel = computed(() => {
+  const state = envFix.value;
+  if (state.phase === 'running') return '进行中…';
+  if (state.phase === 'done') return '完成';
+  if (state.phase === 'cancelled') return '已中断';
+  if (state.phase === 'error') return '失败';
+  return '';
+});
+
+/** 确认区的内容：动作 → 主进程给的那份计划（拿不到计划就不给按钮） */
+const confirmPlan = computed<EnvFixPlan | null>(() =>
+  confirming.value ? planFor(confirming.value) : null,
+);
+
+function planFor(action: EnvFixAction): EnvFixPlan | null {
+  return envReport.value?.plans.find((plan) => plan.action === action) ?? null;
+}
+
+/** 这一项有没有"替你做"的出路：既要有动作，也要有可用的计划（npm 都找不到时没有计划） */
+function fixActionOf(check: EnvCheck): EnvFixAction | null {
+  return check.fixAction !== null && planFor(check.fixAction) ? check.fixAction : null;
+}
+
+function fixLabel(check: EnvCheck): string {
+  return check.fixAction === 'install-pnpm' ? '一键安装 pnpm' : '一键安装 dsh';
+}
+
+/** 行内的版本更新入口：只在对应项**可用**时出现（缺失时给的是"一键安装"）。
+ *  Node 的更新只在 Windows 出现（冻结 §1 R-20：自动安装只在 win32 生效）。 */
+function updateKindOf(check: EnvCheck): 'node' | 'pnpm' | null {
+  if (check.status === 'missing') return null;
+  if (check.id === 'node') {
+    if (platform.value !== 'win32') return null;
+    // 归属判不出来时**不给「更新」**：我们不知道该动哪一份 Node，就不该替它做自动动作
+    // （VM-14 的直接成因就是这里没看归属）
+    return nodeOwner.value === 'unknown' ? null : 'node';
+  }
+  if (check.id === 'pnpm') return 'pnpm';
+  return null;
+}
+
+/** 这一页的 Node 那一行（报告里的事实行） */
+const nodeCheck = computed<EnvCheck | null>(
+  () => checks.value.find((check) => check.id === 'node') ?? null,
+);
+
+/** 这份 Node 是谁管的（报告给的事实）。报告还没到 / 字段缺失时按"认不出来"处理 ——
+ *  "认不出来就不做自动更新"是诚实边界，不能因为字段没到就退回一个默认动作（那正是 VM-14）。 */
+const nodeOwner = computed<EnvNodeOwner>(() => envReport.value?.nodeOwner ?? 'unknown');
+
+/** 归属判不出来、却找到了一份 Node 的那一行：给两条不用我们的自动动作的出路（需求 §7.7 第 3 条） */
+function nodeUpdateRefused(check: EnvCheck): boolean {
+  return (
+    check.id === 'node' &&
+    check.status !== 'missing' &&
+    platform.value === 'win32' &&
+    nodeOwner.value === 'unknown'
+  );
+}
+
+/**
+ * 行上的读数（交互 §10.5 第 5 条：目标 == 当前时按钮位置直接是读数态，不给一个点了什么都不会
+ * 发生的按钮）。"目标版本"只有计划算得出来，所以报告一到就取一次更新计划；取不到（离线 /
+ * 主进程给不出）就退回按钮 —— 不让这一行消失。
+ *
+ * 为什么等 `wizard.value` 到了才取：`lib/env-wizard.ts` 的 `loadNodePlan` 失败时会写
+ * `wizardError`，而那条错误显示在门禁的"检查中"那一屏上 —— 一次后台读数不该把它误报成
+ * "上一轮检查没能完成"。
+ */
+const nodeRowPlan = ref<EnvNodePlan | null>(null);
+let nodeRowPlanSeq = 0;
+
+const nodeUpdateRowVisible = computed(() => {
+  const check = nodeCheck.value;
+  return check !== null && updateKindOf(check) === 'node';
+});
+
+async function loadNodeRowPlan(): Promise<void> {
+  const seq = (nodeRowPlanSeq += 1);
+  if (!nodeUpdateRowVisible.value || busy.value || wizard.value === null) {
+    nodeRowPlan.value = null;
+    return;
+  }
+  const plan = await loadNodePlan({ mode: 'update' });
+  // 期间报告 / 忙位又变了：这一次的结果作废（下一次 watch 会再取）
+  if (seq !== nodeRowPlanSeq) return;
+  nodeRowPlan.value = plan;
+}
+
+/** 已经是最新版：目标与当前一致（同档、没有跨档）—— 那是读数，不是一个按钮 */
+const nodeUpToDate = computed(() => {
+  const plan = nodeRowPlan.value;
+  return plan !== null && plan.direction === 'same' && !plan.switchesChannel;
+});
+
+const nodeUpToDateText = computed(() => {
+  const plan = nodeRowPlan.value;
+  const version = plan?.currentVersion ?? plan?.version ?? '';
+  return version ? `已经是最新版（${version}）` : '已经是最新版';
+});
+
+/** 行上按钮的动作名：跨档叫「换成…」，同档才是「更新」（需求 §8.1 第 2 条） */
+const nodeUpdateLabel = computed(() => {
+  const plan = nodeRowPlan.value;
+  if (plan?.switchesChannel) return plan.channel === 'current' ? '换成当前版' : '换成稳定版';
+  return '更新 Node.js';
+});
+
+/** "已经是最新版"时唯一还有意义的动作：显式换到**另一档**（换档不是"更新"，所以按钮不叫更新） */
+const nodeOtherChannelLabel = computed(() =>
+  nodeRowPlan.value?.channel === 'current' ? '换成稳定版' : '换成当前版',
+);
+
+// 报告 / 忙位 / 门禁状态一变就重取一次行上的读数（只取一次，取不到就退回按钮）
+watch([() => envReport.value, () => busy.value, () => wizard.value], () => void loadNodeRowPlan(), {
+  immediate: true,
+});
+
+/** 被跳过的那一步（只有可跳过的步骤会出现在这里）：恢复入口就在这一行上（交互 §5.4） */
+function skippedStepOf(check: EnvCheck): EnvWizardStepId | null {
+  const state = wizard.value;
+  if (!state) return null;
+  const step =
+    state.steps.find((item) => item.skippable && item.checkIds.includes(check.id)) ?? null;
+  return step && step.status === 'skipped' ? step.id : null;
+}
+
+const sourceDirty = computed(
+  () => sourceDraft.value.trim().replace(/\/+$/, '') !== sourceSaved.value,
+);
+
+function say(message: string): void {
+  window.dispatchEvent(new CustomEvent('dsh:status-message', { detail: message }));
+}
+
+// ------------------------------------------------------------ 既有的"一键修复"
+
+/** 点「一键安装…」：先展开确认区，不偷偷开始 */
+function openConfirmFor(check: EnvCheck): void {
+  const action = fixActionOf(check);
+  if (!action) return;
+  if (running.value) {
+    say('已经有一个修复在进行中');
+    return;
+  }
+  updateOpen.value = null;
+  confirming.value = action;
+  outputOpen.value = false;
+}
+
+function cancelConfirm(): void {
+  confirming.value = null;
+}
+
+async function startFix(action: EnvFixAction): Promise<void> {
+  if (running.value) return;
+  confirming.value = null;
+  clearEnvFixOutput();
+  outputOpen.value = true;
+  const state = await runEnvFix(action);
+  if (state.message) say(state.message);
+}
+
+function startConfirmed(): void {
+  const action = confirming.value;
+  if (action) void startFix(action);
+}
+
+async function interrupt(): Promise<void> {
+  const stopped = await cancelEnvFix();
+  if (!stopped) say('没有正在运行的修复');
+}
+
+function dismissOutput(): void {
+  outputOpen.value = false;
+}
+
+async function copyHint(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    say('修复指引已复制到剪贴板');
+  } catch {
+    say('复制失败，请手动选中这一行');
+  }
+}
+
+function refresh(): void {
+  if (busy.value) return;
+  void loadEnvReport(true);
+}
+
+/** 逃生之后回到向导的那条明路（交互 §2.8 第 2 条）：不写盘、不改判定，只是把覆盖层再显示出来 */
+function openWizard(): void {
+  reopenGate();
+}
+
+async function openDownloadPage(): Promise<void> {
+  await api.openExternal(NODE_DOWNLOAD_URL);
+}
+
+// ------------------------------------------------------------ 版本更新入口
+
+function openUpdateRow(check: EnvCheck, otherChannel = false): void {
+  const kind = updateKindOf(check);
+  if (!kind) return;
+  // 「已经是最新版」那一行上还有一个显式的换档入口：换到另一档（不是"更新"，所以不叫更新）
+  if (kind === 'node' && otherChannel) {
+    const other: EnvNodeChannel = nodeRowPlan.value?.channel === 'current' ? 'lts' : 'current';
+    void openUpdate(kind, other);
+    return;
+  }
+  void openUpdate(kind);
+}
+
+async function openUpdate(
+  kind: 'node' | 'pnpm',
+  channel: EnvNodeChannel | null = null,
+): Promise<void> {
+  if (busy.value) return;
+  confirming.value = null;
+  restartDismissed.value = false;
+  updateOpen.value = kind;
+  if (kind === 'pnpm') return;
+  // 不记住上次选了哪一档：每次打开都回到"跟随现在这一份"（只有显式换档才带值进来）
+  nodeUpdateChannel.value = channel;
+  await loadNodeUpdatePlan();
+}
+
+/**
+ * 更新请求：**默认不递档位**（`mode === 'update'` 省略 `channel` = 目标档位**跟随当前档位**，
+ * 这是 VM-15 的修法）；方法也永远省略（`省略 = 跟随归属` —— nvm 管的走 nvm、系统的走直装，
+ * 这是 VM-14 的修法）。**只有用户在档位控件上显式选了一档才把档位递回去**，那才是「换档」：
+ * 它只可能由这个字段产生，不可能由默认值产生（需求 §8.5 第 3 条）。
+ */
+function nodeUpdateRequest(): { mode: 'update'; channel?: EnvNodeChannel } {
+  const request: { mode: 'update'; channel?: EnvNodeChannel } = { mode: 'update' };
+  const picked = nodeUpdateChannel.value;
+  if (picked) request.channel = picked;
+  return request;
+}
+
+/** 取一次更新计划：拿不到就不给「开始」（界面不自己拼版本、不自己猜来源） */
+async function loadNodeUpdatePlan(): Promise<void> {
+  nodeUpdateLoading.value = true;
+  nodeUpdateError.value = '';
+  const plan = await loadNodePlan(nodeUpdateRequest());
+  nodeUpdatePlan.value = plan;
+  nodeUpdateLoading.value = false;
+  if (!plan) nodeUpdateError.value = '这次没能取到下载信息（可能连不上官方地址）。';
+}
+
+/** 用户在档位控件上选了另一档：这是一次**显式的换档**，重新取一份计划（不动系统） */
+function pickUpdateChannel(channel: EnvNodeChannel): void {
+  if (busy.value) return;
+  if (nodeUpdateChannel.value === channel) return;
+  nodeUpdateChannel.value = channel;
+  void loadNodeUpdatePlan();
+}
+
+function cancelUpdate(): void {
+  updateOpen.value = null;
+  nodeUpdateError.value = '';
+  nodeUpdateChannel.value = null;
+}
+
+/** 「换一个下载源再试」：把人带到本页那张来源控件（不静默换源 —— 只能由用户改） */
+function focusSource(): void {
+  updateOpen.value = null;
+  void nextTick(() => {
+    sourceRef.value?.focus();
+    sourceRef.value?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
+  say('在「安装下载来源」里填一个新的地址，保存之后回来重新检测');
+}
+
+/** 「更新 pnpm」就是既有的 install-pnpm（冻结 §3.5：不许第二条路）。
+ *  所以它走的是同一个"确认之后才动手"的入口，渲染层只递 action（自检钉着这一点）。 */
+async function startPnpmUpdate(): Promise<void> {
+  updateOpen.value = null;
+  confirming.value = null;
+  await startFix('install-pnpm');
+}
+
+/** 「更新 Node.js」/「换成…」：只递选择，地址与校验值由主进程现场重算 */
+async function startNodeUpdate(): Promise<void> {
+  updateOpen.value = null;
+  await runNodeInstall(nodeUpdateRequest());
+}
+
+async function stopUpdate(): Promise<void> {
+  await stopNodeInstall();
+}
+
+function updateStopLabel(state: EnvInstallState): string {
+  if (state.phase === 'installing' || state.phase === 'waiting') {
+    return '不再等待（安装可能还在后台进行）';
+  }
+  return state.phase === 'verifying' ? '取消' : '取消下载';
+}
+
+/** 复检中**没有按钮**（交互 §7.1）；其余进行中的相位都有一个明确的按钮 */
+const updateCanStop = computed(() => {
+  const state = install.value;
+  return state.cancellable || state.phase === 'installing' || state.phase === 'waiting';
+});
+
+const updateProgressText = computed(() => {
+  const state = install.value;
+  // 主进程给的 `message` 就是一句自足的状态行；百分比只来自 `percent`，不往文案里再补一个
+  if (state.message) return state.message;
+  switch (state.phase) {
+    case 'preparing':
+      return '正在准备…';
+    case 'downloading':
+      return `${nodeRunVerb.value}…`;
+    case 'verifying':
+      return '正在校验安装包完整性';
+    case 'installing':
+      return nodeRunVerb.value;
+    case 'waiting':
+      return '正在等待安装程序';
+    case 'rechecking':
+      return '正在重新检测';
+    default:
+      return '';
+  }
+});
+
+const updateProgressPercent = computed<number | null>(() =>
+  install.value.phase === 'downloading' ? install.value.percent : null,
+);
+
+const updateBytes = computed(() => {
+  if (install.value.phase !== 'downloading') return '';
+  const bytes = install.value.bytes;
+  if (!bytes) return '';
+  return `${formatBytes(bytes.downloaded)} / ${formatBytes(bytes.total)}`;
+});
+
+/** 更新完成的结论：主进程的 message 优先；「版本没有变化 / 没成」时把「重新检测」摆旁边 */
+const updateResultTitle = computed(() => {
+  const message = install.value.message;
+  if (message) return message;
+  const outcome = installOutcome.value;
+  if (outcome === 'done') {
+    // 跨档时那个分支不出现「更新」：它是换档（需求 §8.5 第 4 条）
+    return install.value.plan?.switchesChannel ? '换档完成。' : 'Node.js 更新完成。';
+  }
+  if (outcome === 'detached') return '我们不等了：安装可能还在后台进行，做完点「重新检测」。';
+  if (outcome === 'refused') return '你拒绝了管理员权限，这台电脑上什么都没改。';
+  return install.value.plan?.switchesChannel
+    ? '换档没有完成，这台电脑上什么都没改。'
+    : '更新没有完成，这台电脑上什么都没改。';
+});
+
+const installOutcome = computed<'done' | 'detached' | 'refused' | 'failed'>(() => {
+  const state = install.value;
+  if (state.detached) return 'detached';
+  if (state.phase === 'done') return 'done';
+  if (state.code === 1223 || state.code === 5) return 'refused';
+  return 'failed';
+});
+
+/** 更新完的复检事实：这一项现在是什么样，照贴主进程给的那一行 */
+const updateResultFact = computed(() => {
+  const report = install.value.report;
+  if (!report) return '';
+  const row = report.checks.find((check) => check.id === 'node');
+  return row ? `这一轮检查：${row.detail}` : '';
+});
+
+// ------------------------------------------------------------ 更新确认区的事实
+
+/** 「版本（档位）」的人话：档位判不出来时写**档位未知** —— 不许省略、不许猜（需求 §8.5 第 1 条） */
+function versionWithChannel(version: string | null, channel: EnvNodeChannel | null): string {
+  const word = channel ? CHANNEL_SHORT[channel] : '档位未知';
+  return version ? `${version}（${word}）` : `版本没测到（${word}）`;
+}
+
+/** 更新前那一半：版本与档位都来自计划（动作开始前就定下的那一份） */
+const nodeCurrentText = computed(() =>
+  versionWithChannel(
+    nodeUpdatePlan.value?.currentVersion ?? null,
+    nodeUpdatePlan.value?.currentChannel ?? null,
+  ),
+);
+
+/** 目标那一半：档位还没定下来时主进程给的目标版本是空的，**不许显示成"这次要装 X"** */
+const nodeTargetText = computed(() => {
+  const plan = nodeUpdatePlan.value;
+  if (!plan) return '';
+  if (plan.needChoice === 'choose-channel') return '目标版本等你选完档位';
+  return versionWithChannel(plan.version, plan.channel);
+});
+
+/** 档位判不出来：让用户**显式选一档**（需求 §8.5 第 3 条）；选之前不给「开始」 */
+const nodeChannelUnknown = computed(
+  () => nodeUpdatePlan.value?.needChoice === 'choose-channel' && nodeUpdateChannel.value === null,
+);
+
+/** 档位控件现在选的是哪一档；没选 = 跟随现在这一份的档（默认，不是 VM-15 那种写死的 lts） */
+const nodeChannelPickedText = computed(() => {
+  const picked = nodeUpdateChannel.value;
+  if (picked) return CHANNEL_SHORT[picked];
+  const plan = nodeUpdatePlan.value;
+  // 当前档位判不出来时不许说"跟随" —— 那会把"我们不知道"说成"我们跟着它走"
+  if (plan?.needChoice === 'choose-channel') return '还没定（这一档我们判不出来）';
+  const current = plan?.currentChannel ?? null;
+  return current ? `跟随现在这一份（${CHANNEL_SHORT[current]}）` : '跟随现在这一份';
+});
+
+/** 归属事实行：读计划里的 `owner`（与报告里是同一个事实、同一个纯函数算出来的） */
+const nodeUpdateOwnerText = computed(
+  () => OWNER_WORDS[nodeUpdatePlan.value?.owner ?? nodeOwner.value],
+);
+
+/**
+ * 跨档必须明说这是**换档**，目标更低时把「降到」写出来（两个版本号都来自计划）。
+ * 那个分支里不出现「更新」这个词 —— 它会让用户以为版本会变高（需求 §8.5 第 4 条）。
+ */
+const nodeSwitchNotice = computed(() => {
+  const plan = nodeUpdatePlan.value;
+  if (!plan || !plan.switchesChannel) return '';
+  const target = CHANNEL_SHORT[plan.channel];
+  const before = plan.currentVersion ?? '（没测到）';
+  if (plan.direction === 'older') {
+    return `这会把现在这份 Node 换成${target}，版本从 ${before} 降到 ${plan.version}。`;
+  }
+  const from = plan.currentChannel ? CHANNEL_SHORT[plan.currentChannel] : '判不出来';
+  return `版本会从 ${before} 变成 ${plan.version}，档位从${from}换到${target}。`;
+});
+
+/** 目标 == 当前：不给「开始」、也不给一个点了什么都不会发生的按钮（交互 §10.5 第 5 条） */
+const nodeUpdateNoop = computed(() => {
+  const plan = nodeUpdatePlan.value;
+  return plan !== null && !plan.switchesChannel && plan.direction === 'same';
+});
+
+/** 确认区主按钮的动作名：跨档叫「换成…」；同档才是「开始」（需求 §8.1 第 2 条） */
+const nodeUpdateActionLabel = computed(() => {
+  const plan = nodeUpdatePlan.value;
+  if (plan?.switchesChannel) return plan.channel === 'current' ? '换成当前版' : '换成稳定版';
+  return '开始';
+});
+
+/** 「会先停掉 dsh」那句话：跨档时换一种说法，那个分支里不出现「更新」（需求 §8.5 第 4 条） */
+const nodeAffectsDshText = computed(() =>
+  install.value.plan?.switchesChannel
+    ? '换档会先停掉正在运行的 dsh，换完再问你要不要重新启动它。'
+    : '更新会先停掉正在运行的 dsh，更新完再问你要不要重新启动它。',
+);
+
+/** 进行中那句话：跨档时用「换成…」的说法，那个分支里不出现「更新」 */
+const nodeRunVerb = computed(() => {
+  const plan = install.value.plan;
+  return plan?.switchesChannel ? `正在换成${CHANNEL_SHORT[plan.channel]}` : '正在更新 Node.js';
+});
+
+/** 收尾的三个事实：更新前（计划里的版本 + 档位）、更新后（**实测**的版本）、结论（需求 §8.2） */
+const updateResultChannels = computed(() => {
+  const plan = install.value.plan;
+  if (!plan) return '';
+  const before = versionWithChannel(plan.currentVersion, plan.currentChannel);
+  const after = install.value.observedVersion
+    ? versionWithChannel(install.value.observedVersion, plan.channel)
+    : '没测到版本';
+  const tail = plan.switchesChannel ? ' —— 换档完成。' : '。';
+  return `Node.js：${before} → ${after}${tail}`;
+});
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  const mb = bytes / 1024 / 1024;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  if (mb >= 1) return `${mb.toFixed(1)} MB`;
+  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
+}
+
+/** 更新 Node 之后把本应用启动的 dsh 重新拉起来（停它的是更新前置，不是我们偷偷停的） */
+async function restartDsh(): Promise<void> {
+  restartDismissed.value = true;
+  const result = await api.start();
+  if (!result.ok) say(`启动失败：${result.error}`);
+}
+
+function dismissRestart(): void {
+  restartDismissed.value = true;
+}
+
+// ------------------------------------------------------------ 被跳过步骤的恢复
+
+async function restoreStep(step: EnvWizardStepId): Promise<void> {
+  await skipStep(step, false);
+  say('已经加回来了：下次进向导会停在这一步');
+}
+
+/** 行上的「把这一步加回来？」：只对真的被跳过的那些行有效 */
+function restoreRow(check: EnvCheck): void {
+  const step = skippedStepOf(check);
+  if (step) void restoreStep(step);
+}
+
+// ------------------------------------------------------------ 安装下载来源
+
+function saveSource(): void {
+  const raw = sourceDraft.value.trim();
+  const next = raw.replace(/\/+$/, '');
+  if (next !== '' && !/^https?:\/\/\S+$/i.test(next)) {
+    sourceStatus.value = '这个地址看起来不对：只认 http 或 https 开头的地址。';
+    return;
+  }
+  void patchSource(next);
+}
+
+/** 只注入这一次进程（主进程的做法），不写用户的任何配置文件；写错当没填 */
+async function patchSource(value: string): Promise<void> {
+  try {
+    const next = await api.patchSettings({ envNodeSource: value });
+    sourceSaved.value = next.envNodeSource;
+    sourceDraft.value = next.envNodeSource;
+    sourceStatus.value = next.envNodeSource ? '已保存' : '已保存（留空 = 官方地址）';
+    say('安装下载来源已保存');
+  } catch (cause) {
+    sourceStatus.value = `没能保存：${cause instanceof Error ? cause.message : String(cause)}`;
+  }
+}
+
+// ------------------------------------------------------------ 报告与输出
+
+// 输出区跟着新片段往下滚（与事件日志同一套做法：不假装进度条，原文照贴）
+watch(envFixOutput, () => {
+  void nextTick(() => {
+    if (outRef.value) outRef.value.scrollTop = outRef.value.scrollHeight;
+  });
+});
+
+/**
+ * 锚点：插件页 / 控制台页把人带过来时，滚到那一行；带 action 时连确认区一起展开。
+ * 请求号是递增的（见 lib/env-anchor.ts）：连点两次各走一遍，不会"点了没反应"。
+ */
+watch(
+  () => envFocus.value.seq,
+  async () => {
+    const request = envFocus.value;
+    if (request.seq === 0) return;
+    if (!envReport.value) await loadEnvReport();
+    // 正在跑的时候不碰确认区与输出面板（别把用户正在看的流式输出收起来）
+    if (!running.value) {
+      if (request.action && planFor(request.action)) confirming.value = request.action;
+      outputOpen.value = false;
+    }
+    await nextTick();
+    const row = listRef.value?.querySelector(`[data-check="${request.checkId}"]`);
+    row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  wireEnvDoctor();
+  // 这一页常驻挂载（所有页面都靠 visibility 隐藏），所以顺手拉一份：
+  // 控制台顶部那条横幅与插件页的「没找到 pnpm」读的是同一份报告。
+  // 主进程有缓存就立刻给（启动 1.5 秒后它会自己跑一轮），没有就现跑一轮，不阻塞挂载。
+  void loadEnvReport();
+  sourceDraft.value = settings.value.envNodeSource || '';
+  sourceSaved.value = sourceDraft.value;
+  tickTimer = setInterval(() => (tick.value += 1), 30_000);
+});
+
+// 主进程改了设置（例如向导里跳过 / 恢复）时跟着更新草稿，免得用户把旧值又写回去
+watch(
+  () => settings.value.envNodeSource,
+  (next) => {
+    if (sourceDirty.value) return;
+    sourceDraft.value = next || '';
+    sourceSaved.value = sourceDraft.value;
+  },
+);
+
+onUnmounted(() => {
+  if (tickTimer) clearInterval(tickTimer);
+});
+</script>
+
+<template>
+  <div class="env">
+    <div class="bar">
+      <button
+        id="btn-env-refresh"
+        class="btn small primary"
+        :disabled="envReportLoading || busy"
+        :title="busy ? BUSY_HINT : undefined"
+        :aria-busy="envReportLoading ? 'true' : undefined"
+        @click="refresh"
+      >
+        <svg class="i"><use href="#i-replay" /></svg><span>重新检测</span>
+      </button>
+      <button id="btn-env-wizard" class="btn small" @click="openWizard">重新打开环境向导</button>
+      <div class="spacer"></div>
+      <span class="bar-note">
+        {{ counts.ok }} 项正常 · {{ counts.missing }} 项不正常 · {{ counts.warn }} 项需要注意
+      </span>
+      <span class="bar-hint">上次检查：{{ lastChecked }}</span>
+    </div>
+
+    <!-- 探测本身出了意外（不是"某项不满足"）：说明一句，下面的行照常显示 -->
+    <div v-if="envReport?.error" class="banner">
+      <svg class="i"><use href="#i-warn" /></svg>
+      <span>
+        <b>这一轮没测全。</b>
+        {{ envReport.error }} 下面的结论照常显示，可以先按「重新检测」再试一次。
+      </span>
+    </div>
+
+    <div v-if="!envReport" class="empty">
+      <h2>{{ envReportLoading ? '正在检测这台机器的基础环境…' : '还没有检测结果' }}</h2>
+      <p v-if="envReportError" class="hint">{{ envReportError }}</p>
+      <button v-else-if="!envReportLoading" class="btn small" @click="refresh">开始检测</button>
+    </div>
+
+    <template v-else>
+      <p class="env-scope">
+        要求 Node <code>{{ envReport.nodeRange }}</code
+        >（与 vite 的 engines 是同一句）。版本不合适时 dsh 可能「退出码 0、零输出」地静默退出 ——
+        界面上只会看到「已停止」，看不出是解释器的问题。
+      </p>
+
+      <ul ref="listRef" class="env-list panel">
+        <li
+          v-for="check in checks"
+          :key="check.id"
+          class="env-row"
+          :data-check="check.id"
+          :data-status="check.status"
+        >
+          <span class="lamp"></span>
+          <div class="env-main">
+            <div class="env-head">
+              <span class="env-title">{{ TITLES[check.id] }}</span>
+              <span class="env-state">{{ STATUS_TEXT[check.status] }}</span>
+            </div>
+            <p class="env-detail">{{ check.detail }}</p>
+            <p v-if="check.fixHint" class="env-hint">
+              <code>{{ check.fixHint }}</code>
+              <button class="btn tiny" @click="copyHint(check.fixHint)">复制</button>
+            </p>
+          </div>
+
+          <!-- 行右侧的操作槽：缺失给"一键安装"、可用给"更新"、已跳过给"加回来"（视觉 §5.9）。
+               没有动作的行不渲染这个容器 —— 空容器也会占掉一个 gap，把行挤窄。 -->
+          <div
+            v-if="fixActionOf(check) || updateKindOf(check) || skippedStepOf(check)"
+            class="env-actions"
+          >
+            <button
+              v-if="fixActionOf(check)"
+              class="btn small"
+              :disabled="running || envReportLoading || busy"
+              :title="busy ? BUSY_HINT : undefined"
+              @click="openConfirmFor(check)"
+            >
+              {{ fixLabel(check) }}
+            </button>
+            <!-- 目标 == 当前：按钮位改成读数态（不给一个点了什么都不会发生的按钮），
+                 旁边留一个**显式换档**的入口 —— 换到另一档不是「更新」 -->
+            <template v-else-if="updateKindOf(check) === 'node' && nodeUpToDate">
+              <span class="wizard-readout">{{ nodeUpToDateText }}</span>
+              <button
+                class="btn tiny ghost"
+                :disabled="busy"
+                :title="busy ? BUSY_HINT : undefined"
+                @click="openUpdateRow(check, true)"
+              >
+                {{ nodeOtherChannelLabel }}
+              </button>
+            </template>
+            <button
+              v-else-if="updateKindOf(check)"
+              class="btn small"
+              :disabled="busy"
+              :title="busy ? BUSY_HINT : undefined"
+              @click="openUpdateRow(check)"
+            >
+              {{ updateKindOf(check) === 'node' ? nodeUpdateLabel : '更新 pnpm' }}
+            </button>
+            <template v-if="skippedStepOf(check)">
+              <span class="env-skip">已跳过</span>
+              <button class="btn tiny ghost" @click="restoreRow(check)">把这一步加回来？</button>
+            </template>
+          </div>
+
+          <!-- 归属认不出来：不给「更新」，把那条诚实边界与两条出路写在这一行上（需求 §7.7 第 3 条） -->
+          <div v-if="nodeUpdateRefused(check)" class="env-owner-note">
+            <span class="env-owner-note-text">{{ UNKNOWN_OWNER_NOTE }}</span>
+            <div class="btn-row">
+              <button class="btn tiny" @click="openDownloadPage">打开官方下载页</button>
+              <button class="btn tiny ghost" @click="refresh">重新检测</button>
+            </div>
+          </div>
+
+          <!-- 更新确认区：原地展开，不弹原生对话框。两条风险说明是需求 §8.3 的硬要求 -->
+          <div v-if="updateOpen === 'pnpm' && check.id === 'pnpm'" class="env-confirm">
+            <div class="env-confirm-title">将要执行</div>
+            <code class="env-confirm-cmd">
+              {{ planFor('install-pnpm')?.display || '（命令由主进程现算）' }}
+            </code>
+            <div class="wizard-versions">
+              <div class="wizard-version-line">
+                <span class="wizard-version-label">这一项现在</span>
+                <span class="wizard-version-old">{{ check.detail }}</span>
+              </div>
+              <div class="wizard-version-line">
+                <span class="wizard-version-label">这次要装</span>
+                <span class="wizard-version-new">最新版（由你的安装源决定）</span>
+              </div>
+            </div>
+            <p class="env-confirm-line">
+              会装进：{{
+                planFor('install-pnpm')?.target || '（全局 npm 目录）'
+              }}；不需要管理员权限；需要联网。
+            </p>
+            <p class="wizard-notice">就是给这台电脑上的 pnpm 装最新版，不改别的东西。</p>
+            <div class="btn-row">
+              <button class="btn small primary" :disabled="busy" @click="startPnpmUpdate">
+                开始
+              </button>
+              <button class="btn small" @click="cancelUpdate">取消</button>
+            </div>
+          </div>
+
+          <div v-if="updateOpen === 'node' && check.id === 'node'" class="env-confirm">
+            <div class="env-confirm-title">将要执行</div>
+            <!-- 只在"还没有计划"时用加载行占位：换档重算时留着上面那份计划与控件，
+                 不让用户刚点的那个控件在眼前消失（焦点也会跟着丢） -->
+            <p v-if="nodeUpdateLoading && !nodeUpdatePlan" class="env-confirm-line">
+              正在取这次的下载信息…
+            </p>
+            <template v-else-if="nodeUpdatePlan">
+              <p v-if="nodeUpdateLoading" class="env-confirm-line">正在按新的档位重算…</p>
+              <!-- 归属 = 版本管理器、且机器上已经有它：这次**没有任何东西要下载**（需求 §7.8） -->
+              <code v-if="nodeUpdatePlan.installsManager" class="env-confirm-cmd">{{
+                nodeUpdatePlan.display
+              }}</code>
+              <p v-else class="env-confirm-line">
+                这次不用下载安装包：让版本管理器自己装 Node.js {{ nodeUpdatePlan.version }}。
+              </p>
+
+              <!-- 当前（档位） → 目标（档位）并排（需求 §8.2 / §8.5 第 1 条） -->
+              <div class="wizard-versions">
+                <div class="wizard-version-line">
+                  <span class="wizard-version-label">当前版本（档位）</span>
+                  <span class="wizard-version-old">{{ nodeCurrentText }}</span>
+                  <span class="wizard-version-arrow" aria-hidden="true">→</span>
+                  <span class="wizard-version-new">{{ nodeTargetText }}</span>
+                </div>
+              </div>
+
+              <!-- 档位控件：**默认跟随现在这一份**（不递档位）；用户选了另一档才是换档。
+                   形状与向导第一步那个控件一模一样（同一套样式类，§4.1 第 4-b 条） -->
+              <fieldset class="gate-choice-group env-channel">
+                <legend class="gate-choice-legend">版本档位</legend>
+                <div class="gate-choice-row">
+                  <label
+                    class="gate-option gate-option-half"
+                    :class="{ selected: nodeUpdateChannel === 'lts' }"
+                  >
+                    <input
+                      type="radio"
+                      name="env-node-channel"
+                      value="lts"
+                      :checked="nodeUpdateChannel === 'lts'"
+                      :disabled="busy"
+                      @change="pickUpdateChannel('lts')"
+                    />
+                    <span class="gate-option-body">
+                      <span class="gate-option-title">最新稳定版</span>
+                      <span class="gate-option-note">发布更久、坑更少。</span>
+                    </span>
+                  </label>
+                  <label
+                    class="gate-option gate-option-half"
+                    :class="{ selected: nodeUpdateChannel === 'current' }"
+                  >
+                    <input
+                      type="radio"
+                      name="env-node-channel"
+                      value="current"
+                      :checked="nodeUpdateChannel === 'current'"
+                      :disabled="busy"
+                      @change="pickUpdateChannel('current')"
+                    />
+                    <span class="gate-option-body">
+                      <span class="gate-option-title">最新当前版</span>
+                      <span class="gate-option-note">追最新特性，可能还没进入稳定期。</span>
+                    </span>
+                  </label>
+                </div>
+                <p class="gate-option-hint">
+                  现在选的是：{{ nodeChannelPickedText }}。不选就是跟着现在这一份走 ——
+                  只有在这里点一档，才算一次「换档」。
+                </p>
+              </fieldset>
+
+              <!-- 跨档：明说这是换档；目标更低时写出「降到」（需求 §8.5 第 4 条） -->
+              <p v-if="nodeSwitchNotice" class="wizard-notice">{{ nodeSwitchNotice }}</p>
+              <p v-if="nodeChannelUnknown" class="wizard-notice">
+                我们判不出这份 Node 属于哪一档，所以不会替你选：在上面点一档，我们再算一次。
+              </p>
+              <p v-else-if="nodeUpdateNoop" class="wizard-notice">
+                版本没有变化（还是 {{ nodeUpdatePlan.currentVersion || nodeUpdatePlan.version }}）。
+              </p>
+
+              <div class="gate-confirm-table">
+                <div class="gate-confirm-row">
+                  <span class="gate-confirm-key">这份 Node 是谁管的</span>
+                  <span class="gate-confirm-val">{{ nodeUpdateOwnerText }}</span>
+                </div>
+                <div v-if="nodeUpdatePlan.installsManager" class="gate-confirm-row">
+                  <span class="gate-confirm-key">下载来源</span>
+                  <span class="gate-confirm-val gate-confirm-mono">{{
+                    nodeUpdatePlan.sourceHost
+                  }}</span>
+                </div>
+                <div class="gate-confirm-row">
+                  <span class="gate-confirm-key">会装到哪里</span>
+                  <span class="gate-confirm-val gate-confirm-mono">{{
+                    nodeUpdatePlan.target || '（安装程序自己决定）'
+                  }}</span>
+                </div>
+                <div class="gate-confirm-row">
+                  <span class="gate-confirm-key">要不要管理员权限</span>
+                  <span class="gate-confirm-val">{{
+                    nodeUpdatePlan.needsElevation
+                      ? '需要 —— 接下来 Windows 会问你一次是否允许安装（管理员权限）'
+                      : '不需要'
+                  }}</span>
+                </div>
+                <div class="gate-confirm-row">
+                  <span class="gate-confirm-key">要不要联网</span>
+                  <span class="gate-confirm-val">是</span>
+                </div>
+                <div class="gate-confirm-row">
+                  <span class="gate-confirm-key">会改什么</span>
+                  <span class="gate-confirm-val">{{ nodeUpdatePlan.note }}</span>
+                </div>
+              </div>
+
+              <!-- 归属 = 版本管理器：说明只有它自己那一份被动（需求 §10.5 第 7 条） -->
+              <p v-if="nodeUpdatePlan.owner === 'nvm'" class="env-confirm-line">
+                这次只动版本管理器自己那份 Node，不会动系统里原来的那一份。
+              </p>
+              <p
+                v-if="!nodeUpdatePlan.usable && !nodeChannelUnknown && nodeUpdatePlan.refuseReason"
+                class="wizard-notice"
+              >
+                {{ nodeUpdatePlan.refuseReason }}
+              </p>
+              <p v-if="nodeUpdatePlan.affectsRunningDsh" class="wizard-notice">
+                {{ nodeAffectsDshText }}
+              </p>
+              <p class="wizard-notice">这台电脑上可能还有别的程序在用这个 Node。</p>
+              <div class="btn-row">
+                <!-- 档位没定下来：先让用户显式选一档，不给「开始」（需求 §8.5 第 3 条） -->
+                <template v-if="nodeChannelUnknown">
+                  <button class="btn small" @click="cancelUpdate">取消</button>
+                </template>
+                <template v-else-if="nodeUpdateNoop">
+                  <button class="btn small" @click="refresh">重新检测</button>
+                  <button class="btn small" @click="cancelUpdate">取消</button>
+                </template>
+                <template v-else-if="nodeUpdatePlan.usable">
+                  <button class="btn small primary" :disabled="busy" @click="startNodeUpdate">
+                    {{ nodeUpdateActionLabel }}
+                  </button>
+                  <button class="btn small" @click="cancelUpdate">取消</button>
+                </template>
+                <template v-else>
+                  <button class="btn small" @click="focusSource">换一个下载源再试</button>
+                  <button class="btn small" @click="openDownloadPage">打开官方下载页</button>
+                  <button class="btn small" @click="refresh">重新检测</button>
+                  <button class="btn small" @click="cancelUpdate">取消</button>
+                </template>
+              </div>
+            </template>
+            <template v-else>
+              <p class="env-confirm-line">{{ nodeUpdateError }}</p>
+              <div class="btn-row">
+                <button class="btn small" @click="openDownloadPage">打开官方下载页</button>
+                <button class="btn small" @click="cancelUpdate">取消</button>
+              </div>
+            </template>
+          </div>
+
+          <!-- 更新进行中 / 更新结果：与安装共用同一套进度与结论（视觉 §5.9） -->
+          <div
+            v-if="check.id === 'node' && (nodeUpdateRunning || nodeUpdateSettled)"
+            class="wizard-progress"
+          >
+            <div class="wizard-progress-line">
+              <span class="wizard-progress-dot" aria-hidden="true"></span>
+              <span class="wizard-progress-text">
+                {{ nodeUpdateRunning ? updateProgressText : updateResultTitle }}
+              </span>
+            </div>
+            <div v-if="updateProgressPercent !== null" class="wizard-progress-track">
+              <div
+                class="wizard-progress-bar"
+                :style="{ width: `${updateProgressPercent}%` }"
+              ></div>
+            </div>
+            <p v-if="updateBytes" class="wizard-progress-bytes">{{ updateBytes }}</p>
+            <!-- 收尾三个事实：更新前（版本 + 档位）、更新后（**实测**的版本）、结论（需求 §8.2） -->
+            <p v-if="nodeUpdateSettled && updateResultChannels" class="wizard-progress-bytes">
+              {{ updateResultChannels }}
+            </p>
+            <p v-if="nodeUpdateSettled && updateResultFact" class="wizard-progress-bytes">
+              {{ updateResultFact }}
+            </p>
+            <div v-if="nodeUpdateRunning && updateCanStop" class="btn-row">
+              <button class="btn small" @click="stopUpdate">
+                {{ updateStopLabel(install) }}
+              </button>
+            </div>
+            <div v-else-if="!nodeUpdateRunning" class="btn-row">
+              <button class="btn small" @click="refresh">重新检测</button>
+              <button
+                v-if="installOutcome === 'refused'"
+                class="btn small"
+                @click="openDownloadPage"
+              >
+                打开官方下载页
+              </button>
+            </div>
+            <div v-if="asksRestartDsh" class="wizard-decide">
+              {{ nodeAffectsDshText }}
+              <div class="btn-row">
+                <button class="btn small" @click="restartDsh">重新启动 dsh</button>
+                <button class="btn small" @click="dismissRestart">先不用</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 确认区：就在这一行下面展开。命令原文与目标目录都来自主进程的 plan，不弹原生对话框 -->
+          <div
+            v-if="confirming && confirming === check.fixAction && confirmPlan"
+            class="env-confirm"
+          >
+            <div class="env-confirm-title">将要执行</div>
+            <code class="env-confirm-cmd">{{ confirmPlan.display }}</code>
+            <p class="env-confirm-line">
+              会装进：{{ confirmPlan.target || '（目录由 npm 自己决定）' }}
+            </p>
+            <p class="env-confirm-line">{{ confirmPlan.note }}</p>
+            <div class="btn-row">
+              <button class="btn small primary" :disabled="running || busy" @click="startConfirmed">
+                开始
+              </button>
+              <button class="btn small" @click="cancelConfirm">取消</button>
+            </div>
+          </div>
+        </li>
+      </ul>
+
+      <!-- 流式输出：npm 的原文照贴，不假装进度条（与插件页、dsh 终端同族） -->
+      <div v-if="outputOpen && fixPhaseLabel" class="env-op">
+        <div class="env-op-head">
+          <span class="env-op-cmd">{{ envFix.command || '（命令由主进程现算）' }}</span>
+          <span class="env-op-state" :data-state="envFix.phase">{{ fixPhaseLabel }}</span>
+          <span class="spacer"></span>
+          <button v-if="running" class="btn tiny" @click="interrupt">中断</button>
+          <button v-else class="btn tiny" @click="dismissOutput">收起</button>
+        </div>
+        <pre ref="outRef" class="env-op-out">{{ envFixOutput || '（等待输出…）' }}</pre>
+        <p v-if="envFix.message" class="env-op-summary" :data-state="envFix.phase">
+          {{ envFix.message }}
+        </p>
+      </div>
+    </template>
+
+    <!-- 安装下载来源：全应用只有这一处控件（交互 §9.1）。改完要保存才生效，不静默换源。
+         它不依赖自检报告，所以放在报告之外 —— 探测失败时用户仍然能改来源再试。 -->
+    <section class="panel env-source">
+      <div class="env-source-row">
+        <label class="env-source-label" for="env-node-source">安装下载来源</label>
+        <input
+          id="env-node-source"
+          ref="sourceRef"
+          v-model="sourceDraft"
+          class="env-source-input"
+          type="text"
+          placeholder="留空 = 官方地址"
+          spellcheck="false"
+        />
+        <button class="btn small" :disabled="!sourceDirty" @click="saveSource">保存</button>
+        <span class="env-source-note">{{ sourceDirty ? '改了还没保存' : sourceStatus }}</span>
+      </div>
+      <p class="env-source-hint">
+        留空 =
+        从官方地址直接下载。填了就用你填的那个地址下载，只影响我们自己发起的下载，不改这台电脑上的任何配置。
+      </p>
+    </section>
+  </div>
+</template>

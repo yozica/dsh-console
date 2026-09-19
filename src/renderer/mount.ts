@@ -14,6 +14,7 @@ import { createApp, type Component } from 'vue';
 
 import ArchivePane from './panes/ArchivePane.vue';
 import DashboardPane from './panes/DashboardPane.vue';
+import EnvPane from './panes/EnvPane.vue';
 import PluginPane from './panes/PluginPane.vue';
 import SettingsPane from './panes/SettingsPane.vue';
 import ShellPane from './panes/ShellPane.vue';
@@ -21,6 +22,8 @@ import TerminalPane from './panes/TerminalPane.vue';
 import UiPane from './panes/UiPane.vue';
 import UsagePane from './panes/UsagePane.vue';
 import CloseDialog from './shell/CloseDialog.vue';
+import EnvGate from './shell/EnvGate.vue';
+import GateBanner from './shell/GateBanner.vue';
 import RailNav from './shell/RailNav.vue';
 import StatusBar from './shell/StatusBar.vue';
 import TopBar from './shell/TopBar.vue';
@@ -33,6 +36,10 @@ const MOUNTS: readonly MountEntry[] = [
   ['statusbar-root', StatusBar],
   // 关闭确认卡片：它自己 Teleport 到 body，这个挂载点只是个锚
   ['close-dialog-root', CloseDialog],
+  // 首启门禁层：与 #boot-lock 同级的整屏覆盖层。它是覆盖层，**不是**第 10 页 ——
+  // 所以既不在页面清单里，也不进 TAB_ORDER（做成页面就能被 Ctrl+2 切走，硬门禁就没意义了）
+  ['gate-root', EnvGate],
+  ['gate-banner-root', GateBanner],
   ['dashboard-root', DashboardPane],
   ['terminal-root', TerminalPane],
   ['shell-root', ShellPane],
@@ -40,6 +47,7 @@ const MOUNTS: readonly MountEntry[] = [
   ['usage-root', UsagePane],
   ['archive-root', ArchivePane],
   ['plugin-root', PluginPane],
+  ['env-root', EnvPane],
   ['settings-root', SettingsPane],
 ];
 

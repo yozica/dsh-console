@@ -4,8 +4,15 @@
  *
  * 三个显示值都来自共享 store；「退出全屏」按钮只改 store 里的 immersive，
  * 真正的 body 属性与内嵌页视口重算由 app.ts 监听后处理。
+ *
+ * 门禁层显示期间（冻结 §1 R-03）：标题换成「运行环境准备」，右侧与页面相关的控件
+ * **收起**（不是禁用 —— 禁用会留下一个说不清用途的空槽）。四条约束：顶栏高度、
+ * 标题左边缘、可拖动区域不变；收起不留空槽、不加过渡动画；门禁收起后同一帧恢复；
+ * 取值只有一个来源 —— `lib/env-wizard.ts` 的 `gateVisible`（自检盯着这一条）。
  */
 import { computed } from 'vue';
+
+import { gateVisible } from '../lib/env-wizard.js';
 import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../lib/store.js';
 
 const PAGE_TITLES = {
@@ -16,10 +23,13 @@ const PAGE_TITLES = {
   usage: 'DeepSeek 用量',
   archive: '归档会话',
   plugin: '插件',
+  env: '环境自检',
   settings: '设置',
 };
 
-const title = computed(() => PAGE_TITLES[currentTab.value] || currentTab.value);
+const title = computed(() =>
+  gateVisible.value ? '运行环境准备' : PAGE_TITLES[currentTab.value] || currentTab.value,
+);
 
 /** 退出全屏：只改共享状态，body 属性与内嵌页视口由 app.ts / UiPane 各自 watch */
 function exitImmersive() {
@@ -59,8 +69,10 @@ const note = computed(() => {
     ></span>
     <h1 class="page-title" id="page-title">{{ title }}</h1>
     <div class="spacer"></div>
-    <span class="topbar-note" id="topbar-note">{{ note }}</span>
+    <!-- 与页面相关的控件：门禁层显示期间整条收起（v-if，不留空槽、不加过渡） -->
+    <span v-if="!gateVisible" class="topbar-note" id="topbar-note">{{ note }}</span>
     <button
+      v-if="!gateVisible"
       id="btn-exit-immersive"
       class="btn small ghost immersive-only"
       title="退出全屏（Esc）"

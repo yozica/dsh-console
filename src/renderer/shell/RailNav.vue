@@ -36,6 +36,7 @@ const TABS: NavTab[] = [
   { id: 'usage', icon: 'i-usage', label: 'DeepSeek 用量' },
   { id: 'archive', icon: 'i-archive', label: '归档会话' },
   { id: 'plugin', icon: 'i-plugin', label: '插件' },
+  { id: 'env', icon: 'i-warn', label: '环境自检' },
   { id: 'settings', icon: 'i-sliders', label: '设置' },
 ];
 
