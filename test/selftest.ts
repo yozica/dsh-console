@@ -2518,10 +2518,14 @@ async function main(): Promise<void> {
       processUtils.isRunnablePath('D:\\Node\\nodejs\\pnpm.exe', 'win32') &&
       processUtils.isRunnablePath('/opt/homebrew/bin/npm', 'darwin') &&
       // 本机实测部分（Windows 上真的去解析）：结果要么没有，要么带可执行扩展名**且首行不是 `#!`**
+      // ⚠️ 「首行是 `#!` 的 sh shim 不算可执行」**只对 Windows 成立**：POSIX 上 `#!` 脚本本来就是合法的可执行文件，
+      // 而 Linux 上的 pnpm 恰恰就是 `#!/bin/sh`（corepack shim）。少了 `!IS_WINDOWS ||` 这个守卫时，
+      // 这条断言在 CI（ubuntu-latest）上必红、在 Windows 上永远绿 —— 已经踩过一次。
       envResolved.every(
         (found) =>
           found === null ||
-          (processUtils.isRunnablePath(found, process.platform) && !headOf(found).startsWith('#!')),
+          (processUtils.isRunnablePath(found, process.platform) &&
+            (!IS_WINDOWS || !headOf(found).startsWith('#!'))),
       ),
     `npm=${envResolved[0]} pnpm(env)=${envResolved[1]} pnpm(plugin)=${envResolved[2]} node=${envResolved[3]}`,
   );
