@@ -602,6 +602,23 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **哪条自检守着**：**没有一条自检盯着"源码有没有被写坏"** —— 乱码落在注释或字符串里时 `typecheck` 与 `lint` 可能照样绿，所以这条只能靠纪律挡（别用那条路）+ 出事时用上面三条判据。**顺带一条反例**：`format:check` 不是编码检查 —— 乱码文本照样是合法 UTF-8、照样能被格式化，别拿它当保险。
 
+### 7.23 Windows 专用逻辑一律 `path.win32`（否则 Linux CI 假红）
+
+**现象**：改动前 `main` 的 CI 是绿的；这一轮推上去之后，`check` 的**自检**步骤红三条，而**本地（Windows）269/269 全绿** —— 同一个提交在两个平台上结论相反。
+
+**原因**：那些逻辑是**Windows 专用**的（VC++ 运行库的两个 DLL、Windows 上的 pnpm / node 查找），但拼路径时用了**跟着"跑测试这台机器"走**的 API：
+
+- `path.join(...)` 而不是 `path.win32.join(...)` → 在 Linux 上拼出 `D:\Windows/System32/vcruntime140.dll` 这种**混合分隔符**；
+- `path.delimiter` 而不是 `path.win32.delimiter`（`';'`）→ 在 Linux 上 `';'` 切不开，整条 Windows `PATH` 被当成一个目录，候选目录全丢。
+
+而**候选目录本身是按 `path.win32` 拼的**（`windowsBinCandidates` 一直这么写，注释也写着"不受跑测试的这台机器的影响"）——两边分隔符不一致 → 存在性判断查不到那个文件 → 断言假红。
+
+**现在的做法**：凡是描述 Windows 路径的代码（`%SystemRoot%\System32`、`%ProgramFiles%\nodejs`、`%LOCALAPPDATA%\pnpm`、PATH 里的 Windows 目录……）**一律用 `path.win32.*`**；`env.Path` 这种 Windows `PATH` 按字面量 `';'` 或 `path.win32.delimiter` 切。本轮的落点：`vcRuntimePaths`、`findPnpmWindows`、`windowsSearchDirsFor`、`whichWindowsExe` / `whichWindowsExeWith`（`windowsBinCandidates` 本来就是对的）。**这不改变生产行为**（这些函数只在 Windows 上被调用，而 Windows 上 `path.win32.join === path.join`），换来的是**在任意平台都能测**。
+
+**另一类同源假红**：断言里写死了"这台机器必然有 / 必然没有"的事实 —— 例如 `hasVcRuntime` 在**非 Windows 上恒为 `true`**（源码里就是这条语义），断言若写成"缺一个 DLL 就是 false"，在 Linux CI 上必红。这类要**按平台分支**（`IS_WINDOWS ? … : …`）；确实只对 Windows 成立的整条断言，用既有的 `if (!IS_WINDOWS) { skip(名字, 原因) }` 写法跳掉。
+
+**哪条自检守着**：没有一条能直接钉住"路径拼对了几个平台"，这一条靠纪律 + CI 跨平台跑（`check` 在 `ubuntu-latest`）。**推论：不要在本地绿了就认为 CI 会绿** —— 涉及路径 / 分隔符 / 平台事实的改动，推上去看 `check` 才算完。
+
 ## 8. 调试手段
 
 ### 自检
@@ -660,6 +677,10 @@ node scripts/selftest-sandbox.mjs
 - **不要擅自升级依赖或改构建配置**（`package.json` 的依赖与 `build` 字段、`vite.config.mts`、`tsconfig.*.json`、`eslint.config.mjs`、`.prettierrc.json`、CI 工作流）。这些地方的每一处改动都有对应契约与自检；确有必要时先说明理由，并同步更新受影响的文档与自检。
 - **改动要带 changeset 片段**：会进 CHANGELOG 的改动用 `npx changeset add`；纯 CI / 纯文档这类不需要发版说明的用 `npx changeset add --empty`（见第 6 节）。不要手改 `CHANGELOG.md`。
 - **不要用 `--no-verify` 绕过提交钩子**，也不要绕过 PR 上的 changeset 闸门。提交信息用 Conventional Commits（`fix(ui): …` / `docs: …` / `ci: …` / `refactor(ts): …` / `chore: …`）。
+- **改动一律走 PR，不要直接推 `main`**：`main` 上有分支保护 —— **必须经 PR**，且 **`check` 必须通过**。用带 bypass 权限的凭证直推时 Git 会显示推送成功，但远端会回一行 **`Bypassed rule violations for refs/heads/main`**：那是"推上去了但**违规**"，等于把这两道门一起绕过（v0.5.3 之后这一轮就发生过两次：一次直推、一次为了撤销直推而 force-push）。正确流程：
+  `git switch -c <feat|fix>/<短名>` → 提交（钩子会跑 lint-staged）→ `git push -u origin <branch>` → 在网页上开 PR（本机**没有 `gh`**，只能手开：`https://github.com/yozica/dsh-console/pull/new/<branch>`）→ 等 `check`（含 PR 上的 changeset 闸门）绿 → 合并。
+  两条推论：**推之前先确认目标分支有没有保护**；第 6 节那串 `git push origin main --tags` 的**前提是改动已经通过 PR 合进 `main`**（推标签只触发 `release.yml`，不是绕过手段）。
+  **GitHub 直连不通时**，按用户当次给的代理地址**只在这一次命令里用**（`git -c http.proxy=http://… push …`），用完即弃 —— 不要写进仓库 `.git/config`、`.npmrc` 或全局 npm 配置（第 6 节的"本地打包小贴士"同理）。
 - **改完按第 5 节跑检查**：`npm test` 加 `npm run lint && npm run format:check && npm run typecheck`；交付前用 `npx prettier --write <改到的文件>` 收尾。
 - **遇到不确定的领域先查证再动，别猜**：macOS 签名与 Gatekeeper、Electron 版本行为、node-pty 的 ConPTY 细节、dsh 的鉴权与内部文件格式，都属于「猜错会静默失效」的类型。能在仓库里读到的以代码 / 配置 / CI 为准；读不到的（上游行为）去查上游源码或文档，并在改动说明里写清依据。
 - **改文档时保持两份的边界**：用户视角的写进 `README.md`，开发 / 架构 / 发版的写进本文件；不要在本文件里写「某台机器上如何如何」的实测记录 —— 结论留下，过程与本机路径不要留。
