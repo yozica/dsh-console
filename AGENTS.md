@@ -681,6 +681,12 @@ node scripts/selftest-sandbox.mjs
   `git switch -c <feat|fix>/<短名>` → 提交（钩子会跑 lint-staged）→ `git push -u origin <branch>` → 在网页上开 PR（本机**没有 `gh`**，只能手开：`https://github.com/yozica/dsh-console/pull/new/<branch>`）→ 等 `check`（含 PR 上的 changeset 闸门）绿 → 合并。
   两条推论：**推之前先确认目标分支有没有保护**；第 6 节那串 `git push origin main --tags` 的**前提是改动已经通过 PR 合进 `main`**（推标签只触发 `release.yml`，不是绕过手段）。
   **GitHub 直连不通时**，按用户当次给的代理地址**只在这一次命令里用**（`git -c http.proxy=http://… push …`），用完即弃 —— 不要写进仓库 `.git/config`、`.npmrc` 或全局 npm 配置（第 6 节的"本地打包小贴士"同理）。
+- **发版提交：要么补空片段走 PR，要么按第 6 节直推 `main`**（二选一，别混）：
+  `release:prepare` 产生的发版提交会**删光** `.changeset/` 里的片段，而 PR 上的 changeset 闸门要求「改动的包必须带片段」——
+  所以**发版 PR 天然会红**（v0.6.0 才暴露：以前的发版都是直推 main，没见过这个冲突）。两种做法：
+  ① **走 PR**：在发版提交里**再补一个空片段**（`npx changeset add --empty`，不产生版本、汇总时自动清掉），它就能照常过闸门；
+  ② **直推**：按第 6 节把发版当作**既定例外**直接推 `main`（历史版本就是这么发的）。
+  **这条只适用于发版提交本身** —— 它不是"可以随手绕过保护"的口子；其它任何改动仍然一律走 PR。
 - **改完按第 5 节跑检查**：`npm test` 加 `npm run lint && npm run format:check && npm run typecheck`；交付前用 `npx prettier --write <改到的文件>` 收尾。
 - **遇到不确定的领域先查证再动，别猜**：macOS 签名与 Gatekeeper、Electron 版本行为、node-pty 的 ConPTY 细节、dsh 的鉴权与内部文件格式，都属于「猜错会静默失效」的类型。能在仓库里读到的以代码 / 配置 / CI 为准；读不到的（上游行为）去查上游源码或文档，并在改动说明里写清依据。
 - **改文档时保持两份的边界**：用户视角的写进 `README.md`，开发 / 架构 / 发版的写进本文件；不要在本文件里写「某台机器上如何如何」的实测记录 —— 结论留下，过程与本机路径不要留。
