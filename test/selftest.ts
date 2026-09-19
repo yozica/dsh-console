@@ -49,11 +49,13 @@ interface PackageJson {
 interface CheckResult {
   name: string;
   ok: boolean;
+  /** 这条断言打印的实际值（失败时进 CI 注解，见文件末尾汇总） */
+  extra?: unknown;
 }
 
 const results: CheckResult[] = [];
 function check(name: string, ok: boolean, extra?: unknown) {
-  results.push({ name, ok });
+  results.push({ name, ok, extra });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? `  — ${extra}` : ''}`);
 }
 function skip(name: string, why: string) {
@@ -5140,6 +5142,14 @@ async function main(): Promise<void> {
   console.log(`\n${results.length - failed.length}/${results.length} 项通过`);
   if (failed.length > 0) {
     console.log('失败：' + failed.map((item) => item.name).join('、'));
+    // 在 GitHub Actions 里把每条失败**连它打印的实际值**标成注解：PR 页面上直接看得到是哪一条、
+    // 值是什么（原来只能翻日志），别的环境保持安静（本地 stdout 已经打得够全了）。
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      for (const item of failed) {
+        const extra = item.extra === undefined ? '' : `  —  ${String(item.extra)}`;
+        console.log(`::error::${item.name.replace(/\r?\n/g, ' ')}${extra.replace(/\r?\n/g, ' ')}`);
+      }
+    }
     process.exitCode = 1;
   }
 }
