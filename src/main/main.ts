@@ -43,7 +43,7 @@ import {
 } from './env-doctor';
 import { NodeInstaller } from './node-installer';
 import { createUpdater, type Updater } from './updater';
-import { installFileLogging } from './logger';
+import { describeValue, installFileLogging } from './logger';
 import * as processUtils from './process-utils';
 import type {
   AppSnapshot,
@@ -104,6 +104,56 @@ if (userDataOverride) {
 // 主进程日志同时落盘：<userData>/logs/console.log
 const fileLog = installFileLogging(path.join(app.getPath('userData'), 'logs'));
 
+/**
+ * 启动记录：**在 ready 之前**就要落一行。
+ *
+ * 为什么必须在 ready 之前：真机上遇到过一次"双击没反应、过一会系统报崩溃"，而日志里一行都
+ * 没有 —— 那时分不清"进程根本没起来"和"起来了但没到 ready"（`[main] 日志文件:` 原来打在
+ * whenReady 里）。这一行把版本 / 平台 / 是否打包 / userData 先钉下来，于是"到没到 ready"
+ * 一眼可辨。用 `writeLine` 而不是 `console.log`：后面可能立刻 `app.exit()`，缓冲流里那份会丢。
+ */
+fileLog.writeLine(
+  `[main] 启动：${[
+    `v${app.getVersion()}`,
+    `${process.platform} ${process.arch}`,
+    `Electron ${process.versions.electron ?? '?'}`,
+    isDev ? '开发态' : '打包版',
+    `userData ${app.getPath('userData')}`,
+  ].join(' · ')}`,
+);
+
+/**
+ * 主进程兜底：未捕获的异常与未处理的 Promise 拒绝都要**落盘**，而且要把日志路径一起给人。
+ *
+ * 为什么要有：Electron 默认只弹一句英文 "A JavaScript error occurred in the main process"，
+ * 我们自己的日志里什么都没有 —— 真机上那次"启动不了"，用户拿不到任何能发出来的东西，
+ * 只能靠猜。
+ *
+ * 三个选择写在代码里：
+ *   1. 用 `dialog.showErrorBox` —— 官方文档写明它**可以在 ready 之前安全调用**，正是为
+ *      "启动早期报错"准备的（见 https://www.electronjs.org/docs/latest/api/dialog）；
+ *   2. 记录之后**不退出**：与 Electron 的默认行为一致。硬退会把"还能用一半"变成"完全不能
+ *      用"，而原因已经摆在用户眼前了；
+ *   3. 只加监听、不改 console 的接管方式 —— 日志走既有通道，不另造一份。
+ */
+function installCrashGuards(): void {
+  const report = (kind: string, value: unknown): void => {
+    console.error(`[main] ${kind}：`, value);
+    const where = fileLog.file
+      ? `\n\n日志文件（把下面这段内容发出来就能定位）：\n${fileLog.file}`
+      : '';
+    try {
+      dialog.showErrorBox(`DSH Console 出错了（${kind}）`, `${describeValue(value)}${where}`);
+    } catch {
+      /* 连对话框都弹不出来（比如没有图形会话）：日志里已经有了 */
+    }
+  };
+  process.on('uncaughtException', (error) => report('未捕获的异常', error));
+  process.on('unhandledRejection', (reason) => report('未处理的 Promise 拒绝', reason));
+}
+
+installCrashGuards();
+
 let mainWindow: BrowserWindow | null = null;
 // 下面这几个都在 bootstrap() 里赋值；用 `!` 明确"这里不重复判空"——
 // 所有 IPC handler 与事件回调都只在 bootstrap 之后才可能被触发。
@@ -114,11 +164,9 @@ let isQuitting = false;
 /** 关闭询问框是不是已经在显示：连点 X 不该叠出第二个对话框 */
 let closeDialogOpen = false;
 /**
- 问渲染层要怎么关闭"的进行中状态
- * `ack` = 卡片已经显示了（撤掉握手时限）；`answer` = 用户选完了（
- null 表示问不到）
-  * 一起拦下来 —— 界面再也退不掉了。
-  */
+ * 一次"问渲染层要怎么关闭"的进行中状态。
+ * `ack` = 卡片已经显示了（撤掉握手时限）；`answer` = 用户选完了（传 null 表示问不到）。
+ */
 interface CloseAsk {
   ack: () => void;
   answer: (answer: CloseAnswer | null) => void;
@@ -1654,7 +1702,16 @@ async function bootstrap(): Promise<void> {
 // 单实例：第二次启动只聚焦已有窗口
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  app.quit();
+  // 先同步落一行。真机上"新版本双击没反应、过一会系统报崩溃"那次，日志里一行都没有 ——
+  // 分不清是"没起来"还是"起来了但没到 ready"，就是被这一点拖住的（见 §7.24）。
+  fileLog.writeLine(
+    '[main] 已经有一个实例在跑（没拿到单实例锁）：本次启动直接退出，只把已有窗口叫到前面',
+  );
+  // 用 `exit` 而不是 `quit`：`quit` 的语义是"先关所有窗口、再走 before-quit / will-quit"，
+  // 而这里**一个窗口都没有**；ready 之前调它不保证真的退，会留下一个"没窗口、没日志"的
+  // 进程，在 macOS 上最后表现成系统那句"应用没有响应"。
+  // `app.exit(0)` 是立刻退出、不发那两个事件（官方文档），正是这里要的语义。
+  app.exit(0);
 } else {
   app.on('second-instance', () => {
     // 第二次启动只是"把已经开着的那个叫到前面"：藏在托盘里的要先 show 回来
