@@ -64,8 +64,26 @@ export function installFileLogging(dir: string): FileLog {
     error: console.error.bind(console),
   };
 
+  /**
+   * 日志流自己出错（磁盘满、目录被删、外置卷弹出、权限变了）**不能把主进程带崩**：
+   * `WriteStream` 的 `error` 事件没人接就是一个未捕获异常 —— 实测过（探针里删掉日志目录，
+   * 流异步 open 失败，整个 node 进程当场退出）。出错就关掉这一路，终端与 `writeLine`
+   * （同步追加）照旧。
+   */
+  let streamAlive = true;
+  stream.on('error', (error) => {
+    streamAlive = false;
+    originals.error(`[logger] 日志文件写不了了（之后只写终端）: ${describeValue(error)}`);
+    try {
+      stream.destroy();
+    } catch {
+      /* ignore */
+    }
+  });
+
   const stamp = () => new Date().toISOString();
   const emit = (level: ConsoleLevel, args: unknown[]) => {
+    if (!streamAlive) return;
     const text = args.map(describeValue).join(' ');
     try {
       stream.write(`${stamp()} [${level}] ${text}\n`);
@@ -96,6 +114,7 @@ export function installFileLogging(dir: string): FileLog {
       console.log = originals.log;
       console.warn = originals.warn;
       console.error = originals.error;
+      streamAlive = false;
       try {
         stream.end();
       } catch {

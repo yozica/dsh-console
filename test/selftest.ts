@@ -1174,11 +1174,15 @@ async function main(): Promise<void> {
     .replace(/\/\/[^\n]*/g, '')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   check(
-    '启动早期：writeLine 是同步落盘（缓冲流里那行会被 app.exit 丢掉），且没文件时仍打到终端',
+    '启动早期：writeLine 是同步落盘、没文件时仍打到终端，且日志流出错不带走主进程',
     /writeLine: \(line: string\) => void;/.test(loggerCode) &&
       /appendFileSync\(file/.test(loggerCode) &&
       // 日志文件没建成时不能静默：至少保持"这一行看得见"
-      /file: '', writeLine: \(line: string\) => console\.log\(line\)/.test(loggerCode),
+      /file: '', writeLine: \(line: string\) => console\.log\(line\)/.test(loggerCode) &&
+      // WriteStream 的 error 没人接 = 未捕获异常（实测：删掉日志目录，整个 node 进程当场退出）
+      /stream\.on\('error'/.test(loggerCode) &&
+      /streamAlive = false;/.test(loggerCode) &&
+      /if \(!streamAlive\) return;/.test(loggerCode),
   );
 
   // ---------------------------------------------------------- 11. 产物命名与更新源
