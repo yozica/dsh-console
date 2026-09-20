@@ -3093,6 +3093,14 @@ body[data-immersive='true'] .webview-wrap {
   user-select: text;
 }
 
+/* 说明按路径分隔符切出来的片段：**片段内部不许再断**。
+   不这么写的话，`@deepseek-ai` 里那个连字符本身就是一个断点（UAX#14 的 HY），
+   于是窄窗口下又会断成 `…/@deepseek-` + `ai/dsh/lib/bin.js` —— 正是要修的那个样子
+   （实测视口 760：加这条之前断在连字符上、之后断在 `/` 上）。 */
+.env-seg {
+  white-space: nowrap;
+}
+
 .env-hint {
   display: flex;
   align-items: center;

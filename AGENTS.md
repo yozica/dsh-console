@@ -58,7 +58,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        283 项自检（`npm test`），不需要 Electron
+test/selftest.ts        284 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -100,7 +100,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（283 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（284 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -161,7 +161,7 @@ node scripts/selftest-sandbox.mjs scripts/env-doctor-cases.mjs   # 也可以显�
 - **沙箱门禁不能与 `npm run lint` 并发跑**。`node scripts/selftest-sandbox.mjs` 的第一步是**编译**，它跑的是
   `tsc -p tsconfig.node.json --noEmit false --listEmittedFiles` —— `noEmit` 被显式关掉、且这个配置**没有 `outDir`**，
   于是程序里被 import 到的 `src/**` 也会**就地**生成 `.js`（`.verify/selftest-sandbox/tsc.log` 里的 `TSFILE:` 行就是：
-  `src/shared/ipc.js`、`src/main/dsh-manager.js`、…，共 40 个），编译完由清理段按清单删掉。而 eslint 的扫描面是
+  `src/shared/ipc.js`、`src/main/dsh-manager.js`、`src/renderer/lib/env-detail.js`（selftest 也 import 它）、…，共 42 个），编译完由清理段按清单删掉。而 eslint 的扫描面是
   「仓库根下它能解析的所有 `.js` / `.ts` / `.vue`」，**包含这些中途产物**：两者并发时 `no-undef`
   （`exports` / `require` / `process` / `console` / `__dirname`）会成片爆出来 —— **本轮实测 516 条；树安静之后串行重跑 = 0**。
   - **正确做法**：**串行跑** —— 沙箱门禁跑完（清理段把清单里的路径删干净）**之后**再 `npm run lint`；
@@ -711,7 +711,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **别用 `width: calc(100% - 18px)` 走这条路**（用户先试过它）：它确实能让圆点留下，但把"圆点 + gap = 18px"这个尺寸抄进了内容规则，而且会**把「更新 pnpm」按钮挤到第二行**（实测 pnpm 那行 70 → 107px，按钮的 top 从 13 变 68）。`flex-basis: 0` 没有这两个副作用（按钮始终在第一行）。
 
-**同一轮试过又撤掉的两件事**（别再往回走）：给正文加 `max-width: 820px` 的行长上限（它顺手让长路径的折行落在两条路径之间的空格上，但**窗口一窄就挡不住圆点被挤下去** —— 那是治标；用户要的是自适应）；以及用户提的 `width: calc(100% - 18px)`（见上）。想让长路径**不从中间断开**（现在 948px 时会断成 `…/@deepseek-` + `ai/dsh/lib/bin.js`），另有一条正路：在 `/` 后面插 `<wbr>`（渲染层小改，未做）。
+**同一轮试过又撤掉的两件事**（别再往回走）：给正文加 `max-width: 820px` 的行长上限（它顺手让长路径的折行落在两条路径之间的空格上，但**窗口一窄就挡不住圆点被挤下去** —— 那是治标；用户要的是自适应）；以及用户提的 `width: calc(100% - 18px)`（见上）。长路径从中间断开那件事**同轮没做、下一轮单独做了** —— 见 §7.29（不是只插一个 `<wbr>` 就够：片段本身也得 `nowrap`，否则 `@deepseek-ai` 里的连字符又会先断）。
 
 **哪条自检守着**：「环境自检页：圆点与内容永远左右并排（`.env-main` 的 flex 基宽是 0，不是内容宽度）」。
 
@@ -736,12 +736,37 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **哪条自检守着**：「渲染层：整块内容区不画焦点环（main 的焦点是程序化交过去的，不是 Tab 来的）」。
 
+### 7.29 自检页说明里的长路径：折行必须落在路径分隔符上
+
+**现象**：`dsh 本体` / `dsh 能不能跑` 那两行的说明是**两条长路径**拼起来的（node 的入口 + dsh 的 bin.js）。它是一整串没有空格的字符，浏览器只认空格 / 连字符那类断点，于是折行从路径**中间**切：实测断成 `…/lib/node_modules/@deepseek-` + `ai/dsh/lib/bin.js`，第二行只剩一小截，看着像排版坏了。
+
+**做法**（两步，缺一不可）：
+
+1. **按分隔符切段 + 片段之间插 `<wbr>`**：`renderer/lib/env-detail.ts` 的 `detailSegments()`（`/` 与 `\` 都认）。它**只切分、不产生 HTML** —— 那段文字里有用户机器上的真实路径，走 `v-html` 就是一条注入面，自检钉着不许。
+2. **片段本身包在 `.env-seg`（`white-space: nowrap`）里**。只做第 1 步不够：`@deepseek-ai` 里那个连字符**本身就是一个断点**（UAX#14 的 HY），窗口一窄浏览器就优先断在它上面 —— 实测视口 760 又变回 `…/@deepseek-` + `ai/dsh/lib/bin.js`，正是要修的那个样子。
+
+**实测**（CDP 量渲染结果，窗口 1220×820、DPR 2）：
+
+| 视口 | `dsh 本体` 的折行                                          | 横向溢出 |
+| ---- | ---------------------------------------------------------- | -------- |
+| 1220 | `…/@deepseek-ai/` ＋ `dsh/lib/bin.js`                      | 无       |
+| 900  | `…/.nvm/versions/` ＋ `…@deepseek-ai/dsh/lib/bin.js`       | 无       |
+| 760  | `…/node_modules/` ＋ `@deepseek-ai/dsh/lib/bin.js`（3 行） | 无       |
+| 640  | `…/node_modules/` ＋ `…/lib/bin.js`（3 行）                | 无       |
+
+**两条不变量**（一条自检 + 真机都比对过）：
+
+- **往返一字不差**：`<wbr>` 是元素、`.env-seg` 是 `<span>`，都不引入字符 —— 行里显示的文本与主进程给的 `detail` **完全相同**，复制 / 日志 / 排查都对得上；
+- **不溢出**：片段 `nowrap` 之后，单个片段比一行还长时会顶出容器（`.panel` 是 `overflow: hidden`，会被裁掉）。现在的路径片段最长十几个字符，四个宽度实测都没溢出；真出现超长片段（例如 Windows 上某个超长目录名），要么收窄这个策略、要么给 `.env-seg` 留一条"整段挪到下一行"的兜底。
+
+**哪条自检守着**：「环境自检页：长路径的折行落在路径分隔符上（说明切段 + 片段之间插 `<wbr>`）」—— 五组切段夹具（POSIX / Windows 反斜杠 / 中文前缀 / 无分隔符 / 空串）、往返断言、模板接线、`.env-seg` 的 `nowrap`、以及**不许 `v-html`**。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，283 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，284 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：
