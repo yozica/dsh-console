@@ -2335,22 +2335,37 @@ async function main(): Promise<void> {
       envAllOk.nodeRange === envDoctor.NODE_RANGE,
   );
 
-  // 边界值：20.18 不满足、20.19 满足、22.11 不满足、22.12 满足、23/24 满足
+  // 边界值（dsh 那句 `^22.19.0 || >=24.0.0`）：20.19 与 22.12 都不算 —— 这正是 2026-09-20
+  // 发现的那个偏差（原来抄的是 vite 的构建期那句，会把跑不动 dsh 的 Node 判成"符合要求"）。
   const envBounds: [string, boolean][] = [
-    ['v20.18.0', false],
-    ['v20.19.0', true],
+    ['v20.19.0', false],
     ['v22.11.9', false],
-    ['v22.12.0', true],
-    ['v23.0.0', true],
+    ['v22.12.0', false],
+    ['v22.18.9', false],
+    ['v22.19.0', true],
+    ['v23.0.0', false],
+    ['v24.0.0', true],
     ['v24.19.0', true],
   ];
+  // 构建期那句（vite 的 engines）另有边界，只给「应用自带运行时」用
+  const envBuildBounds: [string, boolean][] = [
+    ['v20.18.0', false],
+    ['v20.19.0', true],
+    ['v22.12.0', true],
+    ['v21.0.0', false],
+  ];
   check(
-    '环境自检：版本区间只认这一句（20.19 / 22.12 的边界都对）',
+    '环境自检：两个区间各判各的（dsh 的 22.19 / 24 与构建期的 20.19 / 22.12 都对）',
     envBounds.every(([text, expected]) => {
       const version = envDoctor.parseNodeVersion(text);
       return version !== null && envDoctor.satisfiesNodeRange(version) === expected;
-    }) && envDoctor.parseNodeVersion('不是版本号') === null,
-    envDoctor.NODE_RANGE,
+    }) &&
+      envBuildBounds.every(([text, expected]) => {
+        const version = envDoctor.parseNodeVersion(text);
+        return version !== null && envDoctor.satisfiesBuildRange(version) === expected;
+      }) &&
+      envDoctor.parseNodeVersion('不是版本号') === null,
+    `${envDoctor.NODE_RANGE} / 构建期 ${envDoctor.NODE_RANGE_BUILD}`,
   );
   const envViteEngines = (
     JSON.parse(
@@ -2358,8 +2373,8 @@ async function main(): Promise<void> {
     ) as { engines: { node: string } }
   ).engines.node;
   check(
-    '环境自检：阈值与 vite 的 engines 同一句（升级 vite 时这句话不会悄悄过期）',
-    envViteEngines === envDoctor.NODE_RANGE,
+    '环境自检：构建期那句与 vite 的 engines 同一句（升级 vite 时它不会悄悄过期）',
+    envViteEngines === envDoctor.NODE_RANGE_BUILD,
     `vite: ${envViteEngines}`,
   );
 

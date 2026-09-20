@@ -72,7 +72,14 @@ import {
 import type { Settings, SettingsValues } from './settings';
 
 /** 与 vite 的 engines.node 同一句（AGENTS 第 1 节：`npm install` 的门槛）；自检把两处钉在一起 */
-export const NODE_RANGE = '^20.19.0 || >=22.12.0';
+export const NODE_RANGE = '^22.19.0 || >=24.0.0';
+
+/**
+ * **构建期**要求（vite 的 engines）：只用来判「打包进来的那个运行时」够不够新。
+ *
+ * 别把它当成"能不能跑 dsh"的判据 —— 这两件事的区间不一样，混用过一次（见 `NODE_RANGE`）。
+ */
+export const NODE_RANGE_BUILD = '^20.19.0 || >=22.12.0';
 
 /** 探测子进程超时：与 `canRunDsh` 的 8000 一致 */
 export const PROBE_TIMEOUT_MS = 8000;
@@ -83,7 +90,7 @@ export const FIX_TAIL_CHARS = 64 * 1024;
 /** 探测子进程的 stderr 只保留尾部这些字符（它是给日志的原文，别把几百 KB 堆栈整段带上） */
 export const STDERR_TAIL_CHARS = 2000;
 
-/** 版本号解析结果；不引 semver，只认 NODE_RANGE 这一句区间 */
+/** 版本号解析结果；不引 semver，只认 NODE_RANGE / NODE_RANGE_BUILD 这两句区间 */
 export interface NodeVersion {
   major: number;
   minor: number;
@@ -219,12 +226,25 @@ export function parseNodeVersion(text: string): NodeVersion | null {
 }
 
 /**
- * 是否落在 `^20.19.0 || >=22.12.0` 里。
+ * 是否落在 **dsh 的要求** `^22.19.0 || >=24.0.0` 里。
  *
- * 只认这一句区间，不引 semver：`20.19+`、`21` 不算（vite 那句也不含它）、
- * `22.12+`、`23+` 都算。自检逐个钉住这些边界。
+ * 出处：dsh 自己的 `package.json` 没有 `engines`，真正卡住它的是依赖链里的 undici 8
+ * （`engines: { node: '>=22.19.0' }`）；dsh 上游源码给的就是这一句（比 undici 那句多排除奇数版 23）。
+ * 只认这一句，不引 semver：`22.19+` 与 `24+` 算，`23` 与 `≤22.18` 不算。自检逐个钉住边界。
+ *
+ * **别再退回 vite 那句**：`^20.19.0 || >=22.12.0` 是构建期要求，而 20.19 与 22.12–22.18 上
+ * dsh 会「退出码 0、零输出」地静默退出（§7.4），界面上只会显示「已停止」。
  */
 export function satisfiesNodeRange(version: NodeVersion): boolean {
+  const major = version.major;
+  if (major < 22) return false;
+  if (major === 22) return version.minor >= 19;
+  if (major === 23) return false;
+  return true; // 24+
+}
+
+/** 是否落在**构建期**要求 `^20.19.0 || >=22.12.0`（vite 的 engines）里 —— 只给「应用自带运行时」用 */
+export function satisfiesBuildRange(version: NodeVersion): boolean {
   const major = version.major;
   if (major === 20) return version.minor >= 19;
   if (major === 21) return false;
@@ -694,14 +714,14 @@ function nodeInstallHint(platform: string): string {
   const inApp =
     '点上面的「安装 Node.js」：直接安装官方稳定版、或通过 nvm 安装，都由我们装好并切过去。';
   return platform === 'win32'
-    ? `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm-windows），或到 nodejs.org 装 22.12+ 的 LTS。`
-    : `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm/fnm），或到 nodejs.org 装 22.12+ 的 LTS。`;
+    ? `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm-windows），或到 nodejs.org 装 22.19+ 或 24 的 LTS。`
+    : `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm/fnm），或到 nodejs.org 装 22.19+ 或 24 的 LTS。`;
 }
 
 function installNodeHint(platform: string): string {
   return platform === 'win32'
     ? `点上面的「安装 Node.js」由我们装一个（直装官方稳定版 / 通过 nvm 安装都行）。想自己来也可以：到 https://nodejs.org/en/download 下载安装包，或用 nvm-windows 的 \`nvm install 24 && nvm use 24\`。`
-    : `点上面的「安装 Node.js」由我们装一个（直装官方稳定版 / 通过 nvm 安装都行）。想自己来也可以：用版本管理器 \`nvm install 24 && nvm use 24\`，或到 https://nodejs.org/en/download 下载 22.12+ 的 LTS。`;
+    : `点上面的「安装 Node.js」由我们装一个（直装官方稳定版 / 通过 nvm 安装都行）。想自己来也可以：用版本管理器 \`nvm install 24 && nvm use 24\`，或到 https://nodejs.org/en/download 下载 22.19+ 或 24 的 LTS。`;
 }
 
 function upgradeNodeHint(platform: string): string {
@@ -887,7 +907,7 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     push(
       'node-version',
       'warn',
-      `${raw.node.version} 不在要求区间内（要求 ${NODE_RANGE}）—— 这是构建期要求，dsh 到底能不能跑由下面「实测 dsh」那一项决定`,
+      `${raw.node.version} 不在要求区间内（要求 ${NODE_RANGE}）—— 这是 dsh 与它依赖链的要求；能不能跑仍由下面「实测 dsh」那一项定`,
       upgradeNodeHint(raw.platform),
     );
   }
@@ -1047,14 +1067,14 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
       'ok',
       `${bundledDetail('（开发态）')} —— 开发态这份运行时来自 electron 依赖，应用跑在你的系统 Node 上`,
     );
-  } else if (bundledVersion && satisfiesNodeRange(bundledVersion)) {
-    push('bundled-runtime', 'ok', bundledDetail(`，落在要求区间内（要求 ${NODE_RANGE}）`));
+  } else if (bundledVersion && satisfiesBuildRange(bundledVersion)) {
+    push('bundled-runtime', 'ok', bundledDetail(`，落在要求区间内（要求 ${NODE_RANGE_BUILD}）`));
   } else {
     push(
       'bundled-runtime',
       'missing',
       bundledDetail(
-        `，不在要求区间内（要求 ${NODE_RANGE}）—— 注意这不是你机器上的 Node，它由打包时用的 Electron 决定`,
+        `，不在要求区间内（要求 ${NODE_RANGE_BUILD}）—— 注意这不是你机器上的 Node，它由打包时用的 Electron 决定`,
       ),
       `升级 DSH Console：${RELEASES_URL}`,
     );

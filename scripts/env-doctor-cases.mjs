@@ -222,24 +222,27 @@ check(
 const caseB = judgeEnvironment(raw({ node: versionProbe({ version: 'v20.9.0' }) }));
 const nodeVersionB = checkOf(caseB, 'node-version');
 check(
-  'B 反例：node v20.9.0 不满足区间 → warn（不是 missing），并说明"这是构建期要求"',
+  'B 反例：node v20.9.0 不满足区间 → warn（不是 missing），并点名是 dsh 与它依赖链的要求',
   nodeVersionB.status === 'warn' &&
     nodeVersionB.detail.includes('v20.9.0') &&
-    nodeVersionB.detail.includes('构建期要求') &&
+    nodeVersionB.detail.includes('dsh 与它依赖链的要求') &&
     caseB.counts.missing === 0 &&
     caseB.firstProblemId === 'node-version',
   `status=${nodeVersionB.status} counts=${JSON.stringify(caseB.counts)} firstProblemId=${caseB.firstProblemId} detail=${nodeVersionB.detail}`,
-  'warn + detail 点名 20.9.0 与"构建期要求"',
+  'warn + detail 点名 20.9.0 与"dsh 与它依赖链的要求"',
 );
 
 // ---------------------------------------------------------------- C. 区间边界
+// dsh 那句 `^22.19.0 || >=24.0.0`：20.19 与 22.12 都**不算**（原来抄成 vite 的构建期那句了）
 const bounds = [
   ['v20.18.0', false],
-  ['v20.19.0', true],
+  ['v20.19.0', false],
   ['v22.11.9', false],
-  ['v22.12.0', true],
-  ['v23.0.0', true],
-  ['v24.19.0', true],
+  ['v22.12.0', false],
+  ['v22.18.9', false],
+  ['v22.19.0', true],
+  ['v23.0.0', false],
+  ['v24.0.0', true],
 ];
 const boundActual = bounds
   .map(([text, expected]) => {
@@ -249,13 +252,13 @@ const boundActual = bounds
   })
   .join(' ');
 check(
-  'C 区间边界：20.19 / 22.12 与 21 那一档',
+  'C 区间边界：22.19 那一档与 23 被排除',
   bounds.every(([text, expected]) => {
     const parsed = parseNodeVersion(text);
     return parsed !== null && satisfiesNodeRange(parsed) === expected;
   }) && parseNodeVersion('不是版本号') === null,
   boundActual,
-  '与文档 1.2 的五个边界值一致；非版本串 → null',
+  '与 dsh 的要求一句一致（22.19+ / 24+ 算，23 与 ≤22.18 不算）；非版本串 → null',
 );
 
 // ---------------------------------------------------------------- D. dsh 静默退出

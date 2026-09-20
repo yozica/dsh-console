@@ -809,7 +809,7 @@ onUnmounted(() => {
     <template v-else>
       <p class="env-scope">
         要求 Node <code>{{ envReport.nodeRange }}</code
-        >（与 vite 的 engines 是同一句）。版本不合适时 dsh 可能「退出码 0、零输出」地静默退出 ——
+        >（dsh 与它依赖链的要求）。版本不合适时 dsh 可能「退出码 0、零输出」地静默退出 ——
         界面上只会看到「已停止」，看不出是解释器的问题。
       </p>
 

@@ -7,6 +7,7 @@
 ## 1. 快速开始
 
 需要 **Node ≥ 20.19**（`vite` 的 `engines` 是 `^20.19.0 || >=22.12.0`；CI 固定用 Node 22）。
+注意这是**构建期**要求，跟「dsh 能不能跑」是两句区间：后者是 `^22.19.0 || >=24.0.0`（见 §7.25）。
 
 ```bash
 npm install
@@ -641,6 +642,16 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - `process.on('uncaughtException' / 'unhandledRejection')` → 落盘 + `dialog.showErrorBox(标题, 错误 + 日志路径)`；**记录之后不退出**（与 Electron 默认行为一致：硬退会把"还能用一半"变成"完全不能用"，而原因已经摆在眼前）。选 `showErrorBox` 是因为官方文档明确写着它**可以在 ready 之前安全调用**（Linux 上那时只写 stderr），正是为启动早期报错准备的。
 
 **哪条自检守着**：四条**静态检查**（启动记录出现在 `app.whenReady()` 之前、`!gotLock` 分支走 `app.exit` 且不出现 `app.quit()`、两个 `process.on` + `showErrorBox` + 日志路径、`writeLine` 是同步的且没有文件时仍打终端）。**这些分支只在真机上才会真正跑到**，所以改完要手工验一次：起两个实例（第二个应当立刻干净退出，日志里多一行说明）、临时在主进程里 `throw new Error('probe')` 看对话框是否带日志路径（验完删掉）。
+
+### 7.26 「能不能跑 dsh」的 Node 区间：`^22.19.0 || >=24.0.0`（与构建期那句分开）
+
+**现象**：自检把一台 Node `20.19` / `22.12` 的机器判成「符合要求」，而 dsh 在那种 Node 上是**静默退出**（退出码 0、零输出，§7.4）—— 用户看到的是「已停止」，看不出是解释器的问题。
+
+**原因**：`NODE_RANGE` 抄的是 **vite 的 engines**（`^20.19.0 || >=22.12.0`），那是**构建期**要求（渲染层工具链要的），跟「dsh 跑不跑得动」无关。真正卡住 dsh 的是它的依赖链：dsh 自己的 `package.json` **没有 `engines`**，而它依赖的 **undici 8** 写着 `engines: { node: '>=22.19.0' }`；dsh 上游源码给的是 `^22.19.0 || >=24.0.0`（比 undici 那句多排除奇数版 23）。
+
+**现在的做法**：拆成两个常量，各归各行 —— `NODE_RANGE`（dsh 那句，给「Node 版本」与界面顶部那句用）与 `NODE_RANGE_BUILD`（vite 那句，只给「应用自带运行时」用）；判定侧对应 `satisfiesNodeRange` 与 `satisfiesBuildRange`。`bundled-runtime` 判的仍然是**打包进来的**那个 Node，所以它继续用构建期那句。
+
+**哪条自检守着**：「环境自检：两个区间各判各的（dsh 的 22.19 / 24 与构建期的 20.19 / 22.12 都对）」「环境自检：构建期那句与 vite 的 engines 同一句（升级 vite 时它不会悄悄过期）」；`scripts/env-doctor-cases.mjs` 的 C 段另外钉了一遍边界（含 22.18.9 → 不算、23.0.0 → 不算）。
 
 ### 7.25 环境自检的探测不许阻塞主进程，也不许去调"转发器"
 

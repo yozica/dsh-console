@@ -2975,7 +2975,8 @@ body[data-immersive='true'] .webview-wrap {
   padding: 10px 0;
 }
 
-/* 版本区间的出处：与 vite 的 engines 是同一句，所以写在这一屏里，不藏在 tooltip */
+/* 版本区间的出处：dsh 与它依赖链的要求（构建期那句是另一个区间，只judge「应用自带运行时」），
+   所以写在这一屏里，不藏在 tooltip */
 .env-scope {
   margin: 0;
   color: var(--ink-faint);
