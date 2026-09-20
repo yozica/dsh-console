@@ -58,7 +58,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        284 项自检（`npm test`），不需要 Electron
+test/selftest.ts        291 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -100,7 +100,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（284 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（291 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -161,7 +161,7 @@ node scripts/selftest-sandbox.mjs scripts/env-doctor-cases.mjs   # 也可以显�
 - **沙箱门禁不能与 `npm run lint` 并发跑**。`node scripts/selftest-sandbox.mjs` 的第一步是**编译**，它跑的是
   `tsc -p tsconfig.node.json --noEmit false --listEmittedFiles` —— `noEmit` 被显式关掉、且这个配置**没有 `outDir`**，
   于是程序里被 import 到的 `src/**` 也会**就地**生成 `.js`（`.verify/selftest-sandbox/tsc.log` 里的 `TSFILE:` 行就是：
-  `src/shared/ipc.js`、`src/main/dsh-manager.js`、`src/renderer/lib/env-detail.js`（selftest 也 import 它）、…，共 42 个），编译完由清理段按清单删掉。而 eslint 的扫描面是
+  `src/shared/ipc.js`、`src/main/dsh-manager.js`、`src/renderer/lib/{env-detail,wizard-view}.js`（selftest 也 import 它们）、…，共 44 个），编译完由清理段按清单删掉。而 eslint 的扫描面是
   「仓库根下它能解析的所有 `.js` / `.ts` / `.vue`」，**包含这些中途产物**：两者并发时 `no-undef`
   （`exports` / `require` / `process` / `console` / `__dirname`）会成片爆出来 —— **本轮实测 516 条；树安静之后串行重跑 = 0**。
   - **正确做法**：**串行跑** —— 沙箱门禁跑完（清理段把清单里的路径删干净）**之后**再 `npm run lint`；
@@ -575,7 +575,8 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - **档位是事实，不是偏好：`switchesChannel` 按构造保证，别改回去**（VM-15 的另一半）：**现象** —— 用户在向导里选了「当前版」装出 `v26.9.0`，之后点「更新」，目标却按默认的稳定版算成 `v24.21.0`，**比已装的更低**，而界面没说这是换档。**原因** —— 目标档位的默认值写死成 `'lts'`；"这一次是不是换档"只在显式选档那一支上算，于是另两条可达路径（`install` 的设计默认正好跨档、目标版本比现在低）拿不到"这是换档"的事实，界面就把它当"更新"显示。**现在的做法** —— ① `update` 省略档位 = **跟随当前档位**（当前档 = 已装版本在官方清单里那一条的 `lts` 字段，判不出来就 `null`、不许猜），只有 `install` 才用设计默认的"最新稳定版"；② `decideNodePlan()` 在**所有**分支上算 `switchesChannel = direction === 'older' || (currentChannel !== null && channel !== currentChannel)` —— 即"**档位变了 或 目标更低**"这个**超集**语义，于是约定 ②「`direction === 'older'` ⟹ `switchesChannel === true`」**按构造无条件成立**（不是靠"跟随时现实中不会出现更低的目标"这种概率性理由）。⚠️ **`src/shared/ipc.ts` 里那句注释只写了充分条件**（"目标档位与当前档位不同 = 这是「换档」"），照它把这一行改回"只比档位"就会让 `older` 重新变成一次没有解释的静默降级（t9 的变异实验正是这么把它还原红的）—— **以后者（代码里的构造）为准，别照注释改**；③ 跨档的**两个来源**都要认：用户显式选档，以及 `install` 的设计默认正好跨档（向导第三步「换一个 Node」那条可达路径）。
 - **「先停 dsh」这类承诺必须与引擎的实际动作同位**（同一类坑的第二个实例）：**现象** —— 确认区上写着「更新会先停掉正在运行的 dsh」，但真机上 `dsh` 没被停。**原因** —— 那句承诺对应的 `hooks.stopDsh()` 原先住在 `installPhase()` 里，而"机器上已经有版本管理器"（`installsManager === false`）那条路**整个跳过安装阶段**，于是那句承诺**悄悄落空**（界面说着会停、实际没停）。**现在的做法** —— 停 dsh 是 `execute()` 里 `mode === 'update'` 的**唯一一处**调用（`stopDshForUpdate()`，排在 `installsManager` 分支**之前**）：不管走哪条路、要不要下载，先停一次，结构上不可能漏、也不可能停两次。**代价与时序**（船长裁定，记下来免得后人当 bug 修）：直装那条路因此从「下载 → 校验 → 停 → 装」变成「**停 → 下载 → 校验 → 装**」—— 好处是与需求 §8.3 的"先停、再更新"逐字一致、两条路共用同一处；代价是**下载失败 / 取消时 dsh 已经被停了**。这个代价**可以接受**：终态仍是 `error`（界面照旧给「重新启动 dsh」这个一键恢复的出口），不为它新增"dsh 已经停掉了"的额外文案。
 
-**哪条自检守着**（`test/selftest.ts` 的「环境向导」一组 + `scripts/env-wizard-cases.mjs`）：「skipped 项判 warn 不是 missing」「快速探测把要起子进程才知道的项标成 skipped」、门禁判定的 I 系列（全 `warn` → 三步 `done` → 放行；`report.error` 非空且无 `missing` → `unknown` 不挡人；**有 `missing` 证据就挡**）、「首启门禁：逃生口不写盘、不依赖任何安装动作」、「首启门禁：跳过 / 恢复只走 `envWizardSkip`」、安装引擎的 M 段（两条路、退出码分类、等太久的"未确定"、复检失败不说 done）。**这一轮（t29）新增的几条**：归属纯函数与计划形状（「环境向导（VM-14）：归属 → 方法」「档位跟随当前、跨档才叫换档」）、`switchesChannel` 的三条不变量（跟随时**不许**被误报成换档 / `older` 必须伴随换档 / `install` 设计默认跨档也必须为真）、实例断言（「安装引擎（VM-14）：nvm 那条路的机器上不再装管理器」「环境自检页（VM-14 / VM-15）：更新入口不写死方法，档位不写死字面量（默认跟随、显式才换档）」），以及 `scripts/env-wizard-cases.mjs` 的 O 段（648 组合穷举：`direction === 'older'` ⟹ `switchesChannel === true`，反例 0 条）。**变异守则**（评审时照这两条做，t9 / t12 各做过一次）：把 `await this.stopDshForUpdate();` 拿掉 → 停 dsh 那组断言变红；把 `switchesChannel` 还原成"只比档位" → 跨档那组断言变红。真机上装一次 Node、看一次 UAC、断一次网仍要人工验。
+- **向导正文画的是「正在看哪一步」，不是「判定给的当前步骤」**（t43，冻结 §0.3 的 R-28 ~ R-31）：判定仍在主进程（`currentStepId`，界面不自己判），但正文多了一层**视图相位** —— 默认跟着判定；用户在**左轨**点了走过的节点（`已完成` / `已跳过`，做成真按钮、按阅读顺序进 `Tab` 顺序）之后**钉住**，正文改画**只读回看卡**（结论 + `step.detail` 的原文 + 一个「回到当前步骤」，**卡里没有任何安装 / 跳过动作**）；判定再前进也**不把用户推走**，只出一行「下一步（…）也已经就绪了」/「三步都完成了」的提示，点了才过去。纯规则在 `renderer/lib/wizard-view.ts`（能直接测，所以别把它塞回读 `window` 的那个模块），`lib/env-wizard.ts` 只存"钉住了哪一步"。两个最容易踩的点：**`screen` 里回看优先于放行页**（只看 `gate === 'open'` 会在最后一步完成时把正在回看的用户直接推到结果页）；**`gateVisible` 的 `released` 分支是 `blocking || reopened`** —— 用户从自检页 / 横幅显式重开的那一轮，判成 `open` 也要停在放行页，否则就是"点了一下、一闪就没了"（R-31）。
+  **哪条自检守着**（`test/selftest.ts` 的「环境向导」一组 + `scripts/env-wizard-cases.mjs`）：「skipped 项判 warn 不是 missing」「快速探测把要起子进程才知道的项标成 skipped」、门禁判定的 I 系列（全 `warn` → 三步 `done` → 放行；`report.error` 非空且无 `missing` → `unknown` 不挡人；**有 `missing` 证据就挡**）、「首启门禁：逃生口不写盘、不依赖任何安装动作」、「首启门禁：跳过 / 恢复只走 `envWizardSkip`」、安装引擎的 M 段（两条路、退出码分类、等太久的"未确定"、复检失败不说 done）。**t43 的一组（18a 节）**：左轨只有走过的步骤可点（当前 / 没轮到的都不行）、正文画钉住的那一步（它不再成立时静默回当前）、判定前进的两种文案、左轨是按钮且带 `aria-current`、回看卡里没有安装 / 跳过动作、`screen` 回看优先、`reopened` 在重开 / 逃生 / 进入三处的一置两清。**这一轮（t29）新增的几条**：归属纯函数与计划形状（「环境向导（VM-14）：归属 → 方法」「档位跟随当前、跨档才叫换档」）、`switchesChannel` 的三条不变量（跟随时**不许**被误报成换档 / `older` 必须伴随换档 / `install` 设计默认跨档也必须为真）、实例断言（「安装引擎（VM-14）：nvm 那条路的机器上不再装管理器」「环境自检页（VM-14 / VM-15）：更新入口不写死方法，档位不写死字面量（默认跟随、显式才换档）」），以及 `scripts/env-wizard-cases.mjs` 的 O 段（648 组合穷举：`direction === 'older'` ⟹ `switchesChannel === true`，反例 0 条）。**变异守则**（评审时照这两条做，t9 / t12 各做过一次）：把 `await this.stopDshForUpdate();` 拿掉 → 停 dsh 那组断言变红；把 `switchesChannel` 还原成"只比档位" → 跨档那组断言变红。真机上装一次 Node、看一次 UAC、断一次网仍要人工验。
 
 ### 7.22 改源码不能整文件往返写：编码与换行会被毁掉（同类事故已两次）
 
@@ -767,7 +768,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，284 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，291 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

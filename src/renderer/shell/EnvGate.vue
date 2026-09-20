@@ -64,6 +64,7 @@ import {
   anyoneBusy,
   enterMainUi,
   escapeGate,
+  activePin,
   gatePhase,
   gateVisible,
   install,
@@ -71,11 +72,15 @@ import {
   loadNodePlan,
   loadWizard,
   runNodeInstall,
+  selectViewedStep,
+  clearViewedStep,
   skipStep,
   stopNodeInstall,
+  viewedStepId,
   wizard,
   wizardError,
 } from '../lib/env-wizard.js';
+import { advanceNotice, canViewStep } from '../lib/wizard-view.js';
 import { currentTab, settings } from '../lib/store.js';
 import type {
   EnvCheck,
@@ -225,6 +230,10 @@ interface QueueRow {
   state: string;
   /** 放行页三行成果用的原始状态 */
   status: EnvStepStatus;
+  /** 能不能点开看（t43 / R-28：走过的步骤可以） */
+  viewable: boolean;
+  /** 正文现在画的是不是它（`aria-current`） */
+  viewed: boolean;
 }
 
 /** 安装通道里"还在跑"的相位 */
@@ -312,10 +321,47 @@ const pnpmSkipped = computed(() => (wizard.value?.skips ?? []).includes('pnpm'))
 
 const checking = computed(() => gatePhase.value === 'checking' || gatePhase.value === 'idle');
 
-/** 三块屏：检查中（报告还没回来）/ 挡住页 / 放行页。文案与结构见交互 §2.3 / §2.4 / §2.11 */
+// ------------------------------------------------ 视图相位：正在看哪一步（t43 / R-29 / R-30）
+
+/** 正文画的那一步（钉住时是钉住的那一步，否则是判定的当前步骤） */
+const viewStep = computed<EnvWizardStep | null>(
+  () => steps.value.find((step) => step.id === viewedStepId.value) ?? null,
+);
+
+/** 是不是"回看"：正文画的不是判定的当前步骤 → 只读回看卡 */
+const reviewStep = computed<EnvWizardStep | null>(() => {
+  const id = viewedStepId.value;
+  if (id === null || id === currentStepId.value) return null;
+  return viewStep.value;
+});
+
+/** 钉住期间判定前进了 → 卡片上方那一行提示（R-30；没前进时为 null） */
+const notice = computed(() =>
+  advanceNotice(currentStepId.value, activePin.value, (id) => STEP_TITLES[id]),
+);
+
+/** 左轨节点：点它 = 回看（R-28）；点当前这一步 = 回来 */
+function viewStepFromRail(id: EnvWizardStepId): void {
+  if (busy.value) return;
+  dismissAllConfirms();
+  selectViewedStep(id);
+}
+
+/** 回看卡的主按钮 / 提示行的按钮：回到判定给出的当前步骤，并解除钉住（R-29 / R-30） */
+function backToCurrent(): void {
+  dismissAllConfirms();
+  clearViewedStep();
+  void nextTick(() => focusDefault());
+}
+
+/** 三块屏：检查中（报告还没回来）/ 挡住页 / 放行页。文案与结构见交互 §2.3 / §2.4 / §2.11
+ *
+ * 回看优先于放行（t43 / R-30）：钉住期间判定即使已经放行，正文也留在那张只读回看卡上 ——
+ * 提示行会给「看看结果」，点了才进放行页。 */
 const screen = computed<'checking' | 'blocked' | 'released'>(() => {
   const state = wizard.value;
   if (!state) return 'checking';
+  if (reviewStep.value) return 'blocked';
   return state.gate === 'open' ? 'released' : 'blocked';
 });
 
@@ -392,6 +438,9 @@ const queue = computed<QueueRow[]>(() => {
       word,
       state,
       status: step.status,
+      // 走过的节点可点（R-28）：正文切到它、画只读回看卡
+      viewable: canViewStep(step, id),
+      viewed: step.id === viewedStepId.value,
     };
   });
 });
@@ -1213,10 +1262,30 @@ watch([installOutput, envFixOutput], () => {
       </div>
       <div class="gate-brand-sub">{{ railSubtitle }}</div>
       <ul v-if="showQueue" class="gate-queue">
-        <li v-for="item in queue" :key="item.id" class="gate-node" :data-state="item.state">
+        <li
+          v-for="item in queue"
+          :key="item.id"
+          class="gate-node"
+          :data-state="item.state"
+          :data-viewable="item.viewable ? 'true' : 'false'"
+        >
           <span class="gate-node-spine" aria-hidden="true"></span>
           <span class="gate-node-dot" aria-hidden="true"></span>
-          <div class="gate-node-body">
+          <!-- 走过的步骤是个真按钮（t43 / R-28）：进 Tab 顺序、Enter / Space 同鼠标 —— 这是
+               「返回上一步」唯一的入口。没走到的仍然是纯读数（不进 Tab 顺序，保持 R-01 ② 的原意）。 -->
+          <button
+            v-if="item.viewable"
+            type="button"
+            class="gate-node-body gate-node-button"
+            :aria-current="item.viewed ? 'true' : undefined"
+            @click="viewStepFromRail(item.id)"
+          >
+            <span class="gate-node-step">{{ item.step }}</span>
+            <span class="gate-node-title">{{ item.title }}</span>
+            <span class="gate-node-state">{{ item.word }}</span>
+            <span class="gate-node-back">↩ 回看这一步</span>
+          </button>
+          <div v-else class="gate-node-body">
             <span class="gate-node-step">{{ item.step }}</span>
             <span class="gate-node-title">{{ item.title }}</span>
             <span class="gate-node-state">{{ item.word }}</span>
@@ -1265,10 +1334,43 @@ watch([installOutput, envFixOutput], () => {
 
         <!-- 挡住页：唯一的「前进」是底条上的逃生口（交互 §2.4） -->
         <template v-else>
-          <h2 class="gate-title">运行环境还没准备好</h2>
-          <p class="gate-lead">下面几步装好之后，就可以进入 DSH Console 了</p>
+          <h2 class="gate-title">
+            {{ wizard?.gate === 'open' ? '运行环境已经就绪' : '运行环境还没准备好' }}
+          </h2>
+          <p class="gate-lead">
+            {{
+              wizard?.gate === 'open'
+                ? '三步都完成了（可跳过的项按你的选择处理），现在可以进入了。'
+                : '下面几步装好之后，就可以进入 DSH Console 了'
+            }}
+          </p>
 
-          <div v-if="currentStep" class="gate-card">
+          <!-- 钉住期间判定前进了：不把用户推走，只出这一行（t43 / R-30）。点它 = 回到当前 / 看结果 -->
+          <div v-if="notice" class="gate-advance">
+            <span>{{ notice.text }}</span>
+            <span class="spacer"></span>
+            <button class="btn tiny" @click="backToCurrent">{{ notice.action }} →</button>
+          </div>
+
+          <!-- 只读回看卡（t43 / R-29）：走过的步骤只给结论与读数，卡里没有任何安装 / 跳过动作 -->
+          <div v-if="reviewStep" class="gate-card">
+            <h3 class="gate-card-title">{{ STEP_CARD_TITLES[reviewStep.id] }}（回看）</h3>
+            <p class="gate-card-done" :data-status="reviewStep.status">
+              {{
+                reviewStep.status === 'skipped'
+                  ? '这一步你选择了跳过，不用再做什么'
+                  : '这一步已经完成，不用再做什么'
+              }}
+            </p>
+            <p class="gate-card-fact">{{ reviewStep.detail }}</p>
+            <div class="btn-row gate-actions">
+              <button ref="primaryRef" class="btn primary" @click="backToCurrent">
+                回到当前步骤{{ currentStep ? `（${STEP_TITLES[currentStep.id]}）` : '（看结果）' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-else-if="currentStep" class="gate-card">
             <h3 class="gate-card-title">{{ STEP_CARD_TITLES[currentStep.id] }}</h3>
             <p class="gate-card-why">{{ STEP_WHY[currentStep.id] }}</p>
 
@@ -1798,7 +1900,10 @@ watch([installOutput, envFixOutput], () => {
           </div>
 
           <!-- 卡片外的一行交代（它是说明，不是这一步的操作） -->
-          <p v-if="currentStep && currentStep.id === 'node' && !stepRunning" class="gate-card-note">
+          <p
+            v-if="!reviewStep && currentStep && currentStep.id === 'node' && !stepRunning"
+            class="gate-card-note"
+          >
             装好之后，其它已经打开的终端窗口需要重开一次，才会用上新装的 Node。
           </p>
 
