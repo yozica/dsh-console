@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>向导结束后的自动启动，要不要上启动锁（DSH Console）</title>
+    <!--
+      这份文件把你要的那条改动摆出来看：**向导结束（进入页面）时的自动启动，要不要重新显示启动锁**。
+
+      背景（代码里的现状，不是猜的）：环境向导放行 / 逃生之后，`app.ts` 的 `wireGateAutoStart()`
+      会自己 `api.start()` 拉起 dsh —— 但**故意不上锁**：冻结表 R-07 当初的裁定就是
+      「逃生 / 放行之后的自动启动不出现启动锁」，理由是启动锁当时是**单向状态机**
+      （idle → waiting → done），要让它重新上锁就得改成"每次状态变化重新判定"——
+      那正是启动锁修过的那个 bug（解锁之后条件又变回不满足，锁重新扣上来）。
+
+      所以你要的这条不是"把 R-07 删掉"，而是给启动锁加一个**显式的第二回合**：只有
+      "向导结束 → 自动启动" 这一件事能请求上锁，其它任何状态变化都不会让锁回来。
+
+      每一屏都用真实尺寸与既有设计变量（启动锁 z-index 60、`inset: 0`、卡片 max-width 460px、
+      转圈 26px；顶栏 36px、左栏 --rail-w 188px）。零脚本，双击就能开。
+
+      怎么用：看 §1 / §2 两组，在最后一节那张表里写下选择，回一句「1A 2A」即可。
+    -->
+    <style>
+      :root {
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --t-lg: 15.5px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --rail-w: 188px;
+        --bar-h: 36px;
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --rail: #e6ebf2;
+        --hairline: rgba(16, 24, 40, 0.12);
+        --hairline-strong: rgba(16, 24, 40, 0.2);
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+        --accent: #0e7490;
+        --accent-ink: #ffffff;
+        --run: #047857;
+        --rose: #be123c;
+        --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 24px 80px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          'Segoe UI',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+      h1 {
+        font-size: 21px;
+        margin: 0 0 6px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 40px 0 4px;
+      }
+      h2 .tag {
+        font-size: var(--t-xs);
+        font-weight: 500;
+        color: var(--ink-faint);
+        margin-left: 8px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 22px 0 6px;
+      }
+      p.lead,
+      p.caption {
+        color: var(--ink-dim);
+        margin: 0 0 12px;
+        max-width: 1040px;
+      }
+      p.caption {
+        font-size: var(--t-md);
+      }
+      code {
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: var(--t-sm);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      ol,
+      ul {
+        max-width: 1040px;
+      }
+
+      /* ---- 一屏窗口（顶栏 36 + 左栏 188 + 状态栏），真实尺寸 ---- */
+      .screen {
+        width: 1220px;
+        max-width: 100%;
+        margin: 10px 0 6px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        overflow: hidden;
+        box-shadow: var(--shadow-focus);
+        background: var(--bg);
+      }
+      .screen .bar {
+        height: var(--bar-h);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px;
+        background: var(--rail);
+        border-bottom: 1px solid var(--hairline);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: var(--rail-w) minmax(0, 1fr);
+        min-height: 260px;
+      }
+      .shell .rail {
+        background: var(--rail);
+        border-right: 1px solid var(--hairline);
+        padding: 16px 12px;
+      }
+      .shell .rail .brand {
+        font-weight: 600;
+        font-size: var(--t-md);
+      }
+      .shell .rail .navline {
+        margin-top: 10px;
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .shell .rail .navline.on {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .shell .body {
+        padding: 20px;
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+      }
+      .statusbar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 6px 20px;
+        background: var(--rail);
+        border-top: 1px solid var(--hairline);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .statusbar .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--rose);
+        display: inline-block;
+        margin-right: 6px;
+      }
+
+      /* ---- 启动锁（真实尺寸：inset 0、z 60、卡片 460px、转圈 26px）---- */
+      .lock {
+        display: grid;
+        place-items: center;
+        min-height: 260px;
+        background: var(--bg);
+      }
+      .lock-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        max-width: 460px;
+        padding: 28px 32px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        background: var(--surface);
+        box-shadow: var(--shadow-focus);
+        text-align: center;
+      }
+      .lock-spinner {
+        width: 26px;
+        height: 26px;
+        border: 2px solid var(--hairline-strong);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+      }
+      .lock-title {
+        margin: 0;
+        font-size: var(--t-lg);
+        font-weight: 600;
+      }
+      .lock-desc {
+        margin: 0;
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .lock-note {
+        margin: 0;
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 30px;
+        padding: 0 13px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        background: var(--surface-2);
+        color: var(--ink);
+        font-size: var(--t-sm);
+      }
+      .btn.ghost {
+        background: transparent;
+        border-color: transparent;
+        color: var(--ink-dim);
+      }
+
+      /* ---- 选项排版 ---- */
+      .opt {
+        margin: 6px 0 26px;
+        padding: 14px 16px 8px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: rgba(255, 255, 255, 0.6);
+      }
+      .opt.sel {
+        border-color: var(--accent);
+        background: #fff;
+      }
+      .opt > header {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .opt > header b {
+        font-size: 15px;
+      }
+      .opt > header .why {
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      table {
+        border-collapse: collapse;
+        margin: 10px 0 0;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        overflow: hidden;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--hairline);
+        padding: 8px 14px;
+        text-align: left;
+        font-size: var(--t-md);
+      }
+      th {
+        background: var(--surface-2);
+        font-weight: 600;
+        color: var(--ink-dim);
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>向导结束后的自动启动，要不要上启动锁</h1>
+    <p class="lead">
+      你要的这条我读代码确认了现状：放行页点「进入 DSH Console」（或点逃生口）之后，
+      <code>app.ts</code> 的 <code>wireGateAutoStart()</code> 会自己 <code>api.start()</code> 拉起
+      dsh， 但**故意不上锁** —— 这是冻结表 R-07 当初的裁定（「逃生 /
+      放行之后的自动启动不出现启动锁」），
+      理由是启动锁当时只能**单向推进**，要重新上锁就得改成"每次状态变化重新判定"，而那正是 AGENTS
+      §7.9 修掉的那个 bug（解锁之后条件又变回不满足，锁又扣上来）。
+    </p>
+    <p class="lead">
+      所以这次不是把 R-07 删掉，而是给启动锁加一个**显式的第二回合**：只有「向导结束 → 自动启动」
+      这一件事能请求上锁，其它任何状态变化都不会让锁回来（下面 §3 第 ③ 条）。要请你定的是两件事：
+      哪些离开方式上锁、锁上写什么。
+    </p>
+
+    <h2>0. 现在是什么样<span class="tag">要改掉的那条</span></h2>
+    <p class="caption">
+      放行页点「进入 DSH Console」之后：直接是主界面，状态栏写着「启动中」，**没有锁**。
+    </p>
+    <div class="screen">
+      <div class="bar"><span>DSH Console</span><span>·</span><span>你现在就在主界面里</span></div>
+      <div class="shell">
+        <div class="rail">
+          <div class="brand">DSH Console</div>
+          <div class="navline on">控制台</div>
+          <div class="navline">dsh 终端</div>
+          <div class="navline">设置</div>
+        </div>
+        <div class="body">
+          （主界面已经开始用了 —— 而 dsh 还在后台被拉起来，状态栏只会写一句「启动中」）
+        </div>
+      </div>
+      <div class="statusbar">
+        <span class="dot"></span><span>启动中 · 进程已经建好，等端口开始响应</span>
+      </div>
+    </div>
+
+    <h2>1. 哪些离开门禁层的方式要上锁<span class="tag">选一个</span></h2>
+    <p class="caption">
+      两种离开方式都会触发自动启动（今天就是这样）；差别只在"要不要把用户按住等"。逃生口那条路上环境
+      本来就没配好，dsh 很可能起不来（锁会立刻因为"异常相位"解锁 —— 也就是闪一下）。
+    </p>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 只有放行页点「进入 DSH Console」（我建议这个）</b>
+        <span class="why"
+          >语义最顺：放行页的意思是「环境好了，进去吧」，进去时锁一下等 dsh 是合理的；而逃生口写的是
+          「环境还没准备好，我稍后自己处理」——
+          用户已经明确说"不等了"，再按他一下与他刚说的话相反。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="bar">
+          <span>DSH Console</span><span>·</span><span>放行页点了「进入 DSH Console」之后</span>
+        </div>
+        <div class="lock">
+          <div class="lock-card">
+            <span class="lock-spinner"></span>
+            <h2 class="lock-title">正在启动 dsh 服务</h2>
+            <p class="lock-desc">正在拉起进程并等待健康检查</p>
+            <p class="lock-note">已等待 2 秒 · 就绪后自动打开 DeepSeek Harness 并进入全屏</p>
+            <button class="btn ghost">不等了，先进入界面</button>
+          </div>
+        </div>
+      </div>
+      <p class="caption">逃生口那条路：**不上锁**（照现在的样子：主界面 + 状态栏「启动中」）。</p>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 「进入 DSH Console」与逃生口都上锁</b>
+        <span class="why"
+          >一致：只要本应用要自动拉起
+          dsh，就把界面按住等它（不管你是怎么离开向导的）。代价是逃生口那条路
+          多半会先闪一下锁再解开（环境没配好 → dsh 起不来 → 异常相位立刻解锁）。</span
+        >
+      </header>
+      <p class="caption">（逃生口那条路的锁长得和上面一模一样，不另画一屏。）</p>
+    </div>
+
+    <h2>2. 锁上写什么<span class="tag">选一个</span></h2>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 与启动时完全一样（我建议这个）</b>
+        <span class="why"
+          >两处走的是同一个状态机、同一张卡：标题「正在启动 dsh
+          服务」+「正在拉起进程并等待健康检查」+ 「已等待 N 秒 · 就绪后自动打开 DeepSeek Harness
+          并进入全屏」+「不等了，先进入界面」。 用户不需要知道"这次启动是向导之后触发的" ——
+          他知道的是"dsh 正在起"。</span
+        >
+      </header>
+      <div class="lock-card" style="margin-bottom: 14px">
+        <span class="lock-spinner"></span>
+        <h2 class="lock-title">正在启动 dsh 服务</h2>
+        <p class="lock-desc">正在拉起进程并等待健康检查</p>
+        <p class="lock-note">已等待 2 秒 · 就绪后自动打开 DeepSeek Harness 并进入全屏</p>
+        <button class="btn ghost">不等了，先进入界面</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 多一行说明这次是向导结束后自动启动的</b>
+        <span class="why"
+          >例如副标题写成「环境已经就绪，正在启动 dsh
+          服务」。好处是前后两屏接得上（用户刚从向导出来）；
+          代价是同一个状态机要分两套文案，以后改文案要记得改两处。</span
+        >
+      </header>
+      <div class="lock-card" style="margin-bottom: 14px">
+        <span class="lock-spinner"></span>
+        <h2 class="lock-title">正在启动 dsh 服务</h2>
+        <p class="lock-desc">环境已经就绪，正在拉起 dsh 进程并等待健康检查</p>
+        <p class="lock-note">已等待 2 秒 · 就绪后自动打开 DeepSeek Harness 并进入全屏</p>
+        <button class="btn ghost">不等了，先进入界面</button>
+      </div>
+    </div>
+
+    <h2>3. 三条固定规则<span class="tag">不是选择，是这条改动的边界</span></h2>
+    <ol>
+      <li>
+        <b>没有等待就不上锁</b>：dsh 已经在跑、或这一轮只是接管了外部实例时，自动启动是空操作 ——
+        这时**不显示锁**（否则只是闪一下）。判据是主进程回报的相位，界面不自己猜。
+      </li>
+      <li>
+        <b>解锁条件与启动锁完全一样</b>：dsh 就绪（该开的页面也开了）/ 异常相位 / 超过 90 秒 /
+        点「不等了，先进入界面」/ 按 <code>Esc</code>。锁永远只是免打扰，不是把人关在外面。
+      </li>
+      <li>
+        <b>不改成可重入，只加一个"显式的第二回合"</b>：状态机仍然是单向的，只是允许
+        <code>armAfterGate()</code> 在"向导结束 → 自动启动"这一刻开一个新回合（一次运行里每个回合
+        最多锁一次）。这样既拿到你要的效果，又不会回到"某次无关的状态变化又把锁扣上来"那个 bug。
+        与门禁层的互斥照旧：<code>--z-gate</code>（58）低于锁（60），交接的那一帧永远是锁盖住门禁。
+      </li>
+    </ol>
+
+    <h2>回给我这张表就行</h2>
+    <table>
+      <tr>
+        <th>#</th>
+        <th>问题</th>
+        <th>我的建议</th>
+        <th>你的选择</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>哪些离开方式上锁</td>
+        <td>A 只有「进入 DSH Console」</td>
+        <td>&nbsp;</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>锁上的文案</td>
+        <td>A 与启动时完全一样</td>
+        <td>&nbsp;</td>
+      </tr>
+    </table>
+    <p class="caption" style="margin-top: 12px">
+      例：回一句「1A 2A」就是全按我的建议走。落地要动的是
+      <code>renderer/app.ts</code>（启动锁的第二个回合 +
+      自动启动时上锁）、<code>renderer/lib/boot-lock.ts</code>（不变，仍然只回答"锁在不在显示"）、
+      以及冻结表里 R-07 那条（改成"放行页进入时上锁、逃生口不上锁"），自检与交互文档跟着补。
+    </p>
+  </body>
+</html>
