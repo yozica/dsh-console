@@ -2529,22 +2529,21 @@ async function main(): Promise<void> {
     })(),
   );
   check(
-    '环境自检页：长文案有行长上限（同一页三处共用一个 token，别再跟着窗口一起变宽）',
+    '环境自检页：圆点与内容永远左右并排（.env-main 的 flex 基宽是 0，不是内容宽度）',
     (() => {
-      const rootBody = cssBlock(':root');
-      const lightBody = cssBlock(":root[data-theme='light']");
-      const read = /--env-read:\s*(\d+)px;/.exec(rootBody)?.[1];
-      if (!read || lightBody.includes('--env-read')) return false;
-      // 太宽会切在长路径中间（948px 实测断成 `…/@deepseek-` + `ai/dsh/lib/bin.js`）、
-      // 太窄会把 `dsh 能不能跑` 顶到三行；820 是这一页实测折行落在两段路径之间空格上的那档
+      const main = cssBlock('.env-main');
+      // 基宽 auto = 内容自己的宽度：说明一长（那几行是两条长路径拼的）就被 flex-wrap 挪到
+      // 圆点下面。真机四个宽度实测：auto 时被挤下去 1 / 3 / 4 / 5 / 7 行，基宽 0 时全是 0。
       return (
-        Number(read) === 820 &&
-        ['.env-scope', '.env-detail', '.env-hint'].every((selector) =>
-          /max-width:\s*var\(--env-read\)/.test(cssBlock(selector)),
-        )
+        /flex:\s*1 1 0;/.test(main) &&
+        /min-width:\s*0;/.test(main) &&
+        // 换行能力得留给「整行铺开」的那两块（否则它们会跟正文抢同一行）
+        /flex-wrap:\s*wrap;/.test(cssBlock('.env-row')) &&
+        /flex:\s*1 1 100%;/.test(cssBlock('.env-confirm')) &&
+        /flex:\s*1 1 100%;/.test(cssBlock('.env-owner-note'))
       );
     })(),
-    `--env-read: ${/--env-read:\s*(\d+px)/.exec(cssBlock(':root'))?.[1] ?? '（没有）'}`,
+    cssBlock('.env-main').replace(/\s+/g, ' ').trim().slice(0, 70),
   );
   check(
     '环境自检：完整探测才读安装树（快速探测不起子进程、也不解析启动命令，读不到）',
