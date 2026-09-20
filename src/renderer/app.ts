@@ -131,10 +131,21 @@ function wirePaneVisibility(): void {
  * （例如用户手动退出全屏），锁就会重新扣上来 —— done 之后直接返回，杜绝这类回归。
  */
 const BOOT_LOCK_MAX_MS = 90000;
+/**
+ * 「向导结束 → 自动启动」那一回合等相位变成 `starting` 的窗口（冻结 §0.4 的 R-32）。
+ * 过了这个窗口还没等到，就说明这一轮**没有等待可等**（dsh 已经在跑 / 只是接管了外部实例 /
+ * 启动失败），回合收掉、锁不出现 —— 也绝不会把用户以后自己点的「启动」算进这一轮。
+ */
+const GATE_ARM_WINDOW_MS = 5000;
 type BootLockState = 'idle' | 'waiting' | 'done';
+/** 启动锁的"回合"：应用启动那一次 / 向导结束后自动启动那一次（R-32） */
+type BootLockEpisode = 'startup' | 'afterGate';
 let bootLockState: BootLockState = 'idle';
+let bootLockEpisode: BootLockEpisode = 'startup';
 let bootLockDeadline = 0;
 let bootLockStartedAt = 0;
+/** 回合窗口的定时器（真的等到 `starting` 上锁之后就清掉） */
+let gateArmTimer: ReturnType<typeof setTimeout> | null = null;
 
 function setBootLock(on: boolean): void {
   document.body.dataset.locked = on ? 'true' : 'false';
@@ -150,6 +161,30 @@ function releaseBootLock(): void {
   setBootLock(false);
 }
 
+/**
+ * 给"向导结束后的自动启动"开一个**新的单向回合**（冻结 §0.4 的 R-32）。
+ *
+ * 这是让启动锁重新走一轮的**唯一**入口，只在放行页点「进入 DSH Console」那一条路上调用
+ * （逃生口不调 —— 用户刚说了「不等了」）。之所以是"显式开一个回合"而不是把状态机改成
+ * 可重入：早期那版用"布尔量 + 每次状态变化重新判定"，解锁之后只要条件又变回不满足
+ * （例如手动退出全屏），锁就重新扣上来 —— 那是 AGENTS §7.9 修掉的 bug。
+ *
+ * 上锁本身仍然只有一处（`updateBootLock` 的 idle 分支看 `phase === 'starting'`），
+ * 这里只是把回合位重置成 `idle` 并挂一个窗口定时器：窗口内没等到 `starting` 就把回合收成
+ * `done`（没有等待就不上锁），于是"用户以后自己点启动"永远落不进这一轮。
+ */
+function armAfterGate(): void {
+  if (bootLockEpisode === 'afterGate') return;
+  bootLockEpisode = 'afterGate';
+  bootLockState = 'idle';
+  bootLockDeadline = 0;
+  if (gateArmTimer !== null) clearTimeout(gateArmTimer);
+  gateArmTimer = setTimeout(() => {
+    gateArmTimer = null;
+    if (bootLockState === 'idle') bootLockState = 'done';
+  }, GATE_ARM_WINDOW_MS);
+}
+
 /** 锁上的那几秒给个时间感：已等待几秒 + 接下来会自动发生什么 */
 function updateBootLockNote(): void {
   if (bootLockState !== 'waiting') return;
@@ -162,10 +197,16 @@ function updateBootLock(phase: DshPhase): void {
   if (bootLockState === 'done') return;
 
   if (bootLockState === 'idle') {
-    // 只有"启动应用时就在拉起"才加锁；用户自己点「启动」不加锁（那时他要看日志）
+    // 只有"这一轮是我们自己在拉起"才加锁：应用启动那一次、以及放行页进入之后自动启动那一次
+    // （`armAfterGate()` 开的第二回合，R-32）。用户自己点「启动」不加锁（那时他要看日志）——
+    // 第二回合的窗口已经把这种情形挡在外面了。
     if (phase !== 'starting') {
       bootLockState = 'done';
       return;
+    }
+    if (gateArmTimer !== null) {
+      clearTimeout(gateArmTimer);
+      gateArmTimer = null;
     }
     bootLockState = 'waiting';
     bootLockStartedAt = Date.now();
@@ -336,10 +377,11 @@ let gateAutoStartTried = false;
  * 为什么需要它：被门禁挡住的那一轮**没有自动拉起 dsh**（那正是门禁的意义），
  * 用户逃生或点「进入 DSH Console」之后，"打开应用就能用"这条既有约定要接上（需求 §5.2）。
  *
- * 三条硬要求（冻结 §1 R-07）：
- *   - **不加启动锁**：锁是单向状态机（`idle → waiting → done`，AGENTS 7.9 的教训），
- *     要让它重新上锁就得把它改成可重入 —— 那正是当初修掉的那个 bug；
- *   - 只在用户明确离开门禁层之后触发，且**整个运行只触发一次**；
+ * 三条硬要求（冻结 §1 R-07 + §0.4 的 R-32）：
+ *   - **放行页那条路要显示启动锁**：用户点「进入 DSH Console」之后界面按住等他看 dsh 起来
+ *     （`armAfterGate()` 开一个显式的新回合，单向状态机本身不变）；**逃生口那条路不上锁** ——
+ *     用户刚说了「环境还没准备好，我稍后自己处理」，再按住他等与他刚说的话相反；
+ *   - 两条路都照旧自动启动，且**整个运行只触发一次**；
  *   - 开关仍归设置 `autoStart`，关着就什么都不做。
  */
 function wireGateAutoStart(): void {
@@ -348,6 +390,8 @@ function wireGateAutoStart(): void {
     if (gateAutoStartTried) return;
     gateAutoStartTried = true;
     if (!settings.value.autoStart) return;
+    // 只有"放行页点进入"这一条路开新回合（R-32 的 1A）：逃生口不上锁
+    if (phase === 'entered') armAfterGate();
     void api.start().then(
       (result) => {
         if (!result.ok) console.warn('[gate] 自动启动失败:', result.error ?? '未知原因');

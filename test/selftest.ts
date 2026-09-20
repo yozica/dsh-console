@@ -887,6 +887,40 @@ async function main(): Promise<void> {
   );
   check('启动锁：解锁写入 done，不可逆', /bootLockState = 'done'/.test(rendererJs));
   check('启动锁：done 之后直接返回', /if \(bootLockState === 'done'\) return/.test(rendererJs));
+  // t44（冻结 §0.4 的 R-32）：向导结束后的自动启动那一次也要上锁，但**不许**改成可重入 ——
+  // 只加一个显式的第二回合；回合带 5 秒窗口，且只有放行页那条路开回合（逃生口不上锁）。
+  // 计数与切片都先剥掉注释（注释里也会提到这些名字）。
+  const bootLockCode = rendererJs.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const armAfterGateBody =
+    bootLockCode.match(/function armAfterGate\(\): void \{[\s\S]*?\n\}/)?.[0] ?? '';
+  const gateAutoStartBody =
+    bootLockCode.match(/function wireGateAutoStart\(\): void \{[\s\S]*?\n\}/)?.[0] ?? '';
+  const idleWrites = (bootLockCode.match(/bootLockState = 'idle';/g) || []).length;
+  check(
+    '启动锁：向导结束后的自动启动是"显式开的一个回合"（入口唯一、带 5 秒窗口、自己不调 setBootLock）',
+    armAfterGateBody.length > 200 &&
+      /bootLockEpisode = 'afterGate';/.test(armAfterGateBody) &&
+      /bootLockState = 'idle';/.test(armAfterGateBody) &&
+      /GATE_ARM_WINDOW_MS/.test(armAfterGateBody) &&
+      /if \(bootLockState === 'idle'\) bootLockState = 'done';/.test(armAfterGateBody) &&
+      // 写 idle 的地方只有两处：声明那一行 + 这个回合入口。上锁本身仍然只有一处（idle → waiting）
+      idleWrites === 1 &&
+      /let bootLockState: BootLockState = 'idle';/.test(bootLockCode) &&
+      !/setBootLock\(/.test(armAfterGateBody),
+    `${idleWrites} 处 bootLockState = 'idle';`,
+  );
+  check(
+    '启动锁：只有放行页那条路开第二回合（逃生口不上锁），且整个运行只试一次',
+    gateAutoStartBody.length > 200 &&
+      /if \(phase === 'entered'\) armAfterGate\(\);/.test(gateAutoStartBody) &&
+      /if \(phase !== 'escaped' && phase !== 'entered'\) return;/.test(gateAutoStartBody) &&
+      /if \(gateAutoStartTried\) return;/.test(gateAutoStartBody) &&
+      // armAfterGate 只有"定义 + 这一处调用"
+      (bootLockCode.match(/armAfterGate\(\)/g) || []).length === 2 &&
+      // 上锁那一刻要把窗口定时器收掉（不然它 5 秒后还会去改状态）
+      /clearTimeout\(gateArmTimer\)/.test(bootLockCode),
+  );
+
   // 解锁条件里一旦掺进"当前是否全屏"，用户一退全屏就会重新满足上锁条件。
   // 只看代码，不看注释（注释里提到 immersive 是为了解释这个坑）。
   const updateBootLockBody =
