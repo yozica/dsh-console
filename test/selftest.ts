@@ -25,6 +25,8 @@ import * as pluginManager from '../src/main/plugin-manager';
 import * as patchLayer from '../src/main/patch-layer';
 import * as profileBundles from '../src/main/profile-bundles';
 import * as envDoctor from '../src/main/env-doctor';
+// 渲染层的纯逻辑（`lib/**` 与 selftest 同属「契约与编排」那一层，见 AGENTS §2 的模块边界）
+import * as envDetail from '../src/renderer/lib/env-detail';
 import * as nodeInstaller from '../src/main/node-installer';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
@@ -2541,6 +2543,41 @@ async function main(): Promise<void> {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     })(),
+  );
+  check(
+    '环境自检页：长路径的折行落在路径分隔符上（说明切段 + 片段之间插 <wbr>）',
+    (() => {
+      const cases: [string, string[]][] = [
+        [
+          '/Users/x/node_modules/@deepseek-ai/dsh/lib/bin.js',
+          ['/', 'Users/', 'x/', 'node_modules/', '@deepseek-ai/', 'dsh/', 'lib/', 'bin.js'],
+        ],
+        ['C:\\Users\\x\\dsh\\lib\\bin.js', ['C:\\', 'Users\\', 'x\\', 'dsh\\', 'lib\\', 'bin.js']],
+        ['本地 Shell：/bin/zsh', ['本地 Shell：/', 'bin/', 'zsh']],
+        ['没有分隔符', ['没有分隔符']],
+        ['', ['']],
+      ];
+      // 模板里那句注释本身就写着"不用 v-html"，所以查之前先把注释剥掉（§7.13 的老规矩）
+      const template = fs
+        .readFileSync(path.join(rendererDir, 'panes', 'EnvPane.vue'), 'utf8')
+        .replace(/<!--[\s\S]*?-->/g, '');
+      return (
+        cases.every(
+          ([input, expected]) =>
+            JSON.stringify(envDetail.detailSegments(input)) === JSON.stringify(expected) &&
+            // 往返必须一字不差：<wbr> 是元素不是字符，复制出来的文本不能变
+            envDetail.detailSegments(input).join('') === input,
+        ) &&
+        // 接线：模板里真的用它切段、片段之间插 <wbr>、片段本身包在 `.env-seg` 里
+        // （不包的话 `@deepseek-ai` 里那个连字符自己就是一个断点，窄窗口下又会切在它上面）；
+        // **不许** v-html —— 那段文字里有用户机器上的真实路径
+        /detailSegments\(check\.detail\)/.test(template) &&
+        /<wbr v-if="index > 0" \/><span class="env-seg">/.test(template) &&
+        /white-space:\s*nowrap/.test(cssBlock('.env-seg')) &&
+        !/v-html/.test(template)
+      );
+    })(),
+    `切段示例：${envDetail.detailSegments('/a/b/c').join('|')}`,
   );
   check(
     '环境自检页：圆点与内容永远左右并排（.env-main 的 flex 基宽是 0，不是内容宽度）',

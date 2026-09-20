@@ -22,6 +22,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { envFocus } from '../lib/env-anchor.js';
+import { detailSegments } from '../lib/env-detail.js';
 import {
   cancelEnvFix,
   clearEnvFixOutput,
@@ -827,7 +828,15 @@ onUnmounted(() => {
               <span class="env-title">{{ TITLES[check.id] }}</span>
               <span class="env-state">{{ STATUS_TEXT[check.status] }}</span>
             </div>
-            <p class="env-detail">{{ check.detail }}</p>
+            <!-- 说明里常有两条长路径（node 的入口 + dsh 的 bin.js）：按路径分隔符切开、片段之间
+                 插一个 <wbr>，折行才会落在分隔符上而不是路径中间（见 lib/env-detail.ts）。
+                 不用 v-html —— 这段文字里有用户机器上的真实路径，当标记解析就是一条注入面。
+                 <wbr> 与插值之间不能留空格，所以它们写在同一行（片段本身不许再断：见 .env-seg）。 -->
+            <p class="env-detail">
+              <template v-for="(segment, index) in detailSegments(check.detail)" :key="index"
+                ><wbr v-if="index > 0" /><span class="env-seg">{{ segment }}</span></template
+              >
+            </p>
             <p v-if="check.fixHint" class="env-hint">
               <code>{{ check.fixHint }}</code>
               <button class="btn tiny" @click="copyHint(check.fixHint)">复制</button>
