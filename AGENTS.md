@@ -6,7 +6,7 @@
 
 ## 1. 快速开始
 
-需要 **Node ≥ 20.19**（`vite` 的 `engines` 是 `^20.19.0 || >=22.12.0`；CI 固定用 Node 22）。
+需要 **Node ≥ 20.19**（`vite` 的 `engines` 是 `^20.19.0 || >=22.12.0`；CI 与 release 都固定用 **Node 24**，理由见 §6）。
 注意这是**构建期**要求，跟「dsh 能不能跑」是两句区间：后者是 `^22.19.0 || >=24.0.0`（而且判据要读**本机装的那一份**，见 §7.26）。
 
 ```bash
@@ -217,7 +217,7 @@ git tag v0.2.3 && git push origin main --tags
 
 ### `release.yml` 的两个 job 与产物
 
-- **`build-windows` / `build-macos`**：各在 `windows-latest` / `macos-latest` 上 `npm ci` → `npm test` → `lint && format:check && typecheck` → `npm run build` → `electron-builder --win|--mac --publish never`，产物挂成 Artifacts。**不加 `--config.npmRebuild=false`**：runner 上有 C++ 工具链，让 electron-builder 对着打包用的 Electron 版本重编 node-pty 才对（node-pty 是 N-API，跨 Electron 大版本不用改代码）。
+- **`build-windows` / `build-macos`**：各在 `windows-latest` / `macos-latest` 上（**Node 24**，与 `ci.yml` 同一个版本）`npm ci` → `npm test` → `lint && format:check && typecheck` → `npm run build` → `electron-builder --win|--mac --publish never`，产物挂成 Artifacts。为什么钉 24：**应用自己的运行时就是 Node 24**（Electron 44 内置 Node 24.20，见快照里的 `env.versions`），用同一个大版本构建/打包，最不容易出现「CI 上好好的、用户机器上是另一回事」；`publish` 那个 job 只跑 `npx tsx`、不 `npm ci`，但也**显式钉了 Node 24**（不钉跑的就是 runner 的默认那个，说不清是哪个版本）。**不加 `--config.npmRebuild=false`**：runner 上有 C++ 工具链，让 electron-builder 对着打包用的 Electron 版本重编 node-pty 才对（node-pty 是 N-API，跨 Electron 大版本不用改代码）。
 - **`publish`**（仅在标签构建时跑）：收齐两边产物 → `tools/release-notes.mts` 生成标题与正文（`--assets` 吃 `ls assets` 的输出）→ `gh release create --draft --title "$(cat .release/title.txt)" --notes-file .release/notes.md`（已存在就只补产物、正文不动）→ `gh release upload --clobber`。产物是 Windows 的 NSIS 安装包 + 便携版 exe、macOS 的 arm64 / x64 dmg 与 zip，外加 `latest.yml` / `latest-mac.yml` 与 `*.blockmap` —— 这些就是**自动更新（electron-updater）的更新源**：Windows 版按 `latest.yml` 检查与下载增量包，`*.blockmap` 是差分索引。手动触发 `release` 工作流则**只构建、不发版**，产物在 Artifacts 里。
 - **为什么打包与发布拆成不同 job**：v0.2.0 时两个 runner 各自 `electron-builder --publish always`，并发调 `getOrCreateRelease()` 都发现「没有 release」就各建一个，Windows 的安装包与 `latest.yml` 因此没传上去；更麻烦的是 electron-builder 默认 `releaseType=draft`，release 一旦被人点成「已发布」，后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn）。现在草稿由 `gh release create` 自己建、产物用 `gh release upload --clobber` 传，重跑可以放心覆盖同名产物。**推论：不要改回 `--publish always`，也不要让两个平台各自建 Release。**
 
