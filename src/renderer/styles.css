@@ -278,6 +278,15 @@ select {
   outline-offset: 2px;
 }
 
+/* 例外：`<main>` 的焦点是**程序化**交过去的（门禁层收起时把焦点交给主内容区，
+   交互 §11.5），不是用户 Tab 出来的。给它按上面那条画一圈 2px 的环，等于给整块内容区
+   套一个"多余的框" —— 真机上用户报的就是它（用 `CSS.forcePseudoState` 强制
+   `:focus-visible` 复现过：顶部 CSS y=32..33 变成 rgba(14,116,144,.35) 的蓝，左边/下边
+   同样有一圈，右边被窗口裁掉）。控件（按钮 / 输入框 / 列表项）的焦点环一个字不动。 */
+main:focus-visible {
+  outline: none;
+}
+
 /* ============================================================ 骨架 */
 
 .app {
@@ -2975,7 +2984,8 @@ body[data-immersive='true'] .webview-wrap {
   padding: 10px 0;
 }
 
-/* 版本区间的出处：与 vite 的 engines 是同一句，所以写在这一屏里，不藏在 tooltip */
+/* 版本区间的出处：dsh 与它依赖链的要求（构建期那句是另一个区间，只judge「应用自带运行时」），
+   所以写在这一屏里，不藏在 tooltip */
 .env-scope {
   margin: 0;
   color: var(--ink-faint);
@@ -3034,8 +3044,14 @@ body[data-immersive='true'] .webview-wrap {
   box-shadow: 0 0 0 3px var(--rose-soft);
 }
 
+/* 基宽必须是 **0**，不能是 `auto`（§7.27）。
+   `.env-row` 是 `flex-wrap: wrap` 的一行（后两个 100% 宽的子块要靠它换行），而
+   `flex-basis: auto` 用的是**内容自己的宽度** —— 说明一长（node / dsh / dsh-run 那几行是两条
+   长路径），它就可能放不进这一行，于是整块被挪到下一行、圆点一个人留在上面。实测（窗口
+   1220 / 900 / 760 / 640）：`auto` 时被挤下去的行数是 0 / 4 / 5 / 7，`0` 时全是 0。
+   基宽 0 的代价是这一列不再有"内容宽度"这个参考 —— 但它本来就要 flex-grow 填满剩余空间。 */
 .env-main {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
 }
 

@@ -7,6 +7,7 @@
 ## 1. 快速开始
 
 需要 **Node ≥ 20.19**（`vite` 的 `engines` 是 `^20.19.0 || >=22.12.0`；CI 固定用 Node 22）。
+注意这是**构建期**要求，跟「dsh 能不能跑」是两句区间：后者是 `^22.19.0 || >=24.0.0`（而且判据要读**本机装的那一份**，见 §7.26）。
 
 ```bash
 npm install
@@ -57,11 +58,11 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        270 项自检（`npm test`），不需要 Electron
+test/selftest.ts        283 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
-scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹具，20 条）—— 按约定放在这里、以 `-cases.mjs` 结尾，门禁会自动收录（第 5 节）
+scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹具，32 条）—— 按约定放在这里、以 `-cases.mjs` 结尾，门禁会自动收录（第 5 节）
 scripts/env-wizard-cases.mjs  环境向导的独立反例脚本（门禁判定 + 安装引擎纯函数 + 逃生口，185 条）—— 同上，自动收录
 .changeset/             每条改动一个片段；config.json 里 changelog: false
 vite.config.mts         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
@@ -99,7 +100,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（270 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（283 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -642,12 +643,105 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **哪条自检守着**：四条**静态检查**（启动记录出现在 `app.whenReady()` 之前、`!gotLock` 分支走 `app.exit` 且不出现 `app.quit()`、两个 `process.on` + `showErrorBox` + 日志路径、`writeLine` 是同步的且没有文件时仍打终端）。**这些分支只在真机上才会真正跑到**，所以改完要手工验一次：起两个实例（第二个应当立刻干净退出，日志里多一行说明）、临时在主进程里 `throw new Error('probe')` 看对话框是否带日志路径（验完删掉）。
 
+### 7.26 「能不能跑 dsh」的 Node 要求：先看**本机装的那一份 dsh**，兜底才是 `^22.19.0 || >=24.0.0`
+
+**现象**：自检原来把 Node `20.19` / `22.12` 的机器判成「符合要求」，而 dsh 在那种 Node 上是**静默退出**（退出码 0、零输出，§7.4）—— 用户看到的是「已停止」，看不出是解释器的问题。
+
+**分界线是 22.18，不是 24**（用户观察到"24 以下的 Node 上 dsh 会静默退出"，2026-09-20 逐个实测纠正）：同一个 dsh `0.1.5-rc.1`，`dsh --version` 与 `dsh web` 一起测：
+
+| Node                        | `typeof import.meta.main` | `dsh --version`                                   | `dsh web --no-open`                           |
+| --------------------------- | ------------------------- | ------------------------------------------------- | --------------------------------------------- |
+| 16.20 / 18.20 / 20.10       | `undefined`               | exit 1，**有报错**（`node:util` 没有 `parseEnv`） | —                                             |
+| 20.19.2 / 22.1.0 / 22.17.1  | `undefined`               | **exit 0、零输出**                                | **exit 0、0 字节输出，端口不开**              |
+| 22.18.0 / 22.19.0 / 22.22.1 | `boolean`                 | `0.1.5-rc.1`                                      | 22.22.1 实测**服务真的起来**（`GET /` → 401） |
+| 24.14.0 / 24.14.1           | `boolean`                 | `0.1.5-rc.1`                                      | —                                             |
+
+**机制**（这条最值得记）：`dsh` 的入口最后一行是 `if (import.meta.main) await runCli();`。`import.meta.main` 在 22 线是 **22.18.0** 才进的（24 线是 24.2.0），没有它的 Node 上这个属性求值是 `undefined` → `runCli()` 根本不执行 → 事件循环空转结束 → **退出码 0、零输出**。它是**入口那一层**的门，所以 `--version` / `web` / `plugin` 一视同仁；而 ≤20.10 倒在更早的 `parseEnv` 导入上，所以"静默"只出现在 20.19–22.17 这个窗口里。外部旁证：[es-main#161](https://github.com/tschaub/es-main/issues/161)、[nodejs/node#58693](https://github.com/nodejs/node/pull/58693)（v22.x backport）。
+
+**上游那句从哪来**：**仓库根**的 `package.json`（<https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json>）写着 `"engines": { "node": "^22.19.0 || >=24.0.0" }` —— 比真下限保守一格（22.18 就能跑），`>=24.0.0` 又比 24 线的真下限（24.2.0）松两格。两个容易看走眼的地方：**发布出去的 `@deepseek-ai/dsh` 的 manifest 里没有 `engines`**（在 `node_modules` 里翻不到、npm 也不警告 —— 本机 0.1.5-rc.1 实测），而**一致的下限**能从依赖链看出来：undici 8 写着 `engines: { node: '>=22.19.0' }`。
+
+**现在的做法（用户裁决：不是所有人装的是同一份 dsh，别只信抄来的常量）**：
+
+- **运行期读本机那一份**（`readLocalDshRequirement`，完整探测才跑、~20ms）：从启动方式反推安装根（入口脚本路径 → shim 的符号链接 → npm 的两种全局布局，**最后读 package.json 验名字**），再递归收 `node_modules` 里的 `engines.node`（`collectNodeEngines`，层数/包数都有上限、按名字排序保证可复现），取**下限最高**的那条（`highestNodeRequirement`，并数出"同一条下限还有几个包也在要"）。本机实测：524 个包里 3 个要 `>=22.19.0`（`@earendil-works/pi-ai` / `pi-telemetry` / `undici`）。
+- **判据是两句都要满足**（`judgeNodeVersion`）：本机那句（`localNodeRange`：依赖链 > 它自己声明的 `engines`）+ 兜底那句 `NODE_RANGE`。**为什么不是二选一**：依赖链那句是数学区间，**它不知道 dsh 的入口用了哪个 Node API** —— `>=22.19.0` 数学上包含奇数版 23，而 23 早于 `import.meta.main`。上游那句正是靠 `^22.19.0` 的**上界**把 23 挡在外面的。两句都满足 = 本机证据能在它更严时抬高门槛（将来 dsh 要 `>=26` 就按 26 判），兜底那句负责挡住依赖链看不见的那些线。
+- **区间解析只有一个实现**（`satisfiesSimpleRange`）：`>=` `>` `<=` `<` `=`、`^`、`~`、x-range（`22` / `22.19` / `22.x`）、`*`、空格分隔的"与"、`||` 的"或"。`satisfiesNodeRange` / `satisfiesBuildRange` 都改成调它 —— 本机读出来的区间是**任意一句**，没法写死。**认不出来给 `null` 而不是 `false`**（"不猜"），而且**顺序无关**：`>=22.19.0 || 乱写` 与 `乱写 || >=22.19.0` 都是 `true`（有一段说得清且满足就够），只有"没有任何一段满足、且有段认不出来"才是 `null`。故意不实现预发布序（依赖链里没有一条用它，猜错预发布比说"不知道"更糟）。
+- **界面点名来源**：满足时是「`v24.14.1` 满足本机这份 dsh 的要求 `>=22.19.0`（来自依赖 `undici 8.10.2` 等 3 个包）」；不满足时说清"这种 Node 上 dsh 会静默空跑"；**读不到本机那一份**（npx 那条路 / 读不到包目录）时退回兜底那句、文案与从前一致。上面那句常量仍然用于「应用自带运行时」（`bundled-runtime`，构建期那句）与契约快照里的 `nodeRange`。
+
+**哪条自检守着**：「环境自检：通用的区间判据是唯一的实现（两句老常量与它逐档一致；认不出来给 null）」「环境自检：「Node 版本」= 本机那份 dsh 说的 + 兜底那句，两句都要满足（23 靠兜底那句挡住）」「环境自检：本机那句的优先序与文案」「环境自检：从本机安装树读得出"这一份 dsh 要哪个 Node"」（真实文件系统建临时目录 + 符号链接）「环境自检：完整探测才读安装树」；`scripts/env-doctor-cases.mjs` 的 C 段钉边界、T 段钉本机证据那 12 条。
+
+### 7.25 环境自检的探测不许阻塞主进程，也不许去调"转发器"
+
+**现象**（真机）：双击新版本"没反应"，过一会儿系统弹崩溃提示。日志里两行 `环境自检：node --version 起不来：spawnSync … ETIMEDOUT`；`README`/用户肉眼可见的副作用是 `~/.vite-plus/js_runtime/` 里多出一个 **100+MB 的 Node 运行时**（当天新建）与 5 个 `.tmp*` 残留。
+
+**原因**：完整探测（`collectEnvProbe`）跑在**主进程**上，而且是 **5 个 `spawnSync` × 每个 8 秒超时、串行**（node / npm / pnpm / dsh / dsh-run）—— 最坏把事件循环占住约 40 秒。而它第一个就去敲了 `~/.vite-plus/bin/node`：那是个**转发器**（symlink → `current/bin/vp`，配置 `shimMode: system_first`），在 GUI 应用的窄 PATH 下找不到系统 node，于是**开始下载自己的运行时**；8 秒到点被 `spawnSync` 杀掉（每次杀都留下一个 `.tmp*`），下一个探测再起一个…… 界面在这几十秒里完全没响应，macOS 最后给的就是"没有响应 / 意外退出"。
+
+三个连带发现（都已修）：
+
+1. **超时被说成"起不来"**：`exitCode: null` 落进了"退出码 0 + 零输出 = 静默退出"那条判据（§7.4 的签名），界面于是引导用户去**重装一个好好的 dsh**。现在 `VersionProbe.timedOut` / `DshProbe.timedOut` 与那个签名分开，归"测不出来"（warn）。
+2. **候选表把一个转发器排在真 node 之前**：`findNodeExe` 的硬编码列表里 `~/.vite-plus/bin/node` 在 nvm / fnm 目录**之前**，于是同一台机器上「dsh 用哪个 Node」（`dshInterpreterCandidates`，配套安装优先 → nvm 的真 node）与「外部 Node 这一行」（通用搜索 → 转发器）给出**两个版本**，用户拿终端 `node -v` 对账必然对不上。
+3. **`kill` 只杀壳**：转发器往往只是个 `sh`，真正的活儿（下载器）在它的子进程里、还继承了 stdout / stderr —— 只 `kill` 壳的话 `close` 永不触发、管道一直开着（实测：探针进程因此退不出来）。
+
+**现在的做法**：
+
+- **异步 + 并发**：`runVersion` / `readNpmPrefix` 改成 `spawn` + 定时器（超时就 `killTreeSync` + `destroy()` 三根管道 + `unref()`），`collectEnvProbe` 里四项探测 `Promise.all` 并发跑。`EnvDoctor.report()` 本来就是 `async`，调用方一个字没改。
+- **转发器认出来、不执行**：`isNodeShim(file)` = 跟着符号链接走到最终目标、看名字还是不是 `node`（homebrew 那种 `…/Cellar/node/x/bin/node` 算真 node，vite-plus 那种 `…/current/bin/vp` 算转发器）。`findNodeExe` 改成**两趟**扫描：先真 node、实在没有才退转发器。
+- **「外部 Node」这一行的语义**（用户裁决）：报**真正会被用来跑 dsh 的那一份**（`resolveDshLauncher` 给 `node-bin` 时就是它），并注明"dsh 就用这一份跑"；机器上还有一份被跳过的转发器时，把它**报出来但不执行**（"它的版本随启动环境而变，别拿它跟终端里的 `node -v` 对账"）。
+
+**哪条自检守着**：「环境自检：探测不再走同步子进程（runVersion 里没有 spawnSync），四项并发跑」「环境自检：探测超时是黄灯（"它在忙"），不冒充"退出码 0 + 零输出"的静默退出」「环境自检：node 那一行报"dsh 要用的那份"，并报出被跳过的转发器（不执行它）」「环境自检：认得出"转发器"（最终目标不是 node），真实 node 的符号链接不算」（最后一条用真实文件系统建符号链接，不是纯静态检查）。
+
+**推论**：`scripts/*-cases.mjs` 只被沙箱门禁跑 —— 上面第 1 条那个"超时冒充静默退出"的误判就是这么攒下来的（CI 只跑 `npm test`，而它当时是绿的）。
+
+### 7.27 自检页的圆点与内容必须永远左右并排（`.env-main` 的 flex 基宽是 0）
+
+**现象**（用户报过两次，第一次我绕开了）：窗口一窄，`外部 Node` / `dsh 本体` / `dsh 能不能跑` 这几行的**圆点一个人留在上一行**、内容整块掉到下面 —— 看上去就是"某几行的标题换行了"。窗口越窄，掉下去的行越多。
+
+**原因**：`.env-row` 是 `flex-wrap: wrap` 的一行（**必须** wrap：后两个子块 `.env-confirm` / `.env-owner-note` 是 `flex: 1 1 100%`，要靠它自成一行），而 `.env-main` 写的是 `flex: 1 1 auto` —— **`flex-basis: auto` 用的是内容自己的宽度**。那几行的说明是两条长路径拼的（约 150 字），基宽超过这一行剩下的空间，flex 换行算法就把整块挪到下一行，圆点（`flex: 0 0 auto`，8px）独自留在上面。
+
+**做法**：`.env-main { flex: 1 1 0 }`（基宽 0）。它不再会被"内容太宽"挤走，永远和圆点并排，并且靠 `flex-grow` 填满剩余宽度 —— 所以是**自适应**的：实测视口 1440 / 1220 / 900 / 760 / 640 时正文宽 1150 / 930 / 610 / 470 / 350。
+
+**判据与实测**（CDP 连真机实例量渲染结果；"内容左边缘 − 圆点左边缘 < 12px"即判为被挤下去）：
+
+| 视口 | `flex: 1 1 auto`（改前）     | `flex: 1 1 0`（现在） |
+| ---- | ---------------------------- | --------------------- |
+| 1440 | 1 行（node）                 | 0                     |
+| 1220 | 3 行（node / dsh / dsh-run） | 0                     |
+| 900  | 4 行                         | 0                     |
+| 760  | 5 行                         | 0                     |
+| 640  | 7 行                         | 0                     |
+
+**别用 `width: calc(100% - 18px)` 走这条路**（用户先试过它）：它确实能让圆点留下，但把"圆点 + gap = 18px"这个尺寸抄进了内容规则，而且会**把「更新 pnpm」按钮挤到第二行**（实测 pnpm 那行 70 → 107px，按钮的 top 从 13 变 68）。`flex-basis: 0` 没有这两个副作用（按钮始终在第一行）。
+
+**同一轮试过又撤掉的两件事**（别再往回走）：给正文加 `max-width: 820px` 的行长上限（它顺手让长路径的折行落在两条路径之间的空格上，但**窗口一窄就挡不住圆点被挤下去** —— 那是治标；用户要的是自适应）；以及用户提的 `width: calc(100% - 18px)`（见上）。想让长路径**不从中间断开**（现在 948px 时会断成 `…/@deepseek-` + `ai/dsh/lib/bin.js`），另有一条正路：在 `/` 后面插 `<wbr>`（渲染层小改，未做）。
+
+**哪条自检守着**：「环境自检页：圆点与内容永远左右并排（`.env-main` 的 flex 基宽是 0，不是内容宽度）」。
+
+### 7.28 整块内容区不画焦点环（`main:focus-visible`）
+
+**现象**（用户报的"每次启动时这里都有一个多余的框，不知道是什么"）：控制台页在紧贴顶栏下方、横跨整块内容区的位置，启动后总有一条淡蓝色的细带（左边 / 下边也各有一条，右边贴着窗口边缘看不见）—— 看着像一个空盒子。
+
+**是什么**：**不是元素，是 `<main>` 的焦点环**。门禁层（首启环境门禁）在启动瞬间显示过一次（"检查中"），收起时 `EnvGate.vue` 的 `focusMainContent()` 把焦点交给主内容区（交互 §11.5）；Chrome 把这种程序化交接当成了键盘驱动的焦点，于是命中全局那条
+
+```css
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+```
+
+`--focus` 是 35% 的蓝（`rgba(14, 116, 144, 0.35)`），2px + 2px 偏移正好落在 `main` 的上/左/下三条边上。**怎么确认的**：用 CDP 的 `CSS.forcePseudoState` 给 `main` 强制 `:focus-visible`，顶部 CSS y=32..33 立刻变成 `#a8c6d2`、左边与下边各一条 —— 与用户抓图的位置、颜色一致；DOM 里没有任何元素或伪元素在那儿有背景 / 边框 / 阴影（那一带的另一种更淡的痕迹是 `.focus-card` 的 `--shadow-focus` 上方洇出的 1~2 个色阶，属于设计里"全局唯一一处阴影"的固有软边，不是这个框）。
+
+**做法**：只给 `main` 加一条例外（`main:focus-visible { outline: none }`），**控件（按钮 / 输入框 / 列表项）的焦点环一个字不动** —— 容器是程序化接管焦点用的、Tab 不到它，画一圈框没有任何可达性收益，只有"界面坏了"的观感。
+
+**验证**（改完当场测的，CDP 强制伪类）：`main` 的 `outline=none`、那条带消失；`#btn-env-refresh` 与 `.rail-item` 仍是 `solid 2px rgba(14, 116, 144, 0.35)` ✓。
+
+**哪条自检守着**：「渲染层：整块内容区不画焦点环（main 的焦点是程序化交过去的，不是 Tab 来的）」。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，270 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，283 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

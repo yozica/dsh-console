@@ -15,6 +15,7 @@
  *   8. 自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater）
  */
 
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -907,6 +908,20 @@ async function main(): Promise<void> {
     '启动锁：顶栏也被盖住（没给它更高的 z-index）',
     lockZ > 0 && topbarZ < lockZ,
     `lock=${lockZ} topbar=${topbarZ}`,
+  );
+  check(
+    '渲染层：整块内容区不画焦点环（main 的焦点是程序化交过去的，不是 Tab 来的）',
+    (() => {
+      const ring = cssBlock(':focus-visible');
+      // 控件的焦点环必须原样留着（可达性），只掐掉 main 那一圈 —— 真机上用户报的
+      // "多余的框"就是它（CDP 强制 :focus-visible 复现：顶部/左边/下边各一条蓝边）
+      return (
+        /outline:\s*2px solid var\(--focus\)/.test(ring) &&
+        /outline-offset:\s*2px/.test(ring) &&
+        /outline:\s*none/.test(cssBlock('main:focus-visible'))
+      );
+    })(),
+    cssBlock('main:focus-visible').replace(/\s+/g, ' ').trim(),
   );
 
   // ---------------------------------------------------------- 8. 发布：CHANGELOG 与版本号对齐
@@ -2334,22 +2349,47 @@ async function main(): Promise<void> {
       envAllOk.nodeRange === envDoctor.NODE_RANGE,
   );
 
-  // 边界值：20.18 不满足、20.19 满足、22.11 不满足、22.12 满足、23/24 满足
+  // 边界值（dsh 那句 `^22.19.0 || >=24.0.0`）：20.19 与 22.12 都不算 —— 这正是 2026-09-20
+  // 发现的那个偏差（原来抄的是 vite 的构建期那句，会把跑不动 dsh 的 Node 判成"符合要求"）。
   const envBounds: [string, boolean][] = [
-    ['v20.18.0', false],
-    ['v20.19.0', true],
+    ['v20.19.0', false],
     ['v22.11.9', false],
-    ['v22.12.0', true],
-    ['v23.0.0', true],
+    ['v22.12.0', false],
+    ['v22.18.9', false],
+    ['v22.19.0', true],
+    ['v23.0.0', false],
+    ['v24.0.0', true],
     ['v24.19.0', true],
   ];
+  // 构建期那句（vite 的 engines）另有边界，只给「应用自带运行时」用
+  const envBuildBounds: [string, boolean][] = [
+    ['v20.18.0', false],
+    ['v20.19.0', true],
+    ['v22.12.0', true],
+    ['v21.0.0', false],
+  ];
   check(
-    '环境自检：版本区间只认这一句（20.19 / 22.12 的边界都对）',
+    '环境自检：两个区间各判各的（dsh 的 22.19 / 24 与构建期的 20.19 / 22.12 都对）',
     envBounds.every(([text, expected]) => {
       const version = envDoctor.parseNodeVersion(text);
       return version !== null && envDoctor.satisfiesNodeRange(version) === expected;
-    }) && envDoctor.parseNodeVersion('不是版本号') === null,
-    envDoctor.NODE_RANGE,
+    }) &&
+      envBuildBounds.every(([text, expected]) => {
+        const version = envDoctor.parseNodeVersion(text);
+        return version !== null && envDoctor.satisfiesBuildRange(version) === expected;
+      }) &&
+      envDoctor.parseNodeVersion('不是版本号') === null,
+    `${envDoctor.NODE_RANGE} / 构建期 ${envDoctor.NODE_RANGE_BUILD}`,
+  );
+  check(
+    '环境自检：dsh 那句区间与上游仓库根一致，且与构建期那句确实是两个值',
+    // 上游：https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json
+    // （engines.node）。发布出去的包 manifest 里没有它，所以只能钉这一句字面量。
+    // 两句"不同"用 Set 判：两个常量都是字面量类型，直接写 `!==` 会被 TS 判成必然成立（TS2367）。
+    envDoctor.NODE_RANGE === '^22.19.0 || >=24.0.0' &&
+      envDoctor.NODE_RANGE_BUILD === '^20.19.0 || >=22.12.0' &&
+      new Set<string>([envDoctor.NODE_RANGE, envDoctor.NODE_RANGE_BUILD]).size === 2,
+    `${envDoctor.NODE_RANGE} / ${envDoctor.NODE_RANGE_BUILD}`,
   );
   const envViteEngines = (
     JSON.parse(
@@ -2357,9 +2397,187 @@ async function main(): Promise<void> {
     ) as { engines: { node: string } }
   ).engines.node;
   check(
-    '环境自检：阈值与 vite 的 engines 同一句（升级 vite 时这句话不会悄悄过期）',
-    envViteEngines === envDoctor.NODE_RANGE,
+    '环境自检：构建期那句与 vite 的 engines 同一句（升级 vite 时它不会悄悄过期）',
+    envViteEngines === envDoctor.NODE_RANGE_BUILD,
     `vite: ${envViteEngines}`,
+  );
+
+  // 本机那份 dsh 对 Node 的要求（用户裁决：不是所有人装的是同一份 dsh，别只信抄来的常量）
+  const envLocalFixture: envDoctor.LocalDshRequirement = {
+    version: '0.1.5-rc.1',
+    root: '/x/node_modules/@deepseek-ai/dsh',
+    declared: null,
+    required: { range: '>=22.19.0', name: 'undici', version: '8.10.2', count: 3 },
+    scanned: 524,
+  };
+  check(
+    '环境自检：通用的区间判据是唯一的实现（两句老常量与它逐档一致；认不出来给 null）',
+    (() => {
+      const sweep: envDoctor.NodeVersion[] = [];
+      for (let major = 18; major <= 26; major += 1) {
+        for (const minor of [0, 11, 12, 18, 19, 20, 99]) {
+          sweep.push({ major, minor, patch: 0 });
+        }
+      }
+      return (
+        sweep.every(
+          (version) =>
+            envDoctor.satisfiesNodeRange(version) ===
+            (envDoctor.satisfiesSimpleRange(version, envDoctor.NODE_RANGE) === true),
+        ) &&
+        sweep.every(
+          (version) =>
+            envDoctor.satisfiesBuildRange(version) ===
+            (envDoctor.satisfiesSimpleRange(version, envDoctor.NODE_RANGE_BUILD) === true),
+        ) &&
+        envDoctor.satisfiesSimpleRange({ major: 24, minor: 0, patch: 0 }, '不是区间') === null
+      );
+    })(),
+    `${envDoctor.NODE_RANGE} ／ ${envDoctor.NODE_RANGE_BUILD}：18–26 九档 × 7 个小版本`,
+  );
+  check(
+    '环境自检：「Node 版本」= 本机那份 dsh 说的 + 兜底那句，两句都要满足（23 靠兜底那句挡住）',
+    (() => {
+      const at = (text: string): envDoctor.NodeVersion =>
+        envDoctor.parseNodeVersion(text) as envDoctor.NodeVersion;
+      const ok = envDoctor.judgeNodeVersion(at('v24.19.0'), envLocalFixture);
+      const belowLocal = envDoctor.judgeNodeVersion(at('v22.17.1'), envLocalFixture);
+      // 依赖链那句 `>=22.19.0` 数学上包含奇数版 23，而 23 这条线没有 dsh 入口要的那个 Node API
+      const odd23 = envDoctor.judgeNodeVersion(at('v23.0.0'), envLocalFixture);
+      const stricter = envDoctor.judgeNodeVersion(at('v24.19.0'), {
+        ...envLocalFixture,
+        required: { range: '>=26.0.0', name: 'undici', version: '9.0.0', count: 1 },
+      });
+      const alone = envDoctor.judgeNodeVersion(at('v20.9.0'), undefined);
+      return (
+        ok.status === 'ok' &&
+        ok.failedBy === null &&
+        belowLocal.status === 'warn' &&
+        belowLocal.failedBy === 'local' &&
+        odd23.status === 'warn' &&
+        odd23.failedBy === 'upstream' &&
+        stricter.status === 'warn' &&
+        stricter.failedBy === 'local' &&
+        alone.status === 'warn' &&
+        alone.failedBy === 'upstream' &&
+        alone.local === null
+      );
+    })(),
+  );
+  check(
+    '环境自检：本机那句的优先序与文案（依赖链 > 它自己声明的；点名"来自哪个依赖、几个包也在要"）',
+    envDoctor.localNodeRange(envLocalFixture)?.source === 'local' &&
+      envDoctor.requirementPhrase(envDoctor.localNodeRange(envLocalFixture)!) ===
+        '本机这份 dsh 的要求 >=22.19.0（来自依赖 undici 8.10.2 等 3 个包）' &&
+      envDoctor.localNodeRange({
+        ...envLocalFixture,
+        required: null,
+        declared: '^22.19.0 || >=24.0.0',
+      })?.source === 'declared' &&
+      envDoctor.localNodeRange({ ...envLocalFixture, required: null, declared: null }) === null &&
+      envDoctor.localNodeRange(undefined) === null,
+  );
+  check(
+    '环境自检：从本机安装树读得出"这一份 dsh 要哪个 Node"（版本 / 声明的 engines / 依赖链最高的下限）',
+    (() => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-local-'));
+      try {
+        const root = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh');
+        const write = (relative: string, body: unknown): void => {
+          const file = path.join(root, relative);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, JSON.stringify(body));
+        };
+        const pkg = (name: string, version: string, node: string): unknown => ({
+          name,
+          version,
+          engines: { node },
+        });
+        write('package.json', {
+          name: '@deepseek-ai/dsh',
+          version: '9.9.9',
+          engines: { node: '^22.19.0 || >=24.0.0' },
+        });
+        write('lib/bin.js', '');
+        write('node_modules/undici/package.json', pkg('undici', '8.10.2', '>=22.19.0'));
+        write('node_modules/pi/package.json', pkg('pi', '0.1.0', '>=22.19.0'));
+        write('node_modules/old/package.json', pkg('old', '1.0.0', '>=18'));
+        write('node_modules/junk/package.json', pkg('junk', '1.0.0', '乱写'));
+        const launcher = (file: string, prefixArgs: string[]): processUtils.DshLauncher => ({
+          file,
+          prefixArgs,
+          viaCmd: false,
+          display: 'x',
+          kind: prefixArgs.length > 0 ? 'node-bin' : 'shim',
+        });
+        // 入口脚本那条路（node-bin / "自定义命令 + bin.js" 都走它）
+        const byEntry = envDoctor.readLocalDshRequirement(
+          launcher(path.join(dir, 'bin', 'node'), [path.join(root, 'lib', 'bin.js')]),
+        );
+        // shim 那条路：跟着符号链接找真入口（npm 装的 shim 就是软链）
+        const shim = path.join(dir, 'bin', 'dsh');
+        fs.mkdirSync(path.dirname(shim), { recursive: true });
+        fs.symlinkSync(path.join(root, 'lib', 'bin.js'), shim);
+        const byShim = envDoctor.readLocalDshRequirement(launcher(shim, []));
+        // 名字对不上就不是我们要的那份（同名的别的包不算）
+        const impostor = envDoctor.readLocalDshRequirement(
+          launcher(path.join(dir, 'bin', 'node'), [
+            path.join(dir, 'node_modules', 'not-dsh', 'lib', 'bin.js'),
+          ]),
+        );
+        return (
+          byEntry?.version === '9.9.9' &&
+          byEntry.declared === '^22.19.0 || >=24.0.0' &&
+          // 下限最高的是 3 个：undici 与 pi 的 `>=22.19.0`，加上 dsh 自己声明的
+          // `^22.19.0 || >=24.0.0`（下界也是 22.19.0）。同档时按名字排序取第一个 → pi
+          byEntry.required?.range === '>=22.19.0' &&
+          byEntry.required.name === 'pi' &&
+          byEntry.required.count === 3 &&
+          byEntry.scanned === 4 &&
+          byShim?.required?.range === '>=22.19.0' &&
+          impostor === null
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    })(),
+  );
+  check(
+    '环境自检页：圆点与内容永远左右并排（.env-main 的 flex 基宽是 0，不是内容宽度）',
+    (() => {
+      const main = cssBlock('.env-main');
+      // 基宽 auto = 内容自己的宽度：说明一长（那几行是两条长路径拼的）就被 flex-wrap 挪到
+      // 圆点下面。真机四个宽度实测：auto 时被挤下去 1 / 3 / 4 / 5 / 7 行，基宽 0 时全是 0。
+      return (
+        /flex:\s*1 1 0;/.test(main) &&
+        /min-width:\s*0;/.test(main) &&
+        // 换行能力得留给「整行铺开」的那两块（否则它们会跟正文抢同一行）
+        /flex-wrap:\s*wrap;/.test(cssBlock('.env-row')) &&
+        /flex:\s*1 1 100%;/.test(cssBlock('.env-confirm')) &&
+        /flex:\s*1 1 100%;/.test(cssBlock('.env-owner-note'))
+      );
+    })(),
+    cssBlock('.env-main').replace(/\s+/g, ' ').trim().slice(0, 70),
+  );
+  check(
+    '环境自检：完整探测才读安装树（快速探测不起子进程、也不解析启动命令，读不到）',
+    (() => {
+      const source = fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8');
+      const full = source.slice(
+        source.indexOf('export async function collectEnvProbe'),
+        source.indexOf('function emptyProbe('),
+      );
+      const boot = source.slice(
+        source.indexOf('export function collectBootProbe'),
+        source.indexOf('export function judgeWizard'),
+      );
+      return (
+        /readLocalDshRequirement\(/.test(full) &&
+        /localDsh,/.test(full) &&
+        !/readLocalDshRequirement\(/.test(boot) &&
+        !/localDsh/.test(boot)
+      );
+    })(),
   );
 
   // 每一份"有毛病"的夹具：非 ok 的行必须有 fixHint、所有行的 detail 非空
@@ -2472,6 +2690,139 @@ async function main(): Promise<void> {
     envCheckOf(envEperm, 'node').status === 'ok' &&
       envCheckOf(envEperm, 'node-version').status === 'warn' &&
       envCheckOf(envEperm, 'dsh-run').status === 'warn',
+  );
+
+  // 2026-09-20 真机事故：探测打到 vite-plus 的转发器，它在窄 PATH 下开始下载自己的运行时，
+  // 8 秒超时被杀 —— 而判定把"超过 8 秒没回应"当成了"退出码 0 + 零输出"那个静默退出签名，
+  // 于是引导用户去重装一个**好端端的** dsh。这两条钉住：超时归"测不出来"，且说法对得上。
+  const envTimedOut = envDoctor.judgeEnvironment(
+    envProbe({
+      node: envVersionProbe({
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+      npm: envVersionProbe({
+        path: '/opt/homebrew/bin/npm',
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+      pnpm: envVersionProbe({
+        path: '/opt/homebrew/bin/pnpm',
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+      dsh: envDshProbe({
+        kind: 'shim',
+        runs: false,
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+    }),
+  );
+  check(
+    '环境自检：探测超时是黄灯（"它在忙"），不冒充"退出码 0 + 零输出"的静默退出',
+    envCheckOf(envTimedOut, 'node-version').status === 'warn' &&
+      envCheckOf(envTimedOut, 'npm').status === 'warn' &&
+      envCheckOf(envTimedOut, 'pnpm').status === 'warn' &&
+      envCheckOf(envTimedOut, 'dsh-run').status === 'warn' &&
+      /没有回应/.test(envCheckOf(envTimedOut, 'dsh-run').detail) &&
+      !/静默退出/.test(envCheckOf(envTimedOut, 'dsh-run').detail) &&
+      // 判定本身不许自己去看计时 / 看时钟（超时是**采集侧**的事实，判定只搬运）
+      /timedOut/.test(envJudgeCode),
+  );
+  check(
+    '环境自检：node 那一行报"dsh 要用的那份"，并报出被跳过的转发器（不执行它）',
+    (() => {
+      const withOther = envDoctor.judgeEnvironment(
+        envProbe({
+          otherNode: { path: '/Users/x/.vite-plus/bin/node', version: null, shim: true },
+          nodeServesDsh: true,
+        }),
+      );
+      const plain = envDoctor.judgeEnvironment(envProbe());
+      const detail = envCheckOf(withOther, 'node').detail;
+      return (
+        /dsh 就用这一份跑/.test(detail) &&
+        /转发器/.test(detail) &&
+        /\.vite-plus\/bin\/node/.test(detail) &&
+        // 没有"另有一份"时不许画蛇添足
+        !/另有一个外部 Node/.test(envCheckOf(plain, 'node').detail)
+      );
+    })(),
+  );
+  check(
+    '环境自检：认得出"转发器"（最终目标不是 node），真实 node 的符号链接不算',
+    (() => {
+      // 真实文件系统：homebrew 那种 `node -> ../Cellar/node/x/bin/node` 必须算真 node，
+      // 而 vite-plus 那种 `node -> ../current/bin/vp` 必须算转发器 —— 判据只能看**最终目标的名字**。
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-shim-'));
+      try {
+        fs.mkdirSync(path.join(dir, 'real'), { recursive: true });
+        fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(dir, 'proxy'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'real', 'node'), '#!/bin/sh\necho v24\n');
+        fs.chmodSync(path.join(dir, 'real', 'node'), 0o755);
+        fs.writeFileSync(path.join(dir, 'proxy', 'vp'), '#!/bin/sh\necho vp\n');
+        fs.chmodSync(path.join(dir, 'proxy', 'vp'), 0o755);
+        // 真 node 的符号链接：最终目标是 .../real/node
+        fs.symlinkSync(path.join(dir, 'real', 'node'), path.join(dir, 'bin', 'node-good'));
+        // 转发器：最终目标是 .../proxy/vp
+        fs.symlinkSync(path.join(dir, 'proxy', 'vp'), path.join(dir, 'bin', 'node-shim'));
+        return (
+          processUtils.isNodeShim(path.join(dir, 'bin', 'node-good')) === false &&
+          processUtils.isNodeShim(path.join(dir, 'bin', 'node-shim')) === true &&
+          processUtils.isNodeShim(path.join(dir, 'real', 'node')) === false &&
+          // 读不到就别乱扣帽子
+          processUtils.isNodeShim(path.join(dir, 'does-not-exist')) === false
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    })(),
+  );
+  check(
+    '命令解析：PATH 上的转发器不算"找到真 node"（真 node 优先，一个都没有才退它）',
+    (() => {
+      const source = fs.readFileSync(
+        path.join(repoRoot, 'src', 'main', 'process-utils.ts'),
+        'utf8',
+      );
+      return (
+        /const pathShim = fromPath !== null && isNodeShim\(fromPath\) \? fromPath : null;/.test(
+          source,
+        ) &&
+        // PATH 上是真 node 就直接用；是转发器就往下走候选表
+        /if \(fromPath && !pathShim\) return fromPath;/.test(source) &&
+        // 两趟扫描之后才轮到它 —— 这是 2026-09-20 那个缺口的落点：
+        // .zshrc 里 `. "$HOME/.vite-plus/env"` 把转发器塞在 PATH 最前面，直接 return 就等于
+        // 把转发器当成系统 Node（它报的版本还随启动环境变，见 §7.25）
+        /return pathShim;/.test(source) &&
+        /if \(isExecutableFile\(candidate\) && !isNodeShim\(candidate\)\) return candidate;/.test(
+          source,
+        )
+      );
+    })(),
+  );
+  check(
+    '环境自检：探测不再走同步子进程（runVersion 里没有 spawnSync），四项并发跑',
+    !/spawnSync/.test(stripStrings(functionBodyOf(envSource, 'runVersion'))) &&
+      // 四项**并发**发出：`Promise.all` 的数组一求值就 spawn（现在是"先发出去、再趁它们跑的时候
+      // 扫本机 dsh 的安装树、最后 await"）—— 盯的还是"一个 Promise.all 里四个探测"，不是串行
+      /Promise\.all\(\[\s*probeBinary\(nodeForRow[\s\S]*?probeBinary\(npmPath[\s\S]*?probeBinary\(pnpmPath[\s\S]*?collectDshProbe\(/.test(
+        envCode,
+      ) &&
+      /const \[node, npm, pnpm, dsh\] = await probes;/.test(envCode) &&
+      // 超时要真的把子进程树收掉（只 kill 壳会留下孤儿的管道，实测进程退不出来）
+      /killTreeSync\(pid\)/.test(envCode) &&
+      /stdout\?\.destroy\(\)/.test(envCode),
   );
   const envOldBundled = envDoctor.judgeEnvironment(
     envProbe({ bundled: { electron: '30.0.0', node: '20.9.0', chrome: '124.0.0' } }),
@@ -2614,9 +2965,10 @@ async function main(): Promise<void> {
   }
   check(
     '环境自检：探测与修复走同一个包装器（不是直 spawn .cmd / 无扩展名路径，且都带 verbatim）',
-    /function runVersion\(file: string, args: string\[\], platform: string\)[\s\S]{0,200}?const spec = launchSpec\(/.test(
-      envCode,
-    ) &&
+    /function runVersion\([\s\S]{0,160}?const spec = launchSpec\(/.test(envCode) &&
+      // 探测**不再走同步子进程**（真机事故：spawnSync × 5 把主进程卡了约 40 秒，见 §7.25）
+      !/function runVersion\([\s\S]{0,1400}?spawnSync\(/.test(envCode) &&
+      /function runVersion\([\s\S]{0,1400}?spawn\(spec\.file, spec\.args,/.test(envCode) &&
       /function readNpmPrefix\(npmPath: string, platform: string\)[\s\S]{0,200}?npmLaunchSpec\(/.test(
         envCode,
       ) &&
@@ -3170,7 +3522,7 @@ async function main(): Promise<void> {
     /const added = refreshLookupPath\(this\.lookupDirs\(plan\)\);[\s\S]{0,400}?const report = await this\.doctor\.recheck\(\);/.test(
       envCode,
     ) &&
-      /const probe = probeFixTarget\(action, this\.doctor\.platform\);/.test(envCode) &&
+      /const probe = await probeFixTarget\(action, this\.doctor\.platform\);/.test(envCode) &&
       // dsh 的"能用"要两步都过（定位到 + 实测跑得动），与门禁那条判据同一份口径
       /statusOf\('dsh'\) === 'ok' && statusOf\('dsh-run'\) === 'ok'/.test(envCode) &&
       // 主进程把日志位置注入进去，界面才说得清"细节在哪"
@@ -4199,7 +4551,8 @@ async function main(): Promise<void> {
   );
   check(
     '环境自检：stderr 只走日志这条路（判定不读它；不写它的旧夹具也照常跑）',
-    /stderrTail\(String\(result\.stderr \?\? ''\)\)/.test(envCode) &&
+    /stderrTail\(stderr\)/.test(envCode) &&
+      /let stderr = '';/.test(envCode) &&
       /stderr: run\.stderr,/.test(envCode) &&
       /export const STDERR_TAIL_CHARS = \d+;/.test(envSource) &&
       // 判定不看 stderr：结论仍然只由「有输出才算可用」那条线决定

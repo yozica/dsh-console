@@ -54,8 +54,11 @@ import {
   findPnpm,
   hasVcRuntime,
   homeDir,
+  findSkippedNodeShim,
+  isNodeShim,
   isRunnablePath,
   isWindows,
+  killTreeSync,
   launchSpec,
   pathWithKnownBins,
   resolveDshLauncher,
@@ -69,7 +72,14 @@ import {
 import type { Settings, SettingsValues } from './settings';
 
 /** 与 vite 的 engines.node 同一句（AGENTS 第 1 节：`npm install` 的门槛）；自检把两处钉在一起 */
-export const NODE_RANGE = '^20.19.0 || >=22.12.0';
+export const NODE_RANGE = '^22.19.0 || >=24.0.0';
+
+/**
+ * **构建期**要求（vite 的 engines）：只用来判「打包进来的那个运行时」够不够新。
+ *
+ * 别把它当成"能不能跑 dsh"的判据 —— 这两件事的区间不一样，混用过一次（见 `NODE_RANGE`）。
+ */
+export const NODE_RANGE_BUILD = '^20.19.0 || >=22.12.0';
 
 /** 探测子进程超时：与 `canRunDsh` 的 8000 一致 */
 export const PROBE_TIMEOUT_MS = 8000;
@@ -80,7 +90,7 @@ export const FIX_TAIL_CHARS = 64 * 1024;
 /** 探测子进程的 stderr 只保留尾部这些字符（它是给日志的原文，别把几百 KB 堆栈整段带上） */
 export const STDERR_TAIL_CHARS = 2000;
 
-/** 版本号解析结果；不引 semver，只认 NODE_RANGE 这一句区间 */
+/** 版本号解析结果；不引 semver，只认 NODE_RANGE / NODE_RANGE_BUILD 这两句区间 */
 export interface NodeVersion {
   major: number;
   minor: number;
@@ -103,6 +113,14 @@ export interface VersionProbe {
   stderr?: string | null;
   /** true = 这一轮**故意没测**（启动瞬间的快速探测）；判定当"测不出来"（warn），不是"没装" */
   skipped?: boolean;
+  /**
+   * true = 超过 `PROBE_TIMEOUT_MS` 没回应（子进程已被结束）。
+   *
+   * **必须与"退出码 0 + 零输出"区分开**：后者是"这份二进制跑不动"的签名（§7.4），
+   * 前者只是"它还在忙"（例如转发器正在准备自己的运行时）。混在一起会把用户引去重装一个
+   * 好端端的 dsh —— 真机上就这么错过一次。
+   */
+  timedOut?: boolean;
 }
 
 /** dsh 本体的定位 + 实测结果 */
@@ -122,6 +140,8 @@ export interface DshProbe {
   stderr?: string | null;
   /** 同上：true = 这一轮**故意没测**（快速探测不起子进程，也就不定位 launcher） */
   skipped?: boolean;
+  /** 同 `VersionProbe.timedOut`：超过 8 秒没回应，**不是**"这份 dsh 跑不动" */
+  timedOut?: boolean;
 }
 
 export interface ShellProbe {
@@ -137,6 +157,23 @@ export interface EnvProbeRaw {
   packaged: boolean;
   bundled: { electron: string; node: string; chrome: string };
   node: VersionProbe;
+  /**
+   * 通用搜索（`findNodePath()`）另找到的那份外部 Node —— **只在它与 `node` 不是同一个时**才有值。
+   *
+   * 为什么要有：`node` 这一行报的是"**真正会被用来跑 dsh 的那一份**"（用户裁决，见 §7.25）；
+   * 而机器上往往还躺着别的 node（另一个版本管理器、或一个**转发器** shim）。用户拿终端里的
+   * `node -v` 来对账时对不上就是因为它。把"另有一份、它是什么"写出来，这条对不上的疑惑才收口。
+   */
+  otherNode?: { path: string; version: string | null; shim: boolean };
+  /** `node` 那一份是不是"真正会被用来跑 dsh 的"（见 `otherNode` 的说明） */
+  nodeServesDsh?: boolean;
+  /**
+   * **本机装的那一份 dsh 对 Node 的要求**（离线读它的安装树，见 `readLocalDshRequirement`）。
+   *
+   * 只有完整探测会给（快速探测不解析启动命令，也就不定位安装根）；拿不到时为 undefined，
+   * 判定退回 `NODE_RANGE` 那句常量。
+   */
+  localDsh?: LocalDshRequirement;
   npm: VersionProbe;
   pnpm: VersionProbe;
   dsh: DshProbe;
@@ -195,18 +232,330 @@ export function parseNodeVersion(text: string): NodeVersion | null {
   return { major, minor, patch };
 }
 
+/** 比大小（只比 major.minor.patch）：a < b → -1、相等 → 0、a > b → 1 */
+export function compareNodeVersion(a: NodeVersion, b: NodeVersion): number {
+  if (a.major !== b.major) return a.major < b.major ? -1 : 1;
+  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1;
+  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1;
+  return 0;
+}
+
+/** 区间里那半个版本号 + 它写了几段（`22` → 1、`22.19` → 2、`22.19.0` → 3） */
+interface RangeAtom {
+  version: NodeVersion;
+  parts: 1 | 2 | 3;
+}
+
+const RANGE_ATOM = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/;
+
+function rangeAtomOf(text: string): RangeAtom | null {
+  // 预发布 / build 元数据一律丢掉：`22.19.0-rc.1` 当 `22.19.0`（不引 semver，也不猜预发布序）
+  const cleaned = String(text ?? '')
+    .trim()
+    .replace(/[-+].*$/, '');
+  // `22.x` / `22.19.x` / `22.*` 当"这一档随便"（= 再退回一段）
+  const wildcard = /^(.*?)\.(?:x|X|\*)$/.exec(cleaned);
+  const body = wildcard ? wildcard[1] : cleaned;
+  const match = RANGE_ATOM.exec(body);
+  if (!match) return null;
+  const parts = (match[3] !== undefined ? 3 : match[2] !== undefined ? 2 : 1) as 1 | 2 | 3;
+  return {
+    version: {
+      major: Number(match[1]),
+      minor: match[2] === undefined ? 0 : Number(match[2]),
+      patch: match[3] === undefined ? 0 : Number(match[3]),
+    },
+    parts,
+  };
+}
+
+/** 一个比较符：`>=22.19.0` / `<23.0.0` / `=22.19.0`（`^` `~` 与 x-range 在解析时就展开成这些） */
+interface Comparator {
+  op: '>=' | '>' | '<=' | '<' | '=';
+  version: NodeVersion;
+}
+
+const nextMajor = (v: NodeVersion): NodeVersion => ({ major: v.major + 1, minor: 0, patch: 0 });
+const nextMinor = (v: NodeVersion): NodeVersion => ({
+  major: v.major,
+  minor: v.minor + 1,
+  patch: 0,
+});
+
 /**
- * 是否落在 `^20.19.0 || >=22.12.0` 里。
+ * 解析一组比较符（`||` 之间的一段）。**认不出来返回 null**，调用方据此"不猜"。
  *
- * 只认这一句区间，不引 semver：`20.19+`、`21` 不算（vite 那句也不含它）、
- * `22.12+`、`23+` 都算。自检逐个钉住这些边界。
+ * 支持 npm `engines` 里真会出现的写法：`>=` `>` `<=` `<` `=`、`^`、`~`、x-range（`22` / `22.19`
+ * / `22.x`）、`*`，以及空格分隔的"与"（`>=22 <23`）。**故意不实现预发布序**：dsh 的依赖链里
+ * 没有一条用它，而猜错预发布比说"不知道"更糟（见文件头"不猜"那条）。
+ */
+function parseComparatorSet(text: string): Comparator[] | null {
+  // `>= 22.19.0` 这种"算符与版本之间带空格"是合法写法，先粘回去再按空格切
+  const normalized = String(text ?? '')
+    .trim()
+    .replace(/(>=|<=|>|<|=|\^|~)\s+/g, '$1');
+  if (!normalized) return [];
+  const out: Comparator[] = [];
+  for (const token of normalized.split(/\s+/)) {
+    if (!token) continue;
+    if (token === '*' || token === 'x' || token === 'X') continue; // 随便哪一档
+    const caret = token.startsWith('^');
+    const tilde = token.startsWith('~');
+    const prefixed = /^(>=|<=|>|<|=)/.exec(token);
+    const body =
+      caret || tilde ? token.slice(1) : prefixed ? token.slice(prefixed[1].length) : token;
+    const atom = rangeAtomOf(body);
+    if (!atom) return null;
+    if (caret || tilde) {
+      if (atom.version.major === 0) return null; // `^0.x` 的语义与 Node 无关，别硬套
+      out.push({ op: '>=', version: atom.version });
+      if (caret) out.push({ op: '<', version: nextMajor(atom.version) });
+      else if (atom.parts === 1) out.push({ op: '<', version: nextMajor(atom.version) });
+      else out.push({ op: '<', version: nextMinor(atom.version) });
+      continue;
+    }
+    if (prefixed) {
+      out.push({ op: prefixed[1] as Comparator['op'], version: atom.version });
+      continue;
+    }
+    // 光写一个版本号：`22.19.0` 是"恰好"、`22.19` 与 `22` 是"这一档"
+    if (atom.parts === 3) out.push({ op: '=', version: atom.version });
+    else if (atom.parts === 2) {
+      out.push({ op: '>=', version: atom.version });
+      out.push({ op: '<', version: nextMinor(atom.version) });
+    } else {
+      out.push({ op: '>=', version: atom.version });
+      out.push({ op: '<', version: nextMajor(atom.version) });
+    }
+  }
+  return out;
+}
+
+function holdsComparator(version: NodeVersion, comparator: Comparator): boolean {
+  const order = compareNodeVersion(version, comparator.version);
+  switch (comparator.op) {
+    case '>=':
+      return order >= 0;
+    case '>':
+      return order > 0;
+    case '<=':
+      return order <= 0;
+    case '<':
+      return order < 0;
+    default:
+      return order === 0;
+  }
+}
+
+/**
+ * 判一个版本落不落在一句 npm 风格的区间里。**认不出来返回 null**（不是 false）——
+ * 调用方据此退回兜底判据，而不是把"没看懂"说成"不满足"。
+ *
+ * 有这个通用版的原因：区间的出处不再只有我们常量里那两句 —— 本机装的那份 dsh 依赖链里
+ * 的下限是**运行时读出来的任意一句**，它没法写死。
+ *
+ * 语义注意：**顺序无关**。`>=22.19.0 || 乱写` 与 `乱写 || >=22.19.0` 都是 true（有一段说得清、
+ * 且它满足就够了）；只有"没有任何一段满足、而且有段认不出来"才是 null。
+ */
+export function satisfiesSimpleRange(version: NodeVersion, range: string): boolean | null {
+  let unknown = false;
+  for (const group of String(range ?? '').split('||')) {
+    const comparators = parseComparatorSet(group);
+    if (!comparators) {
+      unknown = true;
+      continue;
+    }
+    if (comparators.every((comparator) => holdsComparator(version, comparator))) return true;
+  }
+  return unknown ? null : false;
+}
+
+/**
+ * 一句区间里**最低可接受的版本**（用来给多句区间排名次：谁要的下限最高，谁就是这条依赖链的真门槛）。
+ *
+ * 只取"下界"侧的比较符；`^22.19.0` 算 22.19.0。认不出来返回 null。
+ */
+export function minNodeOfRange(range: string): NodeVersion | null {
+  let floor: NodeVersion | null = null;
+  for (const group of String(range ?? '').split('||')) {
+    const comparators = parseComparatorSet(group);
+    if (!comparators) return null;
+    let groupFloor: NodeVersion | null = null;
+    for (const comparator of comparators) {
+      if (comparator.op === '<' || comparator.op === '<=') continue;
+      if (!groupFloor || compareNodeVersion(comparator.version, groupFloor) < 0) {
+        groupFloor = comparator.version;
+      }
+    }
+    if (groupFloor && (!floor || compareNodeVersion(groupFloor, floor) < 0)) floor = groupFloor;
+  }
+  return floor;
+}
+
+/** 一条读到的 `engines.node` 声明（`highestNodeRequirement` 的入参形状） */
+export interface NodeEngineDeclaration {
+  range: string;
+  name: string;
+  version: string;
+}
+
+/**
+ * 一条"谁要的什么下限"：`{ range: '>=22.19.0', name: 'undici', version: '8.10.2', count: 3 }`。
+ *
+ * `count` = **同一条下限还有几个包也在要**（含自己）。为什么要说这个数：要得狠的往往不止一个包，
+ * 只点名其中一个会让人以为那是某个包的怪癖（本机 524 个包里有 3 个都要 `>=22.19.0`）。
+ */
+export interface NodeRequirement extends NodeEngineDeclaration {
+  count: number;
+}
+
+/**
+ * 一堆 `engines.node` 里**要得最狠**的那条（下限最高的），并数一下同一条下限有几个包。
+ *
+ * 这就是"本机这份 dsh 到底要哪个 Node"的离线答案：把它的依赖树读一遍，挑出最高的那条下限。
+ * 本机实测（dsh 0.1.5-rc.1 / 524 个包）：3 个包要 `>=22.19.0`（其中就有 undici 8）—— 与上游
+ * 仓库根那句 `^22.19.0 || >=24.0.0` 的下限一致（上游多排除了奇数版 23）。
+ */
+export function highestNodeRequirement(entries: NodeEngineDeclaration[]): NodeRequirement | null {
+  let best: NodeRequirement | null = null;
+  let bestFloor: NodeVersion | null = null;
+  for (const entry of entries) {
+    const floor = minNodeOfRange(entry.range);
+    if (!floor) continue;
+    if (!bestFloor || compareNodeVersion(floor, bestFloor) > 0) {
+      best = { ...entry, count: 1 };
+      bestFloor = floor;
+    } else if (best && compareNodeVersion(floor, bestFloor) === 0) {
+      best.count += 1;
+    }
+  }
+  return best;
+}
+
+/**
+ * 是否落在 **dsh 的要求** `^22.19.0 || >=24.0.0` 里（**兜底那句**，见 `effectiveNodeRange`）。
+ *
+ * 出处（**上游仓库根**，2026-09-20 核过）：
+ * https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json
+ * → `"engines": { "node": "^22.19.0 || >=24.0.0" }`（那份是 monorepo 根，`private: true`）。
+ *
+ * 两个容易看走眼的地方：
+ *   1. **发布出去的 `@deepseek-ai/dsh` 的 manifest 里没有 `engines`** —— 所以在 `node_modules`
+ *      里翻是翻不到的（本机 0.1.5-rc.1 实测如此），npm 也不会因此给任何警告；
+ *   2. 真正卡住它的一致下限来自依赖链：undici 8 写着 `engines: { node: '>=22.19.0' }`。
+ *
+ * 边界：`22.19+` 与 `24+` 算，`23` 与 `≤22.18` 不算。**这条只是兜底** —— 本机装的那份 dsh 是谁、
+ * 要什么，运行期读得出来（`readLocalDshRequirement`），别拿这句常量去覆盖它。
+ *
+ * **别再退回 vite 那句**：`^20.19.0 || >=22.12.0` 是构建期要求，而 20.19 与 22.12–22.18 上
+ * dsh 会「退出码 0、零输出」地静默退出（§7.4），界面上只会显示「已停止」。
  */
 export function satisfiesNodeRange(version: NodeVersion): boolean {
-  const major = version.major;
-  if (major === 20) return version.minor >= 19;
-  if (major === 21) return false;
-  if (major === 22) return version.minor >= 12;
-  return major > 22;
+  return satisfiesSimpleRange(version, NODE_RANGE) === true;
+}
+
+/** 是否落在**构建期**要求 `^20.19.0 || >=22.12.0`（vite 的 engines）里 —— 只给「应用自带运行时」用 */
+export function satisfiesBuildRange(version: NodeVersion): boolean {
+  return satisfiesSimpleRange(version, NODE_RANGE_BUILD) === true;
+}
+
+/**
+ * **本机装的那一份 dsh 对 Node 的要求**（运行期离线读出来的，见 `readLocalDshRequirement`）。
+ *
+ * 为什么必须有它（用户裁决）：**不是所有人装的是同一份 dsh**，而我们此前只有一句抄来的常量。
+ * 用户"24 以下的 Node 上 dsh 会静默退出"那个观察，真相就在这份数据里 —— 分界线是**这一份**
+ * 依赖链要的下限（本机 = `>=22.19.0`，来自 undici 8.10.2），不是"24"。
+ */
+export interface LocalDshRequirement {
+  /** 这份 dsh 自己的版本（读它的 package.json） */
+  version: string | null;
+  /** 它的安装根（扫描起点；点出来用户能核对是哪一份） */
+  root: string | null;
+  /** 它在自己 manifest 里声明的 `engines.node`（0.1.5-rc.1 没有 → null） */
+  declared: string | null;
+  /** 依赖链（含它自己）里要得最狠的那条下限 */
+  required: NodeRequirement | null;
+  /** 扫过多少个 package.json（证据规模：0 说明根本没读到树） */
+  scanned: number;
+}
+
+/** 本机那份 dsh 说的 Node 要求（`source` 说明是依赖链还是它自己声明的） */
+export interface LocalNodeRange {
+  range: string;
+  source: 'local' | 'declared';
+  by: NodeRequirement;
+}
+
+/**
+ * 本机那份 dsh 说的要求是哪一句：**依赖链里最高的下限 → 它自己声明的 `engines`**。
+ *
+ * 为什么依赖链优先：声明可能过期（上游改了但这份还没升），而依赖链是**装进来的事实**。
+ * 两句都认不出来时返回 null（调用方退回兜底常量，并在文案里说清来源）。
+ */
+export function localNodeRange(
+  local: LocalDshRequirement | null | undefined,
+): LocalNodeRange | null {
+  const required = local?.required ?? null;
+  if (required && minNodeOfRange(required.range)) {
+    return { range: required.range, source: 'local', by: required };
+  }
+  const declared = local?.declared ?? null;
+  if (declared && minNodeOfRange(declared)) {
+    return {
+      range: declared,
+      source: 'declared',
+      by: { range: declared, name: '@deepseek-ai/dsh', version: local?.version ?? '', count: 1 },
+    };
+  }
+  return null;
+}
+
+/** 「Node 版本」这一行的判据结果（状态与文案都从这里来，纯函数、可离线钉） */
+export interface NodeVersionVerdict {
+  status: 'ok' | 'warn';
+  /** 本机那份 dsh 说的要求；读不到时为 null（这一轮只剩兜底那句） */
+  local: LocalNodeRange | null;
+  /** 判定实际卡在哪一句：`local` / `upstream` / null（都满足）。文案据此换说法 */
+  failedBy: 'local' | 'upstream' | null;
+}
+
+/**
+ * 判「Node 版本」，**两句都要满足**：本机那份 dsh 说的 + 兜底那句常量。
+ *
+ * 为什么不是"二选一"（本轮踩过）：依赖链那条下限是数学区间，**它不知道 dsh 的入口用了哪个
+ * Node API**。本机这份 dsh 的下限是 `>=22.19.0`，数学上包含奇数版 23，而 23 这条线早于
+ * `import.meta.main`（22 线 22.18 / 24 线 24.2 才有）—— 在 23 上 dsh 照样静默空跑。上游那句
+ * `^22.19.0 || >=24.0.0` 正是靠 `^22.19.0` 的**上界**把 23 挡在外面的。所以两句取"都要满足"：
+ * 本机证据能在它更严时把门槛抬上去（将来 dsh 要 `>=26` 就按 26 判），兜底那句负责挡住
+ * 依赖链看不见的那些线。**任何输入都不抛**（放进来的是一份读磁盘读出来的事实）。
+ */
+export function judgeNodeVersion(
+  version: NodeVersion,
+  local: LocalDshRequirement | null | undefined,
+): NodeVersionVerdict {
+  const localRange = localNodeRange(local);
+  const localOk = localRange ? satisfiesSimpleRange(version, localRange.range) === true : true;
+  const upstreamOk = satisfiesSimpleRange(version, NODE_RANGE) === true;
+  return {
+    status: localOk && upstreamOk ? 'ok' : 'warn',
+    local: localRange,
+    failedBy: localOk && upstreamOk ? null : localOk ? 'upstream' : 'local',
+  };
+}
+
+/**
+ * 把一句区间说成"**谁**要的什么"（界面文案用）。
+ *
+ * 本机证据与兜底常量的区别必须写在脸上：前者是本机测出来的、用户能核对（`来自依赖 undici 8.10.2`）。
+ */
+export function requirementPhrase(choice: LocalNodeRange): string {
+  if (choice.source === 'declared') {
+    const version = choice.by.version ? `（${choice.by.version}）` : '';
+    return `本机这份 dsh${version}自己声明的要求 ${choice.range}`;
+  }
+  const who = choice.by.version ? `${choice.by.name} ${choice.by.version}` : choice.by.name;
+  const others = choice.by.count > 1 ? ` 等 ${choice.by.count} 个包` : '';
+  return `本机这份 dsh 的要求 ${choice.range}（来自依赖 ${who}${others}）`;
 }
 
 /**
@@ -534,7 +883,7 @@ export interface FixProbe {
  * 这一步的**功能实测**：`<pnpm> -v` 真的打出东西才算成功（"文件在"不算 —— 这正是 VM 那一屏的
  * 症状：文件在、跑起来没有任何输出）。返回的事实同时喂给界面文案与日志（见 `fixDoneMessage`）。
  */
-export function probeFixTarget(action: EnvFixAction, platform: string): FixProbe {
+export async function probeFixTarget(action: EnvFixAction, platform: string): Promise<FixProbe> {
   const vcRuntime = hasVcRuntime();
   if (action !== 'install-pnpm') {
     return { file: null, version: null, exitCode: null, stderr: null, blocked: false, vcRuntime };
@@ -543,7 +892,7 @@ export function probeFixTarget(action: EnvFixAction, platform: string): FixProbe
   if (!file) {
     return { file: null, version: null, exitCode: null, stderr: null, blocked: false, vcRuntime };
   }
-  const probe = probeBinary(file, ['-v'], platform);
+  const probe = await probeBinary(file, ['-v'], platform);
   return {
     file,
     version: probe.version,
@@ -671,18 +1020,40 @@ function nodeInstallHint(platform: string): string {
   const inApp =
     '点上面的「安装 Node.js」：直接安装官方稳定版、或通过 nvm 安装，都由我们装好并切过去。';
   return platform === 'win32'
-    ? `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm-windows），或到 nodejs.org 装 22.12+ 的 LTS。`
-    : `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm/fnm），或到 nodejs.org 装 22.12+ 的 LTS。`;
+    ? `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm-windows），或到 nodejs.org 装 22.19+ 或 24 的 LTS。`
+    : `${inApp}想自己来也可以：\`nvm install 24 && nvm use 24\`（nvm/fnm），或到 nodejs.org 装 22.19+ 或 24 的 LTS。`;
 }
 
 function installNodeHint(platform: string): string {
   return platform === 'win32'
     ? `点上面的「安装 Node.js」由我们装一个（直装官方稳定版 / 通过 nvm 安装都行）。想自己来也可以：到 https://nodejs.org/en/download 下载安装包，或用 nvm-windows 的 \`nvm install 24 && nvm use 24\`。`
-    : `点上面的「安装 Node.js」由我们装一个（直装官方稳定版 / 通过 nvm 安装都行）。想自己来也可以：用版本管理器 \`nvm install 24 && nvm use 24\`，或到 https://nodejs.org/en/download 下载 22.12+ 的 LTS。`;
+    : `点上面的「安装 Node.js」由我们装一个（直装官方稳定版 / 通过 nvm 安装都行）。想自己来也可以：用版本管理器 \`nvm install 24 && nvm use 24\`，或到 https://nodejs.org/en/download 下载 22.19+ 或 24 的 LTS。`;
 }
 
 function upgradeNodeHint(platform: string): string {
   return nodeInstallHint(platform);
+}
+
+/**
+ * 「Node 版本」不满足时那句话（纯函数；三种情形各说各的）。
+ *
+ * - 卡在**本机那份 dsh** 的下限：点名是谁要的（用户能核对）
+ * - 卡在**兜底那句常量**（而本机下限是够的）：这条 Node 线不在 dsh 支持的范围内 —— 奇数版 23
+ *   是唯一一例：依赖链的 `>=22.19.0` 数学上包含它，而它早于 dsh 入口要的那个 Node API
+ * - 没有本机证据：兜底那句的老文案
+ *
+ * 三种都补上"这种 Node 上 dsh 会静默空跑"—— 这是这一行为什么值得看一眼的唯一理由（§7.4）。
+ */
+function nodeMismatchText(version: string, verdict: NodeVersionVerdict | null): string {
+  const tail =
+    '这种 Node 上 dsh 会静默空跑（退出码 0、零输出）；能不能跑仍由下面「实测 dsh」那一项定';
+  if (verdict?.failedBy === 'local' && verdict.local) {
+    return `${version} 不满足${requirementPhrase(verdict.local)} —— ${tail}`;
+  }
+  if (verdict?.failedBy === 'upstream' && verdict.local) {
+    return `${version} 不满足要求区间（要求 ${NODE_RANGE}）—— 本机这份 dsh 的依赖链下限 ${verdict.local.range} 虽然够，但这一条 Node 线不在它支持的范围内；${tail}`;
+  }
+  return `${version} 不在要求区间内（要求 ${NODE_RANGE}）—— 这是 dsh 与它依赖链的要求；${tail}`;
 }
 
 /**
@@ -783,12 +1154,24 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
   const dshHint =
     '在「设置 → 启动方式 → dsh 命令」里写一条能跑的启动命令，或一键 `npm i -g @deepseek-ai/dsh`。';
 
-  // 1. 外部 Node
+  // 1. 外部 Node = **真正会被用来跑 dsh 的那一份**（用户裁决，见 §7.25）。
+  //    另有一份（通用搜索找到的、跟它不是同一个）时把话说出来 —— 用户拿终端里的
+  //    `node -v` 对账对不上，就是因为它。
   if (raw.node.path) {
+    const other = raw.otherNode;
+    const tail = other
+      ? `；另有一个外部 Node：${other.path}${other.version ? `（${other.version}）` : ''}${
+          other.shim
+            ? '，那是个转发器，我们没去调它（调它会自己去下运行时；它的版本随启动环境而变，所以别拿它跟终端里的 `node -v` 对账）'
+            : ''
+        }`
+      : '';
     push(
       'node',
       'ok',
-      `找到了外部 Node：${raw.node.path}${raw.node.version ? `（${raw.node.version}）` : ''}`,
+      `找到了外部 Node：${raw.node.path}${raw.node.version ? `（${raw.node.version}）` : ''}` +
+        (raw.nodeServesDsh ? ' —— dsh 就用这一份跑' : '') +
+        tail,
     );
   } else {
     push(
@@ -799,8 +1182,9 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     );
   }
 
-  // 2. Node 版本
+  // 2. Node 版本：判据 = 本机这一份 dsh 说的（离线读它的安装树）+ 兜底那句常量，两句都要满足
   const nodeVersion = raw.node.version ? parseNodeVersion(raw.node.version) : null;
+  const verdict = nodeVersion ? judgeNodeVersion(nodeVersion, raw.localDsh) : null;
   if (raw.node.skipped) {
     // 快速探测没跑 `node --version`：给 warn（测不出来），不是 missing（没装）
     push('node-version', 'warn', SKIPPED_DETAIL, NOT_MEASURED_HINT);
@@ -814,7 +1198,15 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
   } else if (!nodeVersion) {
     // 找到了 Node 的文件、但它跑不出结果 —— **有输出才算可用**（与 `canRunDsh` 同一条判据）。
     // 只有"这个环境不允许起子进程"才留黄灯（那是我们测不出来，不是用户没装）。
-    if (isEnvironmentBlocked(raw.node.error)) {
+    if (raw.node.timedOut) {
+      // **在忙 ≠ 缺东西**：转发器可能在准备自己的运行时（真机事故，见 §7.25）。
+      push(
+        'node-version',
+        'warn',
+        '没能实测版本：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表没装 Node',
+        '过一会儿点上面的「重新检测」再看一次。',
+      );
+    } else if (isEnvironmentBlocked(raw.node.error)) {
       push(
         'node-version',
         'warn',
@@ -838,13 +1230,21 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
         nodeInstallHint(raw.platform),
       );
     }
-  } else if (satisfiesNodeRange(nodeVersion)) {
-    push('node-version', 'ok', `${raw.node.version} 落在要求区间内（要求 ${NODE_RANGE}）`);
+  } else if (verdict?.status === 'ok') {
+    // 有本机证据时点名"是谁说的"（用户裁决：不是所有人装的是同一份 dsh，所以结论要能核对）；
+    // 没有时保持原样 —— 兜底那句常量的文案不动，变化面越小越好。
+    push(
+      'node-version',
+      'ok',
+      verdict.local
+        ? `${raw.node.version} 满足${requirementPhrase(verdict.local)}`
+        : `${raw.node.version} 落在要求区间内（要求 ${NODE_RANGE}）`,
+    );
   } else {
     push(
       'node-version',
       'warn',
-      `${raw.node.version} 不在要求区间内（要求 ${NODE_RANGE}）—— 这是构建期要求，dsh 到底能不能跑由下面「实测 dsh」那一项决定`,
+      nodeMismatchText(raw.node.version ?? '', verdict),
       upgradeNodeHint(raw.platform),
     );
   }
@@ -861,6 +1261,13 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     );
   } else if (raw.npm.version) {
     push('npm', 'ok', `npm 可用：${npmPath}（${raw.npm.version}）`);
+  } else if (raw.npm.timedOut) {
+    push(
+      'npm',
+      'warn',
+      '没能实测 npm：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表没装 npm',
+      '过一会儿点上面的「重新检测」再看一次。',
+    );
   } else if (isEnvironmentBlocked(raw.npm.error)) {
     push(
       'npm',
@@ -893,6 +1300,13 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     );
   } else if (raw.pnpm.version) {
     push('pnpm', 'ok', `pnpm 可用：${raw.pnpm.path}（${raw.pnpm.version}）`);
+  } else if (raw.pnpm.timedOut) {
+    push(
+      'pnpm',
+      'warn',
+      '没能实测 pnpm：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表没装 pnpm',
+      '过一会儿点上面的「重新检测」再看一次。',
+    );
   } else if (isEnvironmentBlocked(raw.pnpm.error)) {
     push(
       'pnpm',
@@ -957,6 +1371,13 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
       '没能实测：这个运行环境不允许起子进程（不代表 dsh 不能用）',
       `${BLOCKED_HINT_PREFIX}只有在你自己有权限的终端里手工跑一次 \`dsh --version\` 才能确认。`,
     );
+  } else if (raw.dsh.timedOut) {
+    push(
+      'dsh-run',
+      'warn',
+      '没能实测：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表 dsh 不能用',
+      '过一会儿点上面的「重新检测」再看一次；一直这样就在「设置 → 启动方式 → dsh 命令」里换一条能跑的启动命令。',
+    );
   } else if (raw.dsh.exitCode === null || raw.dsh.exitCode === 0) {
     push(
       'dsh-run',
@@ -983,14 +1404,14 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
       'ok',
       `${bundledDetail('（开发态）')} —— 开发态这份运行时来自 electron 依赖，应用跑在你的系统 Node 上`,
     );
-  } else if (bundledVersion && satisfiesNodeRange(bundledVersion)) {
-    push('bundled-runtime', 'ok', bundledDetail(`，落在要求区间内（要求 ${NODE_RANGE}）`));
+  } else if (bundledVersion && satisfiesBuildRange(bundledVersion)) {
+    push('bundled-runtime', 'ok', bundledDetail(`，落在要求区间内（要求 ${NODE_RANGE_BUILD}）`));
   } else {
     push(
       'bundled-runtime',
       'missing',
       bundledDetail(
-        `，不在要求区间内（要求 ${NODE_RANGE}）—— 注意这不是你机器上的 Node，它由打包时用的 Electron 决定`,
+        `，不在要求区间内（要求 ${NODE_RANGE_BUILD}）—— 注意这不是你机器上的 Node，它由打包时用的 Electron 决定`,
       ),
       `升级 DSH Console：${RELEASES_URL}`,
     );
@@ -1280,39 +1701,106 @@ export function findPnpmPath(): string | null {
   return whichWindowsExe('pnpm', windowsSearchDirs()) ?? runnableOrNull(findPnpm());
 }
 
-/** 跑一次 `--version` 之类的探测：拿退出码 / 首行输出 / 起不来的原因（stderr 只给日志） */
-function runVersion(file: string, args: string[], platform: string): Omit<VersionProbe, 'path'> {
+/**
+ * 超时后彻底放手：**杀整棵树**并释放管道。
+ *
+ * 为什么不能只 `child.kill()`：子进程往往只是个壳（`sh` 转发器、下载器），真正的活儿在它的
+ * 子进程里，而那个孙进程继承了 stdout / stderr 两根管道 —— 只杀壳的话 `close` 永远不会触发、
+ * 管道一直开着（实测：探针进程因此退不出来）。`killTreeSync` 在 POSIX 上杀进程组、Windows 上
+ * 用 `taskkill /T`，正是为这种"壳 + 后代"准备的。
+ */
+function releaseChild(child: ChildProcess | null): void {
+  if (!child) return;
+  const pid = child.pid;
+  try {
+    if (typeof pid === 'number' && pid > 0) killTreeSync(pid);
+    else child.kill('SIGKILL');
+  } catch {
+    /* 已经退了 */
+  }
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.stdin?.destroy();
+  child.unref();
+}
+
+/**
+ * 跑一次 `--version` 之类的探测：拿退出码 / 首行输出 / 起不来的原因（stderr 只给日志）。
+ *
+ * **异步**（v0.6.1 修）：这里原来是 `spawnSync`，而整条完整探测跑在**主进程**上。真机事故：
+ * 探测打到 vite-plus 的转发器，它在窄 PATH 下发现没有系统 node，就去下载自己的运行时
+ * （100+MB）—— 每个探测各 8 秒超时、串行五个，把主进程事件循环占了约 40 秒：界面"没有响应"，
+ * 系统最后弹崩溃提示（`~/.vite-plus/js_runtime` 里那 5 个 `.tmp*` 就是被这些超时杀掉的中断下载）。
+ *
+ * 现在：`spawn` + 定时器，超时就 `kill` 子进程并回一句人话，**绝不阻塞事件循环**。
+ */
+function runVersion(
+  file: string,
+  args: string[],
+  platform: string,
+): Promise<Omit<VersionProbe, 'path'>> {
   // 探测和执行走**同一个**包装器：`.cmd` / 无扩展名的路径不能直 spawn
   const spec = launchSpec(file, args, platform);
-  try {
-    const result = spawnSync(spec.file, spec.args, {
-      timeout: PROBE_TIMEOUT_MS,
-      windowsHide: true,
-      windowsVerbatimArguments: spec.windowsVerbatimArguments,
-      env: envWithKnownBins(process.env),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  return new Promise((resolve) => {
+    let child: ChildProcess | null = null;
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (value: Omit<VersionProbe, 'path'>): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      // 超时不等于"没装"：它可能在忙（例如转发器正在准备自己的运行时）。文案要给对，
+      // 判定那边也据此归到"测不出来"而不是"缺东西"。
+      releaseChild(child);
+      finish({
+        version: null,
+        exitCode: null,
+        error: `超过 ${Math.round(PROBE_TIMEOUT_MS / 1000)} 秒没有回应（已经结束它）`,
+        stderr: stderrTail(stderr),
+        timedOut: true,
+      });
+    }, PROBE_TIMEOUT_MS);
+    try {
+      child = spawn(spec.file, spec.args, {
+        windowsHide: true,
+        windowsVerbatimArguments: spec.windowsVerbatimArguments,
+        env: envWithKnownBins(process.env),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      finish({ version: null, exitCode: null, error: messageOf(error), stderr: null });
+      return;
+    }
     // stderr 一进来就收着（顺手脱掉 ANSI 颜色）：真机排查时"为什么跑不起来"那句话
     // 往往只出现在这里，而它**不许**上界面（冻结 §3.8 #22），唯一去处是日志。
-    const stderr = stderrTail(String(result.stderr ?? ''));
-    if (result.error) {
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderr += String(chunk);
+    });
+    child.on('error', (error) => {
       // EPERM / EACCES = 这个环境不允许起子进程，和"没装"是两件事（判定那边分开说）
-      return {
+      finish({
         version: null,
-        exitCode: result.status ?? null,
-        error: result.error.message,
-        stderr,
-      };
-    }
-    return {
-      version: firstLine(String(result.stdout ?? '')) || null,
-      exitCode: typeof result.status === 'number' ? result.status : null,
-      error: null,
-      stderr,
-    };
-  } catch (error) {
-    return { version: null, exitCode: null, error: messageOf(error), stderr: null };
-  }
+        exitCode: null,
+        error: error.message,
+        stderr: stderrTail(stderr),
+      });
+    });
+    child.on('close', (code) => {
+      finish({
+        version: firstLine(stdout) || null,
+        exitCode: typeof code === 'number' ? code : null,
+        error: null,
+        stderr: stderrTail(stderr),
+      });
+    });
+  });
 }
 
 /** stderr 只留尾部一小段（日志用原文，不搬整段堆栈）；没有内容时给 null */
@@ -1322,13 +1810,153 @@ function stderrTail(text: string): string | null {
   return trimmed.length > STDERR_TAIL_CHARS ? `…${trimmed.slice(-STDERR_TAIL_CHARS)}` : trimmed;
 }
 
-function probeBinary(file: string | null, args: string[], platform: string): VersionProbe {
+// ---- 本机这份 dsh 对 Node 的要求（离线读它的安装树）----------------------------------------
+//
+// 为什么要读磁盘而不是只信常量：**不是所有人装的是同一份 dsh**（用户裁决）。上游那句
+// `^22.19.0 || >=24.0.0` 只是某一刻的仓库根；用户装的那一份依赖链要什么，只有它的安装树
+// 说得清。本机实测（0.1.5-rc.1 / 524 个包）：`undici@8.10.2` 的 `>=22.19.0`。
+
+/** 扫描护栏：目录层数与包数都设上限（异常深 / 异常大的树不许把启动拖住） */
+const SCAN_MAX_DEPTH = 7;
+const SCAN_MAX_PACKAGES = 2000;
+
+/** 像 dsh 入口脚本的路径（`…/@deepseek-ai/dsh/lib/bin.js`） */
+function looksLikeDshBinJs(file: string): boolean {
+  return /[/\\]lib[/\\]bin\.js$/i.test(file);
+}
+
+interface DshManifest {
+  name?: unknown;
+  version?: unknown;
+  engines?: { node?: unknown };
+}
+
+function readManifest(file: string): DshManifest | null {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as DshManifest;
+  } catch {
+    return null; // 没有 / 不是 JSON / 读不动：都当"这里没有清单"
+  }
+}
+
+function isDshPackageRoot(dir: string): boolean {
+  return readManifest(path.join(dir, 'package.json'))?.name === '@deepseek-ai/dsh';
+}
+
+/**
+ * 从启动方式反推 dsh 的安装根（`…/node_modules/@deepseek-ai/dsh`）。**认不出来返回 null**（不猜）。
+ *
+ * 四条来源，按可靠性排：入口脚本的路径最直接（`node-bin` 与"自定义命令 + bin.js"都走它）；
+ * 其次是跟着 shim 的符号链接找真入口（npm 装的 shim 就是软链）；Windows 的 `.cmd` 是批处理、
+ * `realpath` 拆不开，只能按 npm 的两种全局布局在它旁边找。最后**一定读 package.json 验名**
+ * —— 名字对不上就不是我们要的那一份。
+ */
+export function dshRootFromLauncher(launcher: DshLauncher): string | null {
+  const candidates: string[] = [];
+  const entry = launcher.prefixArgs.find((arg) => looksLikeDshBinJs(arg));
+  if (entry) candidates.push(path.dirname(path.dirname(entry)));
+  // Windows 的 shim / custom-shim 那条路，真正那个 shim 藏在 cmd.exe 的前置参数里（带引号）
+  const shim = /^"(.*)"$/.exec(launcher.prefixArgs[3] ?? '')?.[1] ?? launcher.file;
+  for (const file of [shim, launcher.file]) {
+    const real = ((): string | null => {
+      try {
+        return fs.realpathSync(file);
+      } catch {
+        return null; // 软链断了 / 文件不在：试下一条
+      }
+    })();
+    if (real && looksLikeDshBinJs(real)) candidates.push(path.dirname(path.dirname(real)));
+  }
+  for (const file of [shim, launcher.file]) {
+    const dir = path.dirname(file);
+    candidates.push(
+      path.join(dir, 'node_modules', '@deepseek-ai', 'dsh'),
+      path.join(dir, '..', 'lib', 'node_modules', '@deepseek-ai', 'dsh'),
+    );
+  }
+  for (const candidate of candidates) {
+    if (isDshPackageRoot(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** 递归收一棵 `node_modules` 里所有 `engines.node`（读不动的地方跳过，绝不抛） */
+function collectNodeEngines(root: string): { entries: NodeEngineDeclaration[]; scanned: number } {
+  const entries: NodeEngineDeclaration[] = [];
+  let scanned = 0;
+  const walk = (dir: string, depth: number): void => {
+    if (depth > SCAN_MAX_DEPTH || scanned >= SCAN_MAX_PACKAGES) return;
+    let dirents: fs.Dirent[];
+    try {
+      dirents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    // 按名字排序再走：`readdirSync` 的顺序各家文件系统不保证，而"同一条下限时点名哪个包"
+    // 直接由它决定 —— 不排的话同一台机器上界面里的包名可能变来变去（也没法写断言）。
+    dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const dirent of dirents) {
+      if (scanned >= SCAN_MAX_PACKAGES) return;
+      if (!dirent.isDirectory()) continue;
+      if (dirent.name === '.bin' || dirent.name === '.cache') continue;
+      const full = path.join(dir, dirent.name);
+      if (dirent.name.startsWith('@')) {
+        walk(full, depth); // 作用域目录不算一层
+        continue;
+      }
+      const manifest = readManifest(path.join(full, 'package.json'));
+      if (manifest) {
+        scanned += 1;
+        if (typeof manifest.engines?.node === 'string' && typeof manifest.name === 'string') {
+          entries.push({
+            range: manifest.engines.node,
+            name: manifest.name,
+            version: typeof manifest.version === 'string' ? manifest.version : '',
+          });
+        }
+      }
+      walk(path.join(full, 'node_modules'), depth + 1);
+    }
+  };
+  walk(root, 0);
+  return { entries, scanned };
+}
+
+/**
+ * 读**本机这一份** dsh 的 Node 要求：它自己声明的 `engines` + 依赖链里要得最狠的那条下限。
+ *
+ * 离线、只读、跟随安装的那一份 —— 不联网、不问 registry、也不依赖我们抄来的常量。
+ * 拿不到安装根时返回 null（调用方退回 `NODE_RANGE` 并在文案里说清来源）。
+ */
+export function readLocalDshRequirement(launcher: DshLauncher): LocalDshRequirement | null {
+  const root = dshRootFromLauncher(launcher);
+  if (!root) return null;
+  const own = readManifest(path.join(root, 'package.json'));
+  const ownVersion = typeof own?.version === 'string' ? own.version : null;
+  const declared = typeof own?.engines?.node === 'string' ? own.engines.node : null;
+  const { entries, scanned } = collectNodeEngines(path.join(root, 'node_modules'));
+  if (declared)
+    entries.push({ range: declared, name: '@deepseek-ai/dsh', version: ownVersion ?? '' });
+  return {
+    version: ownVersion,
+    root,
+    declared,
+    required: highestNodeRequirement(entries),
+    scanned,
+  };
+}
+
+async function probeBinary(
+  file: string | null,
+  args: string[],
+  platform: string,
+): Promise<VersionProbe> {
   if (!file) return { ...EMPTY_VERSION_PROBE };
-  return { path: file, ...runVersion(file, args, platform) };
+  return { path: file, ...(await runVersion(file, args, platform)) };
 }
 
 /** dsh 本体：先定位（resolveDshLauncher），再实测（有输出才算能跑） */
-function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
+async function collectDshProbe(settings: SettingsValues, platform: string): Promise<DshProbe> {
   let launcher: DshLauncher;
   try {
     launcher = resolveDshLauncher(settings);
@@ -1359,9 +1987,10 @@ function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
       runs: canRunDsh(launcher.file, launcher.prefixArgs[0]),
       exitCode: null,
       stderr: null,
+      timedOut: false,
     };
   }
-  const run = runVersion(launcher.file, dshArgsFor(launcher, ['--version']), platform);
+  const run = await runVersion(launcher.file, dshArgsFor(launcher, ['--version']), platform);
   return {
     ...base,
     runs: run.version !== null,
@@ -1369,6 +1998,7 @@ function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
     exitCode: run.exitCode,
     error: run.error,
     stderr: run.stderr,
+    timedOut: run.timedOut === true,
   };
 }
 
@@ -1378,12 +2008,29 @@ function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
  * 运行时事实由调用方给：判定不读 `process.*`，采集这边也只读"与子进程有关"的那几个
  * （`process.env` / `process.platform` 间接经 process-utils），不碰 electron。
  */
-export function collectEnvProbe(settings: SettingsValues, runtime: EnvRuntime): EnvProbeRaw {
+export async function collectEnvProbe(
+  settings: SettingsValues,
+  runtime: EnvRuntime,
+): Promise<EnvProbeRaw> {
   let error: string | null = null;
 
   const nodePath = findNodePath();
   const npmPath = findNpm();
   const pnpmPath = findPnpmPath();
+
+  // 「外部 Node」这一行的语义（用户裁决，见 §7.25）：报**真正会被用来跑 dsh 的那一份**。
+  // dsh 那条路按"版本管理器里配套安装"优先（`dshInterpreterCandidates`），而通用搜索
+  // （`findNodePath`）是另一套顺序 —— 两者不一致时，用户拿终端里的 `node -v` 对账就会对不上。
+  let dshNodePath: string | null = null;
+  let dshLauncher: DshLauncher | null = null;
+  try {
+    const launcher = resolveDshLauncher(settings);
+    dshLauncher = launcher;
+    if (launcher.kind === 'node-bin') dshNodePath = launcher.file;
+  } catch {
+    /* 解析不出来就退回通用那份（新机器上通常如此） */
+  }
+  const nodeForRow = dshNodePath ?? nodePath;
 
   let shellFile: string | null = null;
   let shellExists = false;
@@ -1396,22 +2043,50 @@ export function collectEnvProbe(settings: SettingsValues, runtime: EnvRuntime): 
   }
 
   // 归属（需求 §7.7）：判据只有一份、是纯函数；完整探测本来就起子进程，所以把注册表那条证据也读上
-  const ownership = nodeOwnershipFacts(nodePath, true);
+  const ownership = nodeOwnershipFacts(nodeForRow, true);
+
+  // 四项探测**并发**跑（各自有自己的 8 秒上限）：串行时"一个慢"会拖住后面每一个，
+  // 而它们之间没有任何依赖 —— 真机上那 40 秒的卡顿就是串行 × 同步叠出来的。
+  // 先把四项子进程**发出去**（`Promise.all` 的数组一求值就 spawn），再趁它们跑的时候扫本机那份
+  // dsh 的安装树（同步、本机实测 ~20ms）—— 顺序反过来这 20ms 就白加在总时长上了。
+  const probes = Promise.all([
+    probeBinary(nodeForRow, ['--version'], runtime.platform),
+    probeBinary(npmPath, ['-v'], runtime.platform),
+    probeBinary(pnpmPath, ['-v'], runtime.platform),
+    collectDshProbe(settings, runtime.platform),
+  ]);
+  const localDsh = dshLauncher ? (readLocalDshRequirement(dshLauncher) ?? undefined) : undefined;
+  const [node, npm, pnpm, dsh] = await probes;
+
+  // 通用搜索找到的那一份（跟上面不是同一个才有意义）：只多起一个探测，且只在需要时起
+  let otherNode: EnvProbeRaw['otherNode'];
+  if (nodePath && nodeForRow && nodePath !== nodeForRow) {
+    const probe = await probeBinary(nodePath, ['--version'], runtime.platform);
+    otherNode = { path: nodePath, version: probe.version, shim: isNodeShim(nodePath) };
+  } else {
+    // 没有"另选一份"的，也还有可能是"我们跳过了某个转发器"（例如 ~/.vite-plus/bin/node）——
+    // 那正是用户拿终端 `node -v` 对不上的原因，报出来但**不执行它**（见 findSkippedNodeShim）。
+    const skipped = findSkippedNodeShim(nodeForRow);
+    if (skipped) otherNode = { path: skipped, version: null, shim: true };
+  }
 
   return {
     checkedAt: Date.now(),
     platform: runtime.platform,
     packaged: runtime.packaged,
     bundled: runtime.bundled,
-    node: probeBinary(nodePath, ['--version'], runtime.platform),
-    npm: probeBinary(npmPath, ['-v'], runtime.platform),
-    pnpm: probeBinary(pnpmPath, ['-v'], runtime.platform),
-    dsh: collectDshProbe(settings, runtime.platform),
+    node,
+    npm,
+    pnpm,
+    dsh,
+    otherNode,
+    nodeServesDsh: Boolean(dshNodePath && dshNodePath === nodeForRow),
+    localDsh,
     shell: { file: shellFile, exists: shellExists },
     // VC++ 运行库：只读两个文件，不起进程（VM-09 的"该装哪一档 pnpm"靠它）
     vcRuntime: hasVcRuntime(),
     // 这份 Node 是不是版本管理器管的（VM-13 的"管理器在、零版本"靠它说中文）
-    nodeFromVersionManager: looksVersionManagerNode(nodePath),
+    nodeFromVersionManager: looksVersionManagerNode(nodeForRow),
     nodeOwner: ownership.owner,
     nodeOwnerEvidence: ownership.evidence,
     error,
@@ -1432,6 +2107,7 @@ function emptyProbe(runtime: EnvRuntime, error: string): EnvProbeRaw {
       kind: null,
       display: null,
       runs: false,
+      timedOut: false,
       version: null,
       exitCode: null,
       error: null,
@@ -1446,22 +2122,42 @@ function emptyProbe(runtime: EnvRuntime, error: string): EnvProbeRaw {
 }
 
 /** 读一次 `npm prefix -g`（确认区里显示"会装进哪个目录"）；取不到就 null */
-function readNpmPrefix(npmPath: string, platform: string): string | null {
+async function readNpmPrefix(npmPath: string, platform: string): Promise<string | null> {
   // 与修复执行走同一个包装器：Windows 上 `npm` 是 .cmd，直 spawn 会 EINVAL
   const spec = npmLaunchSpec(npmPath, ['prefix', '-g'], platform);
-  try {
-    const result = spawnSync(spec.file, spec.args, {
-      timeout: PROBE_TIMEOUT_MS,
-      windowsHide: true,
-      windowsVerbatimArguments: spec.windowsVerbatimArguments,
-      env: envWithKnownBins(process.env),
-      stdio: ['ignore', 'pipe', 'pipe'],
+  // 同样不许阻塞主进程（见 runVersion 的说明）：这就是一次 `npm prefix -g`，
+  // 但 npm 在某些环境下会去连网（配置了源、或它自己要检查更新）—— 同步等它同样是几十秒。
+  return await new Promise<string | null>((resolve) => {
+    let child: ChildProcess | null = null;
+    let stdout = '';
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      releaseChild(child);
+      finish(null);
+    }, PROBE_TIMEOUT_MS);
+    try {
+      child = spawn(spec.file, spec.args, {
+        windowsHide: true,
+        windowsVerbatimArguments: spec.windowsVerbatimArguments,
+        env: envWithKnownBins(process.env),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      finish(null);
+      return;
+    }
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout += String(chunk);
     });
-    if (result.error || result.status !== 0) return null;
-    return firstLine(String(result.stdout ?? '')) || null;
-  } catch {
-    return null;
-  }
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 ? firstLine(stdout) || null : null));
+  });
 }
 
 /** 三个引导步骤：数组顺序 = 界面顺序 = 用户要走的顺序（需求 §4.2） */
@@ -1792,13 +2488,13 @@ export class EnvDoctor {
   async report(refresh = false): Promise<EnvDoctorReport> {
     if (!refresh && this.cached) return this.cached;
     this.prefix = undefined;
-    const { report: judged, raw } = this.judge();
+    const { report: judged, raw } = await this.judge();
     // 界面撤下去的那些原始错误在这里落日志（**只落日志**：界面文案仍是人话）。
     // 放在最前面：哪怕后面问 `npm prefix -g` 出了意外，这一轮的原文也已经记下来了。
     this.logTrouble(raw, judged);
     // plans 里的 target 要问一次 npm（判定是纯函数，不问）；
     // 没有可用的计划时连问都不问。
-    const target = judged.plans.length > 0 ? this.npmPrefix() : null;
+    const target = judged.plans.length > 0 ? await this.npmPrefix() : null;
     const report: EnvDoctorReport = {
       ...judged,
       plans: judged.plans.map((plan) => ({ ...plan, target })),
@@ -1818,20 +2514,20 @@ export class EnvDoctor {
     // VC++ 运行库这条事实**现场再认一次**（用户可能在两次点击之间装上了运行库）
     const plan = envFixPlan(action, findNpm(), hasVcRuntime());
     if (!plan) return null;
-    return { ...plan, target: this.npmPrefix() };
+    return { ...plan, target: await this.npmPrefix() };
   }
 
-  private npmPrefix(): string | null {
+  private async npmPrefix(): Promise<string | null> {
     if (this.prefix !== undefined) return this.prefix;
     const npmPath = findNpm();
-    this.prefix = npmPath ? readNpmPrefix(npmPath, this.platform) : null;
+    this.prefix = npmPath ? await readNpmPrefix(npmPath, this.platform) : null;
     return this.prefix;
   }
 
-  private judge(): { report: EnvDoctorReport; raw: EnvProbeRaw } {
+  private async judge(): Promise<{ report: EnvDoctorReport; raw: EnvProbeRaw }> {
     const runtime = this.hooks.runtime();
     try {
-      const raw = collectEnvProbe(this.settings.all(), runtime);
+      const raw = await collectEnvProbe(this.settings.all(), runtime);
       return { report: judgeEnvironment(raw), raw };
     } catch (error) {
       // 采集炸了也要给出一份能显示的报告：八行照常显示，error 非空由界面顶部说明
@@ -2106,7 +2802,7 @@ export class EnvFixRunner {
     }
     // 第二步：复检 + **功能实测**（`<pnpm> -v` 真的打出东西才算成功，只看"文件在"不算 —— VM-06）
     const report = await this.doctor.recheck();
-    const probe = probeFixTarget(action, this.doctor.platform);
+    const probe = await probeFixTarget(action, this.doctor.platform);
     const statusOf = (id: EnvCheckId): EnvCheckStatus =>
       report.checks.find((item) => item.id === id)?.status ?? 'missing';
     // dsh 的"能用"要两步都过：定位得到（dsh）**且**实测跑得动（dsh-run）—— 与门禁那条判据同一份口径
