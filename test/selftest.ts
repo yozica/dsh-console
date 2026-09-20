@@ -15,6 +15,7 @@
  *   8. 自动更新契约（不自动下载 / 安装、macOS 与开发态不加载 electron-updater）
  */
 
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -2473,6 +2474,111 @@ async function main(): Promise<void> {
       envCheckOf(envEperm, 'node-version').status === 'warn' &&
       envCheckOf(envEperm, 'dsh-run').status === 'warn',
   );
+
+  // 2026-09-20 真机事故：探测打到 vite-plus 的转发器，它在窄 PATH 下开始下载自己的运行时，
+  // 8 秒超时被杀 —— 而判定把"超过 8 秒没回应"当成了"退出码 0 + 零输出"那个静默退出签名，
+  // 于是引导用户去重装一个**好端端的** dsh。这两条钉住：超时归"测不出来"，且说法对得上。
+  const envTimedOut = envDoctor.judgeEnvironment(
+    envProbe({
+      node: envVersionProbe({
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+      npm: envVersionProbe({
+        path: '/opt/homebrew/bin/npm',
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+      pnpm: envVersionProbe({
+        path: '/opt/homebrew/bin/pnpm',
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+      dsh: envDshProbe({
+        kind: 'shim',
+        runs: false,
+        version: null,
+        exitCode: null,
+        error: '超过 8 秒没有回应（已经结束它）',
+        timedOut: true,
+      }),
+    }),
+  );
+  check(
+    '环境自检：探测超时是黄灯（"它在忙"），不冒充"退出码 0 + 零输出"的静默退出',
+    envCheckOf(envTimedOut, 'node-version').status === 'warn' &&
+      envCheckOf(envTimedOut, 'npm').status === 'warn' &&
+      envCheckOf(envTimedOut, 'pnpm').status === 'warn' &&
+      envCheckOf(envTimedOut, 'dsh-run').status === 'warn' &&
+      /没有回应/.test(envCheckOf(envTimedOut, 'dsh-run').detail) &&
+      !/静默退出/.test(envCheckOf(envTimedOut, 'dsh-run').detail) &&
+      // 判定本身不许自己去看计时 / 看时钟（超时是**采集侧**的事实，判定只搬运）
+      /timedOut/.test(envJudgeCode),
+  );
+  check(
+    '环境自检：node 那一行报"dsh 要用的那份"，并报出被跳过的转发器（不执行它）',
+    (() => {
+      const withOther = envDoctor.judgeEnvironment(
+        envProbe({
+          otherNode: { path: '/Users/x/.vite-plus/bin/node', version: null, shim: true },
+          nodeServesDsh: true,
+        }),
+      );
+      const plain = envDoctor.judgeEnvironment(envProbe());
+      const detail = envCheckOf(withOther, 'node').detail;
+      return (
+        /dsh 就用这一份跑/.test(detail) &&
+        /转发器/.test(detail) &&
+        /\.vite-plus\/bin\/node/.test(detail) &&
+        // 没有"另有一份"时不许画蛇添足
+        !/另有一个外部 Node/.test(envCheckOf(plain, 'node').detail)
+      );
+    })(),
+  );
+  check(
+    '环境自检：认得出"转发器"（最终目标不是 node），真实 node 的符号链接不算',
+    (() => {
+      // 真实文件系统：homebrew 那种 `node -> ../Cellar/node/x/bin/node` 必须算真 node，
+      // 而 vite-plus 那种 `node -> ../current/bin/vp` 必须算转发器 —— 判据只能看**最终目标的名字**。
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-shim-'));
+      try {
+        fs.mkdirSync(path.join(dir, 'real'), { recursive: true });
+        fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(dir, 'proxy'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'real', 'node'), '#!/bin/sh\necho v24\n');
+        fs.chmodSync(path.join(dir, 'real', 'node'), 0o755);
+        fs.writeFileSync(path.join(dir, 'proxy', 'vp'), '#!/bin/sh\necho vp\n');
+        fs.chmodSync(path.join(dir, 'proxy', 'vp'), 0o755);
+        // 真 node 的符号链接：最终目标是 .../real/node
+        fs.symlinkSync(path.join(dir, 'real', 'node'), path.join(dir, 'bin', 'node-good'));
+        // 转发器：最终目标是 .../proxy/vp
+        fs.symlinkSync(path.join(dir, 'proxy', 'vp'), path.join(dir, 'bin', 'node-shim'));
+        return (
+          processUtils.isNodeShim(path.join(dir, 'bin', 'node-good')) === false &&
+          processUtils.isNodeShim(path.join(dir, 'bin', 'node-shim')) === true &&
+          processUtils.isNodeShim(path.join(dir, 'real', 'node')) === false &&
+          // 读不到就别乱扣帽子
+          processUtils.isNodeShim(path.join(dir, 'does-not-exist')) === false
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    })(),
+  );
+  check(
+    '环境自检：探测不再走同步子进程（runVersion 里没有 spawnSync），四项并发跑',
+    !/spawnSync/.test(stripStrings(functionBodyOf(envSource, 'runVersion'))) &&
+      /const \[node, npm, pnpm, dsh\] = await Promise\.all\(/.test(envCode) &&
+      // 超时要真的把子进程树收掉（只 kill 壳会留下孤儿的管道，实测进程退不出来）
+      /killTreeSync\(pid\)/.test(envCode) &&
+      /stdout\?\.destroy\(\)/.test(envCode),
+  );
   const envOldBundled = envDoctor.judgeEnvironment(
     envProbe({ bundled: { electron: '30.0.0', node: '20.9.0', chrome: '124.0.0' } }),
   );
@@ -2614,9 +2720,10 @@ async function main(): Promise<void> {
   }
   check(
     '环境自检：探测与修复走同一个包装器（不是直 spawn .cmd / 无扩展名路径，且都带 verbatim）',
-    /function runVersion\(file: string, args: string\[\], platform: string\)[\s\S]{0,200}?const spec = launchSpec\(/.test(
-      envCode,
-    ) &&
+    /function runVersion\([\s\S]{0,160}?const spec = launchSpec\(/.test(envCode) &&
+      // 探测**不再走同步子进程**（真机事故：spawnSync × 5 把主进程卡了约 40 秒，见 §7.25）
+      !/function runVersion\([\s\S]{0,1400}?spawnSync\(/.test(envCode) &&
+      /function runVersion\([\s\S]{0,1400}?spawn\(spec\.file, spec\.args,/.test(envCode) &&
       /function readNpmPrefix\(npmPath: string, platform: string\)[\s\S]{0,200}?npmLaunchSpec\(/.test(
         envCode,
       ) &&
@@ -3170,7 +3277,7 @@ async function main(): Promise<void> {
     /const added = refreshLookupPath\(this\.lookupDirs\(plan\)\);[\s\S]{0,400}?const report = await this\.doctor\.recheck\(\);/.test(
       envCode,
     ) &&
-      /const probe = probeFixTarget\(action, this\.doctor\.platform\);/.test(envCode) &&
+      /const probe = await probeFixTarget\(action, this\.doctor\.platform\);/.test(envCode) &&
       // dsh 的"能用"要两步都过（定位到 + 实测跑得动），与门禁那条判据同一份口径
       /statusOf\('dsh'\) === 'ok' && statusOf\('dsh-run'\) === 'ok'/.test(envCode) &&
       // 主进程把日志位置注入进去，界面才说得清"细节在哪"
@@ -4199,7 +4306,8 @@ async function main(): Promise<void> {
   );
   check(
     '环境自检：stderr 只走日志这条路（判定不读它；不写它的旧夹具也照常跑）',
-    /stderrTail\(String\(result\.stderr \?\? ''\)\)/.test(envCode) &&
+    /stderrTail\(stderr\)/.test(envCode) &&
+      /let stderr = '';/.test(envCode) &&
       /stderr: run\.stderr,/.test(envCode) &&
       /export const STDERR_TAIL_CHARS = \d+;/.test(envSource) &&
       // 判定不看 stderr：结论仍然只由「有输出才算可用」那条线决定

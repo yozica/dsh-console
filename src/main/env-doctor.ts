@@ -54,8 +54,11 @@ import {
   findPnpm,
   hasVcRuntime,
   homeDir,
+  findSkippedNodeShim,
+  isNodeShim,
   isRunnablePath,
   isWindows,
+  killTreeSync,
   launchSpec,
   pathWithKnownBins,
   resolveDshLauncher,
@@ -103,6 +106,14 @@ export interface VersionProbe {
   stderr?: string | null;
   /** true = 这一轮**故意没测**（启动瞬间的快速探测）；判定当"测不出来"（warn），不是"没装" */
   skipped?: boolean;
+  /**
+   * true = 超过 `PROBE_TIMEOUT_MS` 没回应（子进程已被结束）。
+   *
+   * **必须与"退出码 0 + 零输出"区分开**：后者是"这份二进制跑不动"的签名（§7.4），
+   * 前者只是"它还在忙"（例如转发器正在准备自己的运行时）。混在一起会把用户引去重装一个
+   * 好端端的 dsh —— 真机上就这么错过一次。
+   */
+  timedOut?: boolean;
 }
 
 /** dsh 本体的定位 + 实测结果 */
@@ -122,6 +133,8 @@ export interface DshProbe {
   stderr?: string | null;
   /** 同上：true = 这一轮**故意没测**（快速探测不起子进程，也就不定位 launcher） */
   skipped?: boolean;
+  /** 同 `VersionProbe.timedOut`：超过 8 秒没回应，**不是**"这份 dsh 跑不动" */
+  timedOut?: boolean;
 }
 
 export interface ShellProbe {
@@ -137,6 +150,16 @@ export interface EnvProbeRaw {
   packaged: boolean;
   bundled: { electron: string; node: string; chrome: string };
   node: VersionProbe;
+  /**
+   * 通用搜索（`findNodePath()`）另找到的那份外部 Node —— **只在它与 `node` 不是同一个时**才有值。
+   *
+   * 为什么要有：`node` 这一行报的是"**真正会被用来跑 dsh 的那一份**"（用户裁决，见 §7.25）；
+   * 而机器上往往还躺着别的 node（另一个版本管理器、或一个**转发器** shim）。用户拿终端里的
+   * `node -v` 来对账时对不上就是因为它。把"另有一份、它是什么"写出来，这条对不上的疑惑才收口。
+   */
+  otherNode?: { path: string; version: string | null; shim: boolean };
+  /** `node` 那一份是不是"真正会被用来跑 dsh 的"（见 `otherNode` 的说明） */
+  nodeServesDsh?: boolean;
   npm: VersionProbe;
   pnpm: VersionProbe;
   dsh: DshProbe;
@@ -534,7 +557,7 @@ export interface FixProbe {
  * 这一步的**功能实测**：`<pnpm> -v` 真的打出东西才算成功（"文件在"不算 —— 这正是 VM 那一屏的
  * 症状：文件在、跑起来没有任何输出）。返回的事实同时喂给界面文案与日志（见 `fixDoneMessage`）。
  */
-export function probeFixTarget(action: EnvFixAction, platform: string): FixProbe {
+export async function probeFixTarget(action: EnvFixAction, platform: string): Promise<FixProbe> {
   const vcRuntime = hasVcRuntime();
   if (action !== 'install-pnpm') {
     return { file: null, version: null, exitCode: null, stderr: null, blocked: false, vcRuntime };
@@ -543,7 +566,7 @@ export function probeFixTarget(action: EnvFixAction, platform: string): FixProbe
   if (!file) {
     return { file: null, version: null, exitCode: null, stderr: null, blocked: false, vcRuntime };
   }
-  const probe = probeBinary(file, ['-v'], platform);
+  const probe = await probeBinary(file, ['-v'], platform);
   return {
     file,
     version: probe.version,
@@ -783,12 +806,24 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
   const dshHint =
     '在「设置 → 启动方式 → dsh 命令」里写一条能跑的启动命令，或一键 `npm i -g @deepseek-ai/dsh`。';
 
-  // 1. 外部 Node
+  // 1. 外部 Node = **真正会被用来跑 dsh 的那一份**（用户裁决，见 §7.25）。
+  //    另有一份（通用搜索找到的、跟它不是同一个）时把话说出来 —— 用户拿终端里的
+  //    `node -v` 对账对不上，就是因为它。
   if (raw.node.path) {
+    const other = raw.otherNode;
+    const tail = other
+      ? `；另有一个外部 Node：${other.path}${other.version ? `（${other.version}）` : ''}${
+          other.shim
+            ? '，那是个转发器，我们没去调它（调它会自己去下运行时；它的版本随启动环境而变，所以别拿它跟终端里的 `node -v` 对账）'
+            : ''
+        }`
+      : '';
     push(
       'node',
       'ok',
-      `找到了外部 Node：${raw.node.path}${raw.node.version ? `（${raw.node.version}）` : ''}`,
+      `找到了外部 Node：${raw.node.path}${raw.node.version ? `（${raw.node.version}）` : ''}` +
+        (raw.nodeServesDsh ? ' —— dsh 就用这一份跑' : '') +
+        tail,
     );
   } else {
     push(
@@ -814,7 +849,15 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
   } else if (!nodeVersion) {
     // 找到了 Node 的文件、但它跑不出结果 —— **有输出才算可用**（与 `canRunDsh` 同一条判据）。
     // 只有"这个环境不允许起子进程"才留黄灯（那是我们测不出来，不是用户没装）。
-    if (isEnvironmentBlocked(raw.node.error)) {
+    if (raw.node.timedOut) {
+      // **在忙 ≠ 缺东西**：转发器可能在准备自己的运行时（真机事故，见 §7.25）。
+      push(
+        'node-version',
+        'warn',
+        '没能实测版本：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表没装 Node',
+        '过一会儿点上面的「重新检测」再看一次。',
+      );
+    } else if (isEnvironmentBlocked(raw.node.error)) {
       push(
         'node-version',
         'warn',
@@ -861,6 +904,13 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     );
   } else if (raw.npm.version) {
     push('npm', 'ok', `npm 可用：${npmPath}（${raw.npm.version}）`);
+  } else if (raw.npm.timedOut) {
+    push(
+      'npm',
+      'warn',
+      '没能实测 npm：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表没装 npm',
+      '过一会儿点上面的「重新检测」再看一次。',
+    );
   } else if (isEnvironmentBlocked(raw.npm.error)) {
     push(
       'npm',
@@ -893,6 +943,13 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     );
   } else if (raw.pnpm.version) {
     push('pnpm', 'ok', `pnpm 可用：${raw.pnpm.path}（${raw.pnpm.version}）`);
+  } else if (raw.pnpm.timedOut) {
+    push(
+      'pnpm',
+      'warn',
+      '没能实测 pnpm：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表没装 pnpm',
+      '过一会儿点上面的「重新检测」再看一次。',
+    );
   } else if (isEnvironmentBlocked(raw.pnpm.error)) {
     push(
       'pnpm',
@@ -956,6 +1013,13 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
       'warn',
       '没能实测：这个运行环境不允许起子进程（不代表 dsh 不能用）',
       `${BLOCKED_HINT_PREFIX}只有在你自己有权限的终端里手工跑一次 \`dsh --version\` 才能确认。`,
+    );
+  } else if (raw.dsh.timedOut) {
+    push(
+      'dsh-run',
+      'warn',
+      '没能实测：它超过 8 秒没有回应（第一次运行时它可能在准备自己的运行时）—— 不代表 dsh 不能用',
+      '过一会儿点上面的「重新检测」再看一次；一直这样就在「设置 → 启动方式 → dsh 命令」里换一条能跑的启动命令。',
     );
   } else if (raw.dsh.exitCode === null || raw.dsh.exitCode === 0) {
     push(
@@ -1280,39 +1344,106 @@ export function findPnpmPath(): string | null {
   return whichWindowsExe('pnpm', windowsSearchDirs()) ?? runnableOrNull(findPnpm());
 }
 
-/** 跑一次 `--version` 之类的探测：拿退出码 / 首行输出 / 起不来的原因（stderr 只给日志） */
-function runVersion(file: string, args: string[], platform: string): Omit<VersionProbe, 'path'> {
+/**
+ * 超时后彻底放手：**杀整棵树**并释放管道。
+ *
+ * 为什么不能只 `child.kill()`：子进程往往只是个壳（`sh` 转发器、下载器），真正的活儿在它的
+ * 子进程里，而那个孙进程继承了 stdout / stderr 两根管道 —— 只杀壳的话 `close` 永远不会触发、
+ * 管道一直开着（实测：探针进程因此退不出来）。`killTreeSync` 在 POSIX 上杀进程组、Windows 上
+ * 用 `taskkill /T`，正是为这种"壳 + 后代"准备的。
+ */
+function releaseChild(child: ChildProcess | null): void {
+  if (!child) return;
+  const pid = child.pid;
+  try {
+    if (typeof pid === 'number' && pid > 0) killTreeSync(pid);
+    else child.kill('SIGKILL');
+  } catch {
+    /* 已经退了 */
+  }
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.stdin?.destroy();
+  child.unref();
+}
+
+/**
+ * 跑一次 `--version` 之类的探测：拿退出码 / 首行输出 / 起不来的原因（stderr 只给日志）。
+ *
+ * **异步**（v0.6.1 修）：这里原来是 `spawnSync`，而整条完整探测跑在**主进程**上。真机事故：
+ * 探测打到 vite-plus 的转发器，它在窄 PATH 下发现没有系统 node，就去下载自己的运行时
+ * （100+MB）—— 每个探测各 8 秒超时、串行五个，把主进程事件循环占了约 40 秒：界面"没有响应"，
+ * 系统最后弹崩溃提示（`~/.vite-plus/js_runtime` 里那 5 个 `.tmp*` 就是被这些超时杀掉的中断下载）。
+ *
+ * 现在：`spawn` + 定时器，超时就 `kill` 子进程并回一句人话，**绝不阻塞事件循环**。
+ */
+function runVersion(
+  file: string,
+  args: string[],
+  platform: string,
+): Promise<Omit<VersionProbe, 'path'>> {
   // 探测和执行走**同一个**包装器：`.cmd` / 无扩展名的路径不能直 spawn
   const spec = launchSpec(file, args, platform);
-  try {
-    const result = spawnSync(spec.file, spec.args, {
-      timeout: PROBE_TIMEOUT_MS,
-      windowsHide: true,
-      windowsVerbatimArguments: spec.windowsVerbatimArguments,
-      env: envWithKnownBins(process.env),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  return new Promise((resolve) => {
+    let child: ChildProcess | null = null;
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (value: Omit<VersionProbe, 'path'>): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      // 超时不等于"没装"：它可能在忙（例如转发器正在准备自己的运行时）。文案要给对，
+      // 判定那边也据此归到"测不出来"而不是"缺东西"。
+      releaseChild(child);
+      finish({
+        version: null,
+        exitCode: null,
+        error: `超过 ${Math.round(PROBE_TIMEOUT_MS / 1000)} 秒没有回应（已经结束它）`,
+        stderr: stderrTail(stderr),
+        timedOut: true,
+      });
+    }, PROBE_TIMEOUT_MS);
+    try {
+      child = spawn(spec.file, spec.args, {
+        windowsHide: true,
+        windowsVerbatimArguments: spec.windowsVerbatimArguments,
+        env: envWithKnownBins(process.env),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      finish({ version: null, exitCode: null, error: messageOf(error), stderr: null });
+      return;
+    }
     // stderr 一进来就收着（顺手脱掉 ANSI 颜色）：真机排查时"为什么跑不起来"那句话
     // 往往只出现在这里，而它**不许**上界面（冻结 §3.8 #22），唯一去处是日志。
-    const stderr = stderrTail(String(result.stderr ?? ''));
-    if (result.error) {
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderr += String(chunk);
+    });
+    child.on('error', (error) => {
       // EPERM / EACCES = 这个环境不允许起子进程，和"没装"是两件事（判定那边分开说）
-      return {
+      finish({
         version: null,
-        exitCode: result.status ?? null,
-        error: result.error.message,
-        stderr,
-      };
-    }
-    return {
-      version: firstLine(String(result.stdout ?? '')) || null,
-      exitCode: typeof result.status === 'number' ? result.status : null,
-      error: null,
-      stderr,
-    };
-  } catch (error) {
-    return { version: null, exitCode: null, error: messageOf(error), stderr: null };
-  }
+        exitCode: null,
+        error: error.message,
+        stderr: stderrTail(stderr),
+      });
+    });
+    child.on('close', (code) => {
+      finish({
+        version: firstLine(stdout) || null,
+        exitCode: typeof code === 'number' ? code : null,
+        error: null,
+        stderr: stderrTail(stderr),
+      });
+    });
+  });
 }
 
 /** stderr 只留尾部一小段（日志用原文，不搬整段堆栈）；没有内容时给 null */
@@ -1322,13 +1453,17 @@ function stderrTail(text: string): string | null {
   return trimmed.length > STDERR_TAIL_CHARS ? `…${trimmed.slice(-STDERR_TAIL_CHARS)}` : trimmed;
 }
 
-function probeBinary(file: string | null, args: string[], platform: string): VersionProbe {
+async function probeBinary(
+  file: string | null,
+  args: string[],
+  platform: string,
+): Promise<VersionProbe> {
   if (!file) return { ...EMPTY_VERSION_PROBE };
-  return { path: file, ...runVersion(file, args, platform) };
+  return { path: file, ...(await runVersion(file, args, platform)) };
 }
 
 /** dsh 本体：先定位（resolveDshLauncher），再实测（有输出才算能跑） */
-function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
+async function collectDshProbe(settings: SettingsValues, platform: string): Promise<DshProbe> {
   let launcher: DshLauncher;
   try {
     launcher = resolveDshLauncher(settings);
@@ -1359,9 +1494,10 @@ function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
       runs: canRunDsh(launcher.file, launcher.prefixArgs[0]),
       exitCode: null,
       stderr: null,
+      timedOut: false,
     };
   }
-  const run = runVersion(launcher.file, dshArgsFor(launcher, ['--version']), platform);
+  const run = await runVersion(launcher.file, dshArgsFor(launcher, ['--version']), platform);
   return {
     ...base,
     runs: run.version !== null,
@@ -1369,6 +1505,7 @@ function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
     exitCode: run.exitCode,
     error: run.error,
     stderr: run.stderr,
+    timedOut: run.timedOut === true,
   };
 }
 
@@ -1378,12 +1515,27 @@ function collectDshProbe(settings: SettingsValues, platform: string): DshProbe {
  * 运行时事实由调用方给：判定不读 `process.*`，采集这边也只读"与子进程有关"的那几个
  * （`process.env` / `process.platform` 间接经 process-utils），不碰 electron。
  */
-export function collectEnvProbe(settings: SettingsValues, runtime: EnvRuntime): EnvProbeRaw {
+export async function collectEnvProbe(
+  settings: SettingsValues,
+  runtime: EnvRuntime,
+): Promise<EnvProbeRaw> {
   let error: string | null = null;
 
   const nodePath = findNodePath();
   const npmPath = findNpm();
   const pnpmPath = findPnpmPath();
+
+  // 「外部 Node」这一行的语义（用户裁决，见 §7.25）：报**真正会被用来跑 dsh 的那一份**。
+  // dsh 那条路按"版本管理器里配套安装"优先（`dshInterpreterCandidates`），而通用搜索
+  // （`findNodePath`）是另一套顺序 —— 两者不一致时，用户拿终端里的 `node -v` 对账就会对不上。
+  let dshNodePath: string | null = null;
+  try {
+    const launcher = resolveDshLauncher(settings);
+    if (launcher.kind === 'node-bin') dshNodePath = launcher.file;
+  } catch {
+    /* 解析不出来就退回通用那份（新机器上通常如此） */
+  }
+  const nodeForRow = dshNodePath ?? nodePath;
 
   let shellFile: string | null = null;
   let shellExists = false;
@@ -1396,22 +1548,45 @@ export function collectEnvProbe(settings: SettingsValues, runtime: EnvRuntime): 
   }
 
   // 归属（需求 §7.7）：判据只有一份、是纯函数；完整探测本来就起子进程，所以把注册表那条证据也读上
-  const ownership = nodeOwnershipFacts(nodePath, true);
+  const ownership = nodeOwnershipFacts(nodeForRow, true);
+
+  // 四项探测**并发**跑（各自有自己的 8 秒上限）：串行时"一个慢"会拖住后面每一个，
+  // 而它们之间没有任何依赖 —— 真机上那 40 秒的卡顿就是串行 × 同步叠出来的。
+  const [node, npm, pnpm, dsh] = await Promise.all([
+    probeBinary(nodeForRow, ['--version'], runtime.platform),
+    probeBinary(npmPath, ['-v'], runtime.platform),
+    probeBinary(pnpmPath, ['-v'], runtime.platform),
+    collectDshProbe(settings, runtime.platform),
+  ]);
+
+  // 通用搜索找到的那一份（跟上面不是同一个才有意义）：只多起一个探测，且只在需要时起
+  let otherNode: EnvProbeRaw['otherNode'];
+  if (nodePath && nodeForRow && nodePath !== nodeForRow) {
+    const probe = await probeBinary(nodePath, ['--version'], runtime.platform);
+    otherNode = { path: nodePath, version: probe.version, shim: isNodeShim(nodePath) };
+  } else {
+    // 没有"另选一份"的，也还有可能是"我们跳过了某个转发器"（例如 ~/.vite-plus/bin/node）——
+    // 那正是用户拿终端 `node -v` 对不上的原因，报出来但**不执行它**（见 findSkippedNodeShim）。
+    const skipped = findSkippedNodeShim(nodeForRow);
+    if (skipped) otherNode = { path: skipped, version: null, shim: true };
+  }
 
   return {
     checkedAt: Date.now(),
     platform: runtime.platform,
     packaged: runtime.packaged,
     bundled: runtime.bundled,
-    node: probeBinary(nodePath, ['--version'], runtime.platform),
-    npm: probeBinary(npmPath, ['-v'], runtime.platform),
-    pnpm: probeBinary(pnpmPath, ['-v'], runtime.platform),
-    dsh: collectDshProbe(settings, runtime.platform),
+    node,
+    npm,
+    pnpm,
+    dsh,
+    otherNode,
+    nodeServesDsh: Boolean(dshNodePath && dshNodePath === nodeForRow),
     shell: { file: shellFile, exists: shellExists },
     // VC++ 运行库：只读两个文件，不起进程（VM-09 的"该装哪一档 pnpm"靠它）
     vcRuntime: hasVcRuntime(),
     // 这份 Node 是不是版本管理器管的（VM-13 的"管理器在、零版本"靠它说中文）
-    nodeFromVersionManager: looksVersionManagerNode(nodePath),
+    nodeFromVersionManager: looksVersionManagerNode(nodeForRow),
     nodeOwner: ownership.owner,
     nodeOwnerEvidence: ownership.evidence,
     error,
@@ -1432,6 +1607,7 @@ function emptyProbe(runtime: EnvRuntime, error: string): EnvProbeRaw {
       kind: null,
       display: null,
       runs: false,
+      timedOut: false,
       version: null,
       exitCode: null,
       error: null,
@@ -1446,22 +1622,42 @@ function emptyProbe(runtime: EnvRuntime, error: string): EnvProbeRaw {
 }
 
 /** 读一次 `npm prefix -g`（确认区里显示"会装进哪个目录"）；取不到就 null */
-function readNpmPrefix(npmPath: string, platform: string): string | null {
+async function readNpmPrefix(npmPath: string, platform: string): Promise<string | null> {
   // 与修复执行走同一个包装器：Windows 上 `npm` 是 .cmd，直 spawn 会 EINVAL
   const spec = npmLaunchSpec(npmPath, ['prefix', '-g'], platform);
-  try {
-    const result = spawnSync(spec.file, spec.args, {
-      timeout: PROBE_TIMEOUT_MS,
-      windowsHide: true,
-      windowsVerbatimArguments: spec.windowsVerbatimArguments,
-      env: envWithKnownBins(process.env),
-      stdio: ['ignore', 'pipe', 'pipe'],
+  // 同样不许阻塞主进程（见 runVersion 的说明）：这就是一次 `npm prefix -g`，
+  // 但 npm 在某些环境下会去连网（配置了源、或它自己要检查更新）—— 同步等它同样是几十秒。
+  return await new Promise<string | null>((resolve) => {
+    let child: ChildProcess | null = null;
+    let stdout = '';
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      releaseChild(child);
+      finish(null);
+    }, PROBE_TIMEOUT_MS);
+    try {
+      child = spawn(spec.file, spec.args, {
+        windowsHide: true,
+        windowsVerbatimArguments: spec.windowsVerbatimArguments,
+        env: envWithKnownBins(process.env),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      finish(null);
+      return;
+    }
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout += String(chunk);
     });
-    if (result.error || result.status !== 0) return null;
-    return firstLine(String(result.stdout ?? '')) || null;
-  } catch {
-    return null;
-  }
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 ? firstLine(stdout) || null : null));
+  });
 }
 
 /** 三个引导步骤：数组顺序 = 界面顺序 = 用户要走的顺序（需求 §4.2） */
@@ -1792,13 +1988,13 @@ export class EnvDoctor {
   async report(refresh = false): Promise<EnvDoctorReport> {
     if (!refresh && this.cached) return this.cached;
     this.prefix = undefined;
-    const { report: judged, raw } = this.judge();
+    const { report: judged, raw } = await this.judge();
     // 界面撤下去的那些原始错误在这里落日志（**只落日志**：界面文案仍是人话）。
     // 放在最前面：哪怕后面问 `npm prefix -g` 出了意外，这一轮的原文也已经记下来了。
     this.logTrouble(raw, judged);
     // plans 里的 target 要问一次 npm（判定是纯函数，不问）；
     // 没有可用的计划时连问都不问。
-    const target = judged.plans.length > 0 ? this.npmPrefix() : null;
+    const target = judged.plans.length > 0 ? await this.npmPrefix() : null;
     const report: EnvDoctorReport = {
       ...judged,
       plans: judged.plans.map((plan) => ({ ...plan, target })),
@@ -1818,20 +2014,20 @@ export class EnvDoctor {
     // VC++ 运行库这条事实**现场再认一次**（用户可能在两次点击之间装上了运行库）
     const plan = envFixPlan(action, findNpm(), hasVcRuntime());
     if (!plan) return null;
-    return { ...plan, target: this.npmPrefix() };
+    return { ...plan, target: await this.npmPrefix() };
   }
 
-  private npmPrefix(): string | null {
+  private async npmPrefix(): Promise<string | null> {
     if (this.prefix !== undefined) return this.prefix;
     const npmPath = findNpm();
-    this.prefix = npmPath ? readNpmPrefix(npmPath, this.platform) : null;
+    this.prefix = npmPath ? await readNpmPrefix(npmPath, this.platform) : null;
     return this.prefix;
   }
 
-  private judge(): { report: EnvDoctorReport; raw: EnvProbeRaw } {
+  private async judge(): Promise<{ report: EnvDoctorReport; raw: EnvProbeRaw }> {
     const runtime = this.hooks.runtime();
     try {
-      const raw = collectEnvProbe(this.settings.all(), runtime);
+      const raw = await collectEnvProbe(this.settings.all(), runtime);
       return { report: judgeEnvironment(raw), raw };
     } catch (error) {
       // 采集炸了也要给出一份能显示的报告：八行照常显示，error 非空由界面顶部说明
@@ -2106,7 +2302,7 @@ export class EnvFixRunner {
     }
     // 第二步：复检 + **功能实测**（`<pnpm> -v` 真的打出东西才算成功，只看"文件在"不算 —— VM-06）
     const report = await this.doctor.recheck();
-    const probe = probeFixTarget(action, this.doctor.platform);
+    const probe = await probeFixTarget(action, this.doctor.platform);
     const statusOf = (id: EnvCheckId): EnvCheckStatus =>
       report.checks.find((item) => item.id === id)?.status ?? 'missing';
     // dsh 的"能用"要两步都过：定位得到（dsh）**且**实测跑得动（dsh-run）—— 与门禁那条判据同一份口径

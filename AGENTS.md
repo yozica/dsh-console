@@ -57,7 +57,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        270 项自检（`npm test`），不需要 Electron
+test/selftest.ts        274 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -99,7 +99,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（270 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（274 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -642,12 +642,34 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **哪条自检守着**：四条**静态检查**（启动记录出现在 `app.whenReady()` 之前、`!gotLock` 分支走 `app.exit` 且不出现 `app.quit()`、两个 `process.on` + `showErrorBox` + 日志路径、`writeLine` 是同步的且没有文件时仍打终端）。**这些分支只在真机上才会真正跑到**，所以改完要手工验一次：起两个实例（第二个应当立刻干净退出，日志里多一行说明）、临时在主进程里 `throw new Error('probe')` 看对话框是否带日志路径（验完删掉）。
 
+### 7.25 环境自检的探测不许阻塞主进程，也不许去调"转发器"
+
+**现象**（真机）：双击新版本"没反应"，过一会儿系统弹崩溃提示。日志里两行 `环境自检：node --version 起不来：spawnSync … ETIMEDOUT`；`README`/用户肉眼可见的副作用是 `~/.vite-plus/js_runtime/` 里多出一个 **100+MB 的 Node 运行时**（当天新建）与 5 个 `.tmp*` 残留。
+
+**原因**：完整探测（`collectEnvProbe`）跑在**主进程**上，而且是 **5 个 `spawnSync` × 每个 8 秒超时、串行**（node / npm / pnpm / dsh / dsh-run）—— 最坏把事件循环占住约 40 秒。而它第一个就去敲了 `~/.vite-plus/bin/node`：那是个**转发器**（symlink → `current/bin/vp`，配置 `shimMode: system_first`），在 GUI 应用的窄 PATH 下找不到系统 node，于是**开始下载自己的运行时**；8 秒到点被 `spawnSync` 杀掉（每次杀都留下一个 `.tmp*`），下一个探测再起一个…… 界面在这几十秒里完全没响应，macOS 最后给的就是"没有响应 / 意外退出"。
+
+三个连带发现（都已修）：
+
+1. **超时被说成"起不来"**：`exitCode: null` 落进了"退出码 0 + 零输出 = 静默退出"那条判据（§7.4 的签名），界面于是引导用户去**重装一个好好的 dsh**。现在 `VersionProbe.timedOut` / `DshProbe.timedOut` 与那个签名分开，归"测不出来"（warn）。
+2. **候选表把一个转发器排在真 node 之前**：`findNodeExe` 的硬编码列表里 `~/.vite-plus/bin/node` 在 nvm / fnm 目录**之前**，于是同一台机器上「dsh 用哪个 Node」（`dshInterpreterCandidates`，配套安装优先 → nvm 的真 node）与「外部 Node 这一行」（通用搜索 → 转发器）给出**两个版本**，用户拿终端 `node -v` 对账必然对不上。
+3. **`kill` 只杀壳**：转发器往往只是个 `sh`，真正的活儿（下载器）在它的子进程里、还继承了 stdout / stderr —— 只 `kill` 壳的话 `close` 永不触发、管道一直开着（实测：探针进程因此退不出来）。
+
+**现在的做法**：
+
+- **异步 + 并发**：`runVersion` / `readNpmPrefix` 改成 `spawn` + 定时器（超时就 `killTreeSync` + `destroy()` 三根管道 + `unref()`），`collectEnvProbe` 里四项探测 `Promise.all` 并发跑。`EnvDoctor.report()` 本来就是 `async`，调用方一个字没改。
+- **转发器认出来、不执行**：`isNodeShim(file)` = 跟着符号链接走到最终目标、看名字还是不是 `node`（homebrew 那种 `…/Cellar/node/x/bin/node` 算真 node，vite-plus 那种 `…/current/bin/vp` 算转发器）。`findNodeExe` 改成**两趟**扫描：先真 node、实在没有才退转发器。
+- **「外部 Node」这一行的语义**（用户裁决）：报**真正会被用来跑 dsh 的那一份**（`resolveDshLauncher` 给 `node-bin` 时就是它），并注明"dsh 就用这一份跑"；机器上还有一份被跳过的转发器时，把它**报出来但不执行**（"它的版本随启动环境而变，别拿它跟终端里的 `node -v` 对账"）。
+
+**哪条自检守着**：「环境自检：探测不再走同步子进程（runVersion 里没有 spawnSync），四项并发跑」「环境自检：探测超时是黄灯（"它在忙"），不冒充"退出码 0 + 零输出"的静默退出」「环境自检：node 那一行报"dsh 要用的那份"，并报出被跳过的转发器（不执行它）」「环境自检：认得出"转发器"（最终目标不是 node），真实 node 的符号链接不算」（最后一条用真实文件系统建符号链接，不是纯静态检查）。
+
+**推论**：`scripts/*-cases.mjs` 只被沙箱门禁跑 —— 上面第 1 条那个"超时冒充静默退出"的误判就是这么攒下来的（CI 只跑 `npm test`，而它当时是绿的）。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，270 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，274 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

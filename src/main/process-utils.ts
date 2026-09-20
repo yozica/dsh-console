@@ -254,12 +254,11 @@ function firstExisting(dirs: string[], names: string[]): string | null {
   return null;
 }
 
-/** 找 node 可执行文件：PATH 优先，其次常见安装位置（GUI 启动时 PATH 很窄） */
-export function findNodeExe(): string | null {
-  // Windows 上不写死 `node.exe`：交给 whichSync 按 PATHEXT 展开（`pnpm.exe` / `node.exe` 都可能）
-  const fromPath = whichSync('node');
-  if (fromPath) return fromPath;
-  if (isWindows) return firstExisting(windowsBinCandidates(process.env, homeDir()), ['node.exe']);
+/**
+ * 找 node 时的候选目录列表（**顺序即优先级**），`findNodeExe` 与"报出被跳过的转发器"共用它。
+ * 抽出来是为了两处不各写一遍 —— 顺序一漂，界面上那句"另有一个外部 Node"就会跟实际挑选对不上。
+ */
+function nodeCandidatePaths(): string[] {
   const home = homeDir();
   const candidates = [
     '/opt/homebrew/bin/node',
@@ -269,6 +268,60 @@ export function findNodeExe(): string | null {
     path.join(home, 'Library', 'pnpm', 'node'),
   ];
   for (const install of versionManagerInstalls()) candidates.push(path.join(install.bin, 'node'));
+  return candidates;
+}
+
+/**
+ * 被我们**跳过**的那份转发器（第一份存在、且不是 `chosen` 的）。
+ *
+ * 为什么要单独找它：重排候选之后，通用搜索也挑到真 node 了 —— 转发器不再是"选中的那份"，
+ * 于是"机器上还躺着一个 vite-plus 转发器"这件事就没人说了。而它正是用户拿终端 `node -v`
+ * 对账对不上的原因，所以还是要报出来（但**不去执行它**：执行它就是当初那次下载的起因）。
+ */
+export function findSkippedNodeShim(chosen: string | null): string | null {
+  const target = chosen ? path.resolve(chosen) : '';
+  for (const candidate of nodeCandidatePaths()) {
+    if (!isExecutableFile(candidate)) continue;
+    if (target && path.resolve(candidate) === target) continue;
+    if (isNodeShim(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * 这个路径是不是一个**转发器**（shim）：跟着符号链接走到最终目标，看它的名字还是不是 `node`。
+ *
+ * 为什么需要它：`~/.vite-plus/bin/node` 是指向 `current/bin/vp` 的符号链接，**它会在被调用时
+ * 决定跑哪个 node** —— 在终端里（PATH 有 nvm）它转发到系统那份，而在 GUI 应用的窄 PATH 下
+ * 它会回退到自己下载的运行时（真机事故：我们第一次探测就触发了那次 100+MB 的下载，并把主进程
+ * 卡了约 40 秒，见 §7.25）。而 `/opt/homebrew/bin/node` 这类符号链接**指向的是真 node**，
+ * 所以判据必须是"**最终目标**的名字"，不能只看"它是不是符号链接"。
+ */
+export function isNodeShim(file: string): boolean {
+  try {
+    const real = fs.realpathSync(file);
+    return (
+      path.basename(real).toLowerCase() !== 'node' &&
+      path.basename(real).toLowerCase() !== 'node.exe'
+    );
+  } catch {
+    return false; // 读不出来就别乱扣帽子
+  }
+}
+
+/** 找 node 可执行文件：PATH 优先，其次常见安装位置（GUI 启动时 PATH 很窄） */
+export function findNodeExe(): string | null {
+  // Windows 上不写死 `node.exe`：交给 whichSync 按 PATHEXT 展开（`pnpm.exe` / `node.exe` 都可能）
+  const fromPath = whichSync('node');
+  if (fromPath) return fromPath;
+  if (isWindows) return firstExisting(windowsBinCandidates(process.env, homeDir()), ['node.exe']);
+  const candidates = nodeCandidatePaths();
+  // **两趟**：先要真 node（能看到版本、不会替我们装东西），实在没有才退到转发器。
+  // 一趟扫描会让 `~/.vite-plus/bin/node` 抢在 nvm 那些真 node 前面 —— 它不是错的路径，
+  // 但它会在被调用时自己决定跑哪个 node（见 isNodeShim 与 §7.25）。
+  for (const candidate of candidates) {
+    if (isExecutableFile(candidate) && !isNodeShim(candidate)) return candidate;
+  }
   for (const candidate of candidates) {
     if (isExecutableFile(candidate)) return candidate;
   }
