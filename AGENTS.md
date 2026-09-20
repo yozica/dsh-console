@@ -58,7 +58,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        281 项自检（`npm test`），不需要 Electron
+test/selftest.ts        282 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -100,7 +100,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（281 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（282 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -691,12 +691,27 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **推论**：`scripts/*-cases.mjs` 只被沙箱门禁跑 —— 上面第 1 条那个"超时冒充静默退出"的误判就是这么攒下来的（CI 只跑 `npm test`，而它当时是绿的）。
 
+### 7.27 自检页的长文案有行长上限（`--env-read`）
+
+**现象**：`dsh 本体` / `dsh 能不能跑` 那两行的说明是**两条长路径**拼起来的（node 的入口 + dsh 的 `bin.js`，约 150 字）。不限宽时它跟着窗口一起变宽：窗口 1220px 时面板 980、正文 948，折行正好切在**路径中间** —— 实测断成 `…/lib/node_modules/@deepseek-` + `ai/dsh/lib/bin.js`，第二行只剩一小截，看着像排版坏了（用户报的"换行的问题"就是这条）。
+
+**做法**：这一页仅有的三处长文案（`.env-scope` 顶部那句、`.env-detail` 每行的说明、`.env-hint` 里出路那句）共用一个 `max-width: var(--env-read)` = **820px**。为什么是这个数（同一台机器、同一个窗口实测，CDP 直接量渲染结果）：
+
+- 640–820 之间折行都落在**两条路径之间的那个空格**上（一行一段，正好是"哪一份 node + 哪一个入口脚本"）；
+- 再宽（≥860）开始切路径中间 —— 948 就是那个坏样子；
+- 再窄（≤760）`dsh 能不能跑` 那行会涨到三行。
+- 净效果：列表的滚动高度 688 → 640px（`dsh` 那两行各矮一行）；`外部 Node` 那行仍是三行（它 203 字，是这一页最长的文案）。
+
+**推论**：这一页的文案长度不是随便写的 —— 往说明里加一句之前先想它会不会把某一行顶到三行。真要把 `dsh` 那两行压成**一行**，只能缩短文案本身（别再铺整条 argv），加宽/缩窄都没用。
+
+**哪条自检守着**：「环境自检页：长文案有行长上限（同一页三处共用一个 token，别再跟着窗口一起变宽）」。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，281 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，282 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

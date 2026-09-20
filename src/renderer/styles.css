@@ -53,6 +53,12 @@
   --bar-h: 36px;
   --dur: 140ms;
 
+  /* 自检页的正文行长上限（见 §7.27）。为什么需要它：那些「说明」里常有两条长路径
+     （node 的入口 + dsh 的 bin.js），不限宽时它们跟着窗口一起变宽，折行落点会**切在路径
+     中间**（实测 948px 时断成 `…/@deepseek-` / `ai/dsh/lib/bin.js`）；限到 820px 后折行正好
+     落在两条路径之间的空格上，一行一段。`--wizard-card`(760) 同样量级，别再往上加。 */
+  --env-read: 820px;
+
   /* 首启环境向导与入口门禁（说明见 docs/env-wizard-visual.md §9.1）。
      五条全是主题无关的尺度 / 层号，**不进浅色块**（两套主题同值）。
      --z-gate 必须低于启动锁的 60：两者互斥交接的那一帧永远是锁盖住门禁。 */
@@ -2978,6 +2984,7 @@ body[data-immersive='true'] .webview-wrap {
 /* 版本区间的出处：dsh 与它依赖链的要求（构建期那句是另一个区间，只judge「应用自带运行时」），
    所以写在这一屏里，不藏在 tooltip */
 .env-scope {
+  max-width: var(--env-read);
   margin: 0;
   color: var(--ink-faint);
   font-size: var(--t-xs);
@@ -3070,6 +3077,9 @@ body[data-immersive='true'] .webview-wrap {
 }
 
 .env-detail {
+  /* 行长上限：这三处（本行 / .env-scope / .env-hint）是这一页仅有的长文案，
+     不限宽就会跟着窗口变宽、把长路径从中间切断（见 --env-read 与 §7.27） */
+  max-width: var(--env-read);
   margin: 3px 0 0;
   color: var(--ink-dim);
   font-size: var(--t-sm);
@@ -3082,6 +3092,7 @@ body[data-immersive='true'] .webview-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: var(--env-read);
   margin: 8px 0 0;
 }
 

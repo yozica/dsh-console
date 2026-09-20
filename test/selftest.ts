@@ -2529,6 +2529,24 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '环境自检页：长文案有行长上限（同一页三处共用一个 token，别再跟着窗口一起变宽）',
+    (() => {
+      const rootBody = cssBlock(':root');
+      const lightBody = cssBlock(":root[data-theme='light']");
+      const read = /--env-read:\s*(\d+)px;/.exec(rootBody)?.[1];
+      if (!read || lightBody.includes('--env-read')) return false;
+      // 太宽会切在长路径中间（948px 实测断成 `…/@deepseek-` + `ai/dsh/lib/bin.js`）、
+      // 太窄会把 `dsh 能不能跑` 顶到三行；820 是这一页实测折行落在两段路径之间空格上的那档
+      return (
+        Number(read) === 820 &&
+        ['.env-scope', '.env-detail', '.env-hint'].every((selector) =>
+          /max-width:\s*var\(--env-read\)/.test(cssBlock(selector)),
+        )
+      );
+    })(),
+    `--env-read: ${/--env-read:\s*(\d+px)/.exec(cssBlock(':root'))?.[1] ?? '（没有）'}`,
+  );
+  check(
     '环境自检：完整探测才读安装树（快速探测不起子进程、也不解析启动命令，读不到）',
     (() => {
       const source = fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8');
