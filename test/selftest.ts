@@ -2367,6 +2367,16 @@ async function main(): Promise<void> {
       envDoctor.parseNodeVersion('不是版本号') === null,
     `${envDoctor.NODE_RANGE} / 构建期 ${envDoctor.NODE_RANGE_BUILD}`,
   );
+  check(
+    '环境自检：dsh 那句区间与上游仓库根一致，且与构建期那句确实是两个值',
+    // 上游：https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json
+    // （engines.node）。发布出去的包 manifest 里没有它，所以只能钉这一句字面量。
+    // 两句"不同"用 Set 判：两个常量都是字面量类型，直接写 `!==` 会被 TS 判成必然成立（TS2367）。
+    envDoctor.NODE_RANGE === '^22.19.0 || >=24.0.0' &&
+      envDoctor.NODE_RANGE_BUILD === '^20.19.0 || >=22.12.0' &&
+      new Set<string>([envDoctor.NODE_RANGE, envDoctor.NODE_RANGE_BUILD]).size === 2,
+    `${envDoctor.NODE_RANGE} / ${envDoctor.NODE_RANGE_BUILD}`,
+  );
   const envViteEngines = (
     JSON.parse(
       fs.readFileSync(path.join(repoRoot, 'node_modules', 'vite', 'package.json'), 'utf8'),

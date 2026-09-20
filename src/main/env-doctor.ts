@@ -228,9 +228,18 @@ export function parseNodeVersion(text: string): NodeVersion | null {
 /**
  * 是否落在 **dsh 的要求** `^22.19.0 || >=24.0.0` 里。
  *
- * 出处：dsh 自己的 `package.json` 没有 `engines`，真正卡住它的是依赖链里的 undici 8
- * （`engines: { node: '>=22.19.0' }`）；dsh 上游源码给的就是这一句（比 undici 那句多排除奇数版 23）。
- * 只认这一句，不引 semver：`22.19+` 与 `24+` 算，`23` 与 `≤22.18` 不算。自检逐个钉住边界。
+ * 出处（**上游仓库根**，2026-09-20 核过）：
+ * https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json
+ * → `"engines": { "node": "^22.19.0 || >=24.0.0" }`（那份是 monorepo 根，`private: true`）。
+ *
+ * 两个容易看走眼的地方：
+ *   1. **发布出去的 `@deepseek-ai/dsh` 的 manifest 里没有 `engines`** —— 所以在 `node_modules`
+ *      里翻是翻不到的（本机 0.1.5-rc.1 实测如此），npm 也不会因此给任何警告；
+ *   2. 真正卡住它的一致下限来自依赖链：undici 8 写着 `engines: { node: '>=22.19.0' }`。
+ *
+ * 而低版本 Node 上 dsh 是**静默退出**（退出码 0、零输出，§7.4）—— 所以这一行是唯一会告诉
+ * 用户"你的 Node 太旧了"的地方，判松了就等于没判。只认这一句，不引 semver：
+ * `22.19+` 与 `24+` 算，`23` 与 `≤22.18` 不算。自检逐个钉住边界。
  *
  * **别再退回 vite 那句**：`^20.19.0 || >=22.12.0` 是构建期要求，而 20.19 与 22.12–22.18 上
  * dsh 会「退出码 0、零输出」地静默退出（§7.4），界面上只会显示「已停止」。

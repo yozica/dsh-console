@@ -9,9 +9,12 @@
 而 dsh 在那种 Node 上是**静默退出**（退出码 0、零输出），界面上只显示「已停止」，
 用户完全看不出是解释器的问题。
 
-出处：dsh 自己的 `package.json` 没有 `engines`，真正卡住它的是依赖链里的 undici 8
-（`engines: { node: '>=22.19.0' }`）；dsh 上游源码给的是 `^22.19.0 || >=24.0.0`
-（比 undici 那句多排除奇数版 23）。
+出处是 dsh 上游**仓库根**的 `package.json`
+（<https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json>）：
+`"engines": { "node": "^22.19.0 || >=24.0.0" }`。两个容易看走眼的地方：**发布出去的
+`@deepseek-ai/dsh` 的 manifest 里没有 `engines`**（在 `node_modules` 里翻不到、npm 也不警告），
+而一致的下限还能从依赖链看出来 —— undici 8 写着 `engines: { node: '>=22.19.0' }`
+（上游那句比它多排除奇数版 23）。
 
 现在两个区间各归各行：`NODE_RANGE`（dsh 那句）判「Node 版本」与界面顶部那句，
 `NODE_RANGE_BUILD`（vite 那句）只判「应用自带运行时」—— 后者说的是打包进来的那个 Node，

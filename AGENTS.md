@@ -58,7 +58,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        275 项自检（`npm test`），不需要 Electron
+test/selftest.ts        276 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -100,7 +100,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（275 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（276 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -647,7 +647,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **现象**：自检把一台 Node `20.19` / `22.12` 的机器判成「符合要求」，而 dsh 在那种 Node 上是**静默退出**（退出码 0、零输出，§7.4）—— 用户看到的是「已停止」，看不出是解释器的问题。
 
-**原因**：`NODE_RANGE` 抄的是 **vite 的 engines**（`^20.19.0 || >=22.12.0`），那是**构建期**要求（渲染层工具链要的），跟「dsh 跑不跑得动」无关。真正卡住 dsh 的是它的依赖链：dsh 自己的 `package.json` **没有 `engines`**，而它依赖的 **undici 8** 写着 `engines: { node: '>=22.19.0' }`；dsh 上游源码给的是 `^22.19.0 || >=24.0.0`（比 undici 那句多排除奇数版 23）。
+**原因**：`NODE_RANGE` 抄的是 **vite 的 engines**（`^20.19.0 || >=22.12.0`），那是**构建期**要求（渲染层工具链要的），跟「dsh 跑不跑得动」无关。真正的要求来自 dsh 上游：**仓库根**的 `package.json`（<https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json>，2026-09-20 核过）写着 `"engines": { "node": "^22.19.0 || >=24.0.0" }`。两个容易看走眼的地方：**发布出去的 `@deepseek-ai/dsh` 的 manifest 里没有 `engines`**（所以在 `node_modules` 里翻不到、npm 也不警告 —— 本机 0.1.5-rc.1 实测），而**一致的下限**还能从依赖链看出来：undici 8 写着 `engines: { node: '>=22.19.0' }`。低版本 Node 上 dsh 是**静默退出**，所以这一行是唯一会告诉用户"你的 Node 太旧了"的地方。
 
 **现在的做法**：拆成两个常量，各归各行 —— `NODE_RANGE`（dsh 那句，给「Node 版本」与界面顶部那句用）与 `NODE_RANGE_BUILD`（vite 那句，只给「应用自带运行时」用）；判定侧对应 `satisfiesNodeRange` 与 `satisfiesBuildRange`。`bundled-runtime` 判的仍然是**打包进来的**那个 Node，所以它继续用构建期那句。
 
@@ -680,7 +680,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，275 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，276 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：
