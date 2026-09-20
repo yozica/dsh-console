@@ -89,6 +89,14 @@ try {
 }
 
 const { judgeEnvironment, satisfiesNodeRange, parseNodeVersion } = envDoctor;
+const {
+  satisfiesSimpleRange,
+  minNodeOfRange,
+  highestNodeRequirement,
+  judgeNodeVersion,
+  localNodeRange,
+  requirementPhrase,
+} = envDoctor;
 const { npmLaunchSpec, envFixPlan, summarizeEnvFixFailure, NODE_RANGE } = envDoctor;
 const { fixTimeoutMessage, FIX_TIMEOUT_MS } = envDoctor;
 /**
@@ -110,6 +118,12 @@ const missingExports = [
   ['judgeEnvironment', judgeEnvironment],
   ['satisfiesNodeRange', satisfiesNodeRange],
   ['parseNodeVersion', parseNodeVersion],
+  ['satisfiesSimpleRange', satisfiesSimpleRange],
+  ['minNodeOfRange', minNodeOfRange],
+  ['highestNodeRequirement', highestNodeRequirement],
+  ['judgeNodeVersion', judgeNodeVersion],
+  ['localNodeRange', localNodeRange],
+  ['requirementPhrase', requirementPhrase],
   ['npmLaunchSpec', npmLaunchSpec],
   ['envFixPlan', envFixPlan],
   ['summarizeEnvFixFailure', summarizeEnvFixFailure],
@@ -681,6 +695,242 @@ check(
     /退出码 \$\{outcome\.code \?\? '未知'\}，认不出具体原因/.test(envSourceCode),
   `fixTimeoutMessage()=${timeoutMessage}；fixTimeoutMessage(90_000)=${fixTimeoutMessage(90_000)}；源码里 timedOut 分支位置=${timeoutIndex}，退出码分支位置=${exitCodeIndex}（前者必须在前）`,
   '超时走自己的那一句；「退出码未知」只留给 npm 自己的失败',
+);
+
+// ---------------------------------------------------------------- T. 本机这份 dsh 对 Node 的要求
+//
+// 用户裁决：**不是所有人装的是同一份 dsh**，所以「Node 版本」这一行的判据不能只有我们抄来的
+// 那句常量。它现在是"**本机那份 dsh 说的 + 兜底那句常量，两句都要满足**"（`judgeNodeVersion`）。
+// 本机实测（dsh 0.1.5-rc.1 / 524 个包）：3 个包要 `>=22.19.0`（其中就有 undici 8），与上游
+// 仓库根那句 `^22.19.0 || >=24.0.0` 的下限一致。
+const localDshFixture = (over = {}) => ({
+  version: '0.1.5-rc.1',
+  root: '/usr/local/lib/node_modules/@deepseek-ai/dsh',
+  declared: null,
+  required: { range: '>=22.19.0', name: 'undici', version: '8.10.2', count: 3 },
+  scanned: 524,
+  ...over,
+});
+
+// T1 本机证据当判据，并点名"是谁要的、几个包也在要"
+const nodeVersionT1 = checkOf(
+  judgeEnvironment(raw({ localDsh: localDshFixture() })),
+  'node-version',
+);
+check(
+  'T1 判据来自本机那份 dsh 的依赖链，并点名依赖与"还有几个包也在要"',
+  nodeVersionT1.status === 'ok' &&
+    nodeVersionT1.detail.includes('>=22.19.0') &&
+    nodeVersionT1.detail.includes('undici 8.10.2') &&
+    nodeVersionT1.detail.includes('等 3 个包'),
+  `status=${nodeVersionT1.status} detail=${nodeVersionT1.detail}`,
+  'ok（v24.19.0 满足 >=22.19.0）+ detail 里出现 >=22.19.0 / undici 8.10.2 / 等 3 个包',
+);
+
+// T2 低于本机那份 dsh 的下限：warn，而且要说清"这种 Node 上会发生什么"
+const nodeVersionT2 = checkOf(
+  judgeEnvironment(
+    raw({ node: versionProbe({ version: 'v22.17.1' }), localDsh: localDshFixture() }),
+  ),
+  'node-version',
+);
+check(
+  'T2 低于本机那份 dsh 的下限 → warn，并说清"这种 Node 上 dsh 会静默空跑"',
+  nodeVersionT2.status === 'warn' &&
+    nodeVersionT2.detail.includes('v22.17.1') &&
+    nodeVersionT2.detail.includes('>=22.19.0') &&
+    nodeVersionT2.detail.includes('静默空跑'),
+  `status=${nodeVersionT2.status} detail=${nodeVersionT2.detail}`,
+  'warn + 点名本机下限 + 说清静默空跑',
+);
+
+// T3 **两句都要满足**：依赖链的 `>=22.19.0` 数学上包含奇数版 23，但 23 这条线不在 dsh 支持的
+// 范围里（它早于 dsh 入口要的那个 Node API；上游那句 `^22.19.0 || >=24.0.0` 正是靠 `^22.19.0`
+// 的上界把 23 挡在外面的）。少了这条，本机证据会把 23 判成"可以"—— 比原来更松。
+const nodeVersionT3 = checkOf(
+  judgeEnvironment(
+    raw({ node: versionProbe({ version: 'v23.0.0' }), localDsh: localDshFixture() }),
+  ),
+  'node-version',
+);
+check(
+  'T3 依赖链够、但这条 Node 线不在 dsh 支持的范围内（23）→ 仍判 warn（两句都要满足）',
+  nodeVersionT3.status === 'warn' &&
+    nodeVersionT3.detail.includes('v23.0.0') &&
+    nodeVersionT3.detail.includes('不在它支持的范围内'),
+  `status=${nodeVersionT3.status} detail=${nodeVersionT3.detail}`,
+  'warn（不许因为本机下限够就放行 23）',
+);
+
+// T4 本机那份要得**比兜底那句更狠**时按它判（将来 dsh 要 >=26 就是这个样子）
+const nodeVersionT4 = checkOf(
+  judgeEnvironment(
+    raw({
+      node: versionProbe({ version: 'v24.19.0' }),
+      localDsh: localDshFixture({
+        required: { range: '>=26.0.0', name: 'undici', version: '9.0.0', count: 1 },
+      }),
+    }),
+  ),
+  'node-version',
+);
+check(
+  'T4 本机那份 dsh 要得更狠时抬高门槛（v24.19.0 + 本机要 >=26.0.0 → warn）',
+  nodeVersionT4.status === 'warn' && nodeVersionT4.detail.includes('>=26.0.0'),
+  `status=${nodeVersionT4.status} detail=${nodeVersionT4.detail}`,
+  'warn（本机证据能抬门槛，兜底那句拦不住它）',
+);
+
+// T5 读不到本机那份（npx 那条路 / 读不到包目录）→ 退回兜底那句，文案与从前一致
+const nodeVersionT5 = checkOf(
+  judgeEnvironment(raw({ node: versionProbe({ version: 'v20.9.0' }) })),
+  'node-version',
+);
+check(
+  'T5 没有本机证据时退回兜底那句（detail 里出现那句常量），不做任何新判断',
+  nodeVersionT5.status === 'warn' && nodeVersionT5.detail.includes(`要求 ${NODE_RANGE}`),
+  `status=${nodeVersionT5.status} detail=${nodeVersionT5.detail}`,
+  `warn + detail 里出现 ${NODE_RANGE}`,
+);
+
+// T6 纯函数：`satisfiesSimpleRange` 认识 npm `engines` 里真会出现的那些写法
+const rangeFacts = [
+  ['>=22.19.0', 'v22.19.0', true],
+  ['>=22.19.0', 'v22.18.9', false],
+  ['>= 22.19.0', 'v22.19.0', true],
+  ['^22.19.0 || >=24.0.0', 'v22.19.0', true],
+  ['^22.19.0 || >=24.0.0', 'v23.0.0', false],
+  ['^22.19.0 || >=24.0.0', 'v24.0.0', true],
+  ['^20.19.0 || >=22.12.0', 'v20.19.0', true],
+  ['^20.19.0 || >=22.12.0', 'v21.0.0', false],
+  ['~22.19.0', 'v22.19.9', true],
+  ['~22.19.0', 'v22.20.0', false],
+  ['22.x', 'v22.9.0', true],
+  ['22.x', 'v23.0.0', false],
+  ['>=22 <23', 'v22.9.0', true],
+  ['>=22 <23', 'v23.0.0', false],
+  ['22.19.0', 'v22.19.0', true],
+  ['22.19.0', 'v22.19.1', false],
+  ['*', 'v9.0.0', true],
+];
+const rangeActual = rangeFacts
+  .map(
+    ([range, text, expected]) =>
+      `${range}@${text}=${satisfiesSimpleRange(parseNodeVersion(text), range)}/${expected}`,
+  )
+  .join(' ');
+check(
+  'T6 satisfiesSimpleRange 认得 `>=` / `^` / `~` / x-range / 与 / 或 / 空格 / 通配',
+  rangeFacts.every(([range, text, expected]) => {
+    const parsed = parseNodeVersion(text);
+    return parsed !== null && satisfiesSimpleRange(parsed, range) === expected;
+  }),
+  rangeActual,
+  '每一条都与期望一致',
+);
+
+// T7 认不出来 → null（"不猜"）而不是 false；但只要有一段说得清且满足，就是 true（**顺序无关**）
+const unknownA = satisfiesSimpleRange(parseNodeVersion('v24.0.0'), '不是区间');
+const unknownB = satisfiesSimpleRange(parseNodeVersion('v24.0.0'), '<20 || 乱写');
+const sortedA = satisfiesSimpleRange(parseNodeVersion('v24.0.0'), '>=22.19.0 || 乱写');
+const sortedB = satisfiesSimpleRange(parseNodeVersion('v24.0.0'), '乱写 || >=22.19.0');
+check(
+  'T7 认不出来 → null；但"有一段说得清且满足"就是 true（且与那段的先后无关）',
+  unknownA === null && unknownB === null && sortedA === true && sortedB === true,
+  `'不是区间'=${unknownA} '<20 || 乱写'=${unknownB} '>=22.19.0 || 乱写'=${sortedA} '乱写 || >=22.19.0'=${sortedB}`,
+  'null / null / true / true',
+);
+
+// T8 取"最低可接受版本"：并集取最小、caret 取下界、通配与乱写 → null
+const minFacts = {
+  union: minNodeOfRange('^18.19.0 || >=20.6.0'),
+  spaced: minNodeOfRange('>= 22.19.0'),
+  any: minNodeOfRange('*'),
+  junk: minNodeOfRange('乱写'),
+};
+check(
+  'T8 minNodeOfRange 取最低可接受版本（并集取最小、带空格也算、通配与乱写给 null）',
+  JSON.stringify(minFacts.union) === JSON.stringify({ major: 18, minor: 19, patch: 0 }) &&
+    JSON.stringify(minFacts.spaced) === JSON.stringify({ major: 22, minor: 19, patch: 0 }) &&
+    minFacts.any === null &&
+    minFacts.junk === null,
+  JSON.stringify(minFacts),
+  '{"major":18,"minor":19,"patch":0} / {"major":22,"minor":19,"patch":0} / null / null',
+);
+
+// T9 挑"要得最狠"的那条，并数清同一条下限有几个包（只点名一个包会让人以为是它的怪癖）
+const entriesT9 = [
+  { range: '>=18', name: 'a', version: '1' },
+  { range: '^18.19.0 || >=20.6.0', name: 'b', version: '2' },
+  { range: '>=22.19.0', name: 'undici', version: '8.10.2' },
+  { range: '>=22.19.0', name: 'pi-ai', version: '0.85.1' },
+  { range: '乱写', name: 'c', version: '3' },
+];
+const bestT9 = highestNodeRequirement(entriesT9);
+check(
+  'T9 highestNodeRequirement 挑下限最高的那条，并数清同一条下限有几个包',
+  bestT9 !== null && bestT9.range === '>=22.19.0' && bestT9.name === 'undici' && bestT9.count === 2,
+  JSON.stringify(bestT9),
+  '{"range":">=22.19.0","name":"undici","version":"8.10.2","count":2}',
+);
+
+// T10 本机那句从哪来：依赖链优先，其次它自己声明的 engines，都没有 → null
+const localRangeCases = {
+  deps: localNodeRange(localDshFixture()),
+  declared: localNodeRange(localDshFixture({ required: null, declared: '^22.19.0 || >=24.0.0' })),
+  none: localNodeRange(localDshFixture({ required: null, declared: null })),
+  absent: localNodeRange(undefined),
+};
+check(
+  'T10 localNodeRange 的优先序：依赖链 > 它自己声明的 engines > null（读不到就退回兜底那句）',
+  localRangeCases.deps?.source === 'local' &&
+    localRangeCases.declared?.source === 'declared' &&
+    localRangeCases.declared?.range === '^22.19.0 || >=24.0.0' &&
+    localRangeCases.none === null &&
+    localRangeCases.absent === null,
+  JSON.stringify(localRangeCases),
+  'deps=local / declared=declared（用它声明的那句）/ none=null / absent=null',
+);
+
+// T11 文案：本机证据与"它自己声明的"两种说法都要点名来源
+const phraseDeps = requirementPhrase(localNodeRange(localDshFixture()));
+const phraseDeclared = requirementPhrase(localRangeCases.declared);
+check(
+  'T11 requirementPhrase 把"是谁说的"写在脸上（依赖链 / 自己声明两种说法）',
+  phraseDeps === '本机这份 dsh 的要求 >=22.19.0（来自依赖 undici 8.10.2 等 3 个包）' &&
+    phraseDeclared === '本机这份 dsh（0.1.5-rc.1）自己声明的要求 ^22.19.0 || >=24.0.0',
+  `${phraseDeps} ／ ${phraseDeclared}`,
+  '本机这份 dsh 的要求 >=22.19.0（来自依赖 undici 8.10.2 等 3 个包） ／ 本机这份 dsh（0.1.5-rc.1）自己声明的要求 ^22.19.0 || >=24.0.0',
+);
+
+// T12 judgeNodeVersion 是纯函数：任何输入都不抛，且状态只有 ok / warn 两档
+const hostileVerdicts = [
+  judgeNodeVersion(parseNodeVersion('v24.0.0'), null),
+  judgeNodeVersion(parseNodeVersion('v24.0.0'), undefined),
+  judgeNodeVersion(parseNodeVersion('v24.0.0'), {
+    version: null,
+    root: null,
+    declared: '乱写',
+    required: null,
+    scanned: 0,
+  }),
+  judgeNodeVersion(parseNodeVersion('v24.0.0'), {
+    version: null,
+    root: null,
+    declared: null,
+    required: { range: '乱写', name: 'x', version: '1', count: 1 },
+    scanned: 1,
+  }),
+];
+check(
+  'T12 judgeNodeVersion：畸形输入不抛、认不出来的区间退回兜底、状态只有 ok / warn',
+  hostileVerdicts.every((verdict) => verdict.status === 'ok' || verdict.status === 'warn') &&
+    hostileVerdicts[2].local === null &&
+    hostileVerdicts[3].local === null,
+  hostileVerdicts
+    .map((verdict) => `${verdict.status}/${verdict.failedBy}/${verdict.local?.range ?? 'null'}`)
+    .join(' '),
+  'ok（都满足，因为 v24 满足兜底那句）且认不出来的区间不进判据',
 );
 
 // ---------------------------------------------------------------- 观察（不判 pass/fail）

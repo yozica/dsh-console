@@ -7,7 +7,7 @@
 ## 1. 快速开始
 
 需要 **Node ≥ 20.19**（`vite` 的 `engines` 是 `^20.19.0 || >=22.12.0`；CI 固定用 Node 22）。
-注意这是**构建期**要求，跟「dsh 能不能跑」是两句区间：后者是 `^22.19.0 || >=24.0.0`（见 §7.25）。
+注意这是**构建期**要求，跟「dsh 能不能跑」是两句区间：后者是 `^22.19.0 || >=24.0.0`（而且判据要读**本机装的那一份**，见 §7.26）。
 
 ```bash
 npm install
@@ -58,11 +58,11 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        276 项自检（`npm test`），不需要 Electron
+test/selftest.ts        281 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
-scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹具，20 条）—— 按约定放在这里、以 `-cases.mjs` 结尾，门禁会自动收录（第 5 节）
+scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹具，32 条）—— 按约定放在这里、以 `-cases.mjs` 结尾，门禁会自动收录（第 5 节）
 scripts/env-wizard-cases.mjs  环境向导的独立反例脚本（门禁判定 + 安装引擎纯函数 + 逃生口，185 条）—— 同上，自动收录
 .changeset/             每条改动一个片段；config.json 里 changelog: false
 vite.config.mts         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
@@ -100,7 +100,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（276 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（281 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -643,15 +643,31 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **哪条自检守着**：四条**静态检查**（启动记录出现在 `app.whenReady()` 之前、`!gotLock` 分支走 `app.exit` 且不出现 `app.quit()`、两个 `process.on` + `showErrorBox` + 日志路径、`writeLine` 是同步的且没有文件时仍打终端）。**这些分支只在真机上才会真正跑到**，所以改完要手工验一次：起两个实例（第二个应当立刻干净退出，日志里多一行说明）、临时在主进程里 `throw new Error('probe')` 看对话框是否带日志路径（验完删掉）。
 
-### 7.26 「能不能跑 dsh」的 Node 区间：`^22.19.0 || >=24.0.0`（与构建期那句分开）
+### 7.26 「能不能跑 dsh」的 Node 要求：先看**本机装的那一份 dsh**，兜底才是 `^22.19.0 || >=24.0.0`
 
-**现象**：自检把一台 Node `20.19` / `22.12` 的机器判成「符合要求」，而 dsh 在那种 Node 上是**静默退出**（退出码 0、零输出，§7.4）—— 用户看到的是「已停止」，看不出是解释器的问题。
+**现象**：自检原来把 Node `20.19` / `22.12` 的机器判成「符合要求」，而 dsh 在那种 Node 上是**静默退出**（退出码 0、零输出，§7.4）—— 用户看到的是「已停止」，看不出是解释器的问题。
 
-**原因**：`NODE_RANGE` 抄的是 **vite 的 engines**（`^20.19.0 || >=22.12.0`），那是**构建期**要求（渲染层工具链要的），跟「dsh 跑不跑得动」无关。真正的要求来自 dsh 上游：**仓库根**的 `package.json`（<https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json>，2026-09-20 核过）写着 `"engines": { "node": "^22.19.0 || >=24.0.0" }`。两个容易看走眼的地方：**发布出去的 `@deepseek-ai/dsh` 的 manifest 里没有 `engines`**（所以在 `node_modules` 里翻不到、npm 也不警告 —— 本机 0.1.5-rc.1 实测），而**一致的下限**还能从依赖链看出来：undici 8 写着 `engines: { node: '>=22.19.0' }`。低版本 Node 上 dsh 是**静默退出**，所以这一行是唯一会告诉用户"你的 Node 太旧了"的地方。
+**分界线是 22.18，不是 24**（用户观察到"24 以下的 Node 上 dsh 会静默退出"，2026-09-20 逐个实测纠正）：同一个 dsh `0.1.5-rc.1`，`dsh --version` 与 `dsh web` 一起测：
 
-**现在的做法**：拆成两个常量，各归各行 —— `NODE_RANGE`（dsh 那句，给「Node 版本」与界面顶部那句用）与 `NODE_RANGE_BUILD`（vite 那句，只给「应用自带运行时」用）；判定侧对应 `satisfiesNodeRange` 与 `satisfiesBuildRange`。`bundled-runtime` 判的仍然是**打包进来的**那个 Node，所以它继续用构建期那句。
+| Node                        | `typeof import.meta.main` | `dsh --version`                                   | `dsh web --no-open`                           |
+| --------------------------- | ------------------------- | ------------------------------------------------- | --------------------------------------------- |
+| 16.20 / 18.20 / 20.10       | `undefined`               | exit 1，**有报错**（`node:util` 没有 `parseEnv`） | —                                             |
+| 20.19.2 / 22.1.0 / 22.17.1  | `undefined`               | **exit 0、零输出**                                | **exit 0、0 字节输出，端口不开**              |
+| 22.18.0 / 22.19.0 / 22.22.1 | `boolean`                 | `0.1.5-rc.1`                                      | 22.22.1 实测**服务真的起来**（`GET /` → 401） |
+| 24.14.0 / 24.14.1           | `boolean`                 | `0.1.5-rc.1`                                      | —                                             |
 
-**哪条自检守着**：「环境自检：两个区间各判各的（dsh 的 22.19 / 24 与构建期的 20.19 / 22.12 都对）」「环境自检：构建期那句与 vite 的 engines 同一句（升级 vite 时它不会悄悄过期）」；`scripts/env-doctor-cases.mjs` 的 C 段另外钉了一遍边界（含 22.18.9 → 不算、23.0.0 → 不算）。
+**机制**（这条最值得记）：`dsh` 的入口最后一行是 `if (import.meta.main) await runCli();`。`import.meta.main` 在 22 线是 **22.18.0** 才进的（24 线是 24.2.0），没有它的 Node 上这个属性求值是 `undefined` → `runCli()` 根本不执行 → 事件循环空转结束 → **退出码 0、零输出**。它是**入口那一层**的门，所以 `--version` / `web` / `plugin` 一视同仁；而 ≤20.10 倒在更早的 `parseEnv` 导入上，所以"静默"只出现在 20.19–22.17 这个窗口里。外部旁证：[es-main#161](https://github.com/tschaub/es-main/issues/161)、[nodejs/node#58693](https://github.com/nodejs/node/pull/58693)（v22.x backport）。
+
+**上游那句从哪来**：**仓库根**的 `package.json`（<https://github.com/deepseek-ai/deepseek-harness/blob/master/package.json>）写着 `"engines": { "node": "^22.19.0 || >=24.0.0" }` —— 比真下限保守一格（22.18 就能跑），`>=24.0.0` 又比 24 线的真下限（24.2.0）松两格。两个容易看走眼的地方：**发布出去的 `@deepseek-ai/dsh` 的 manifest 里没有 `engines`**（在 `node_modules` 里翻不到、npm 也不警告 —— 本机 0.1.5-rc.1 实测），而**一致的下限**能从依赖链看出来：undici 8 写着 `engines: { node: '>=22.19.0' }`。
+
+**现在的做法（用户裁决：不是所有人装的是同一份 dsh，别只信抄来的常量）**：
+
+- **运行期读本机那一份**（`readLocalDshRequirement`，完整探测才跑、~20ms）：从启动方式反推安装根（入口脚本路径 → shim 的符号链接 → npm 的两种全局布局，**最后读 package.json 验名字**），再递归收 `node_modules` 里的 `engines.node`（`collectNodeEngines`，层数/包数都有上限、按名字排序保证可复现），取**下限最高**的那条（`highestNodeRequirement`，并数出"同一条下限还有几个包也在要"）。本机实测：524 个包里 3 个要 `>=22.19.0`（`@earendil-works/pi-ai` / `pi-telemetry` / `undici`）。
+- **判据是两句都要满足**（`judgeNodeVersion`）：本机那句（`localNodeRange`：依赖链 > 它自己声明的 `engines`）+ 兜底那句 `NODE_RANGE`。**为什么不是二选一**：依赖链那句是数学区间，**它不知道 dsh 的入口用了哪个 Node API** —— `>=22.19.0` 数学上包含奇数版 23，而 23 早于 `import.meta.main`。上游那句正是靠 `^22.19.0` 的**上界**把 23 挡在外面的。两句都满足 = 本机证据能在它更严时抬高门槛（将来 dsh 要 `>=26` 就按 26 判），兜底那句负责挡住依赖链看不见的那些线。
+- **区间解析只有一个实现**（`satisfiesSimpleRange`）：`>=` `>` `<=` `<` `=`、`^`、`~`、x-range（`22` / `22.19` / `22.x`）、`*`、空格分隔的"与"、`||` 的"或"。`satisfiesNodeRange` / `satisfiesBuildRange` 都改成调它 —— 本机读出来的区间是**任意一句**，没法写死。**认不出来给 `null` 而不是 `false`**（"不猜"），而且**顺序无关**：`>=22.19.0 || 乱写` 与 `乱写 || >=22.19.0` 都是 `true`（有一段说得清且满足就够），只有"没有任何一段满足、且有段认不出来"才是 `null`。故意不实现预发布序（依赖链里没有一条用它，猜错预发布比说"不知道"更糟）。
+- **界面点名来源**：满足时是「`v24.14.1` 满足本机这份 dsh 的要求 `>=22.19.0`（来自依赖 `undici 8.10.2` 等 3 个包）」；不满足时说清"这种 Node 上 dsh 会静默空跑"；**读不到本机那一份**（npx 那条路 / 读不到包目录）时退回兜底那句、文案与从前一致。上面那句常量仍然用于「应用自带运行时」（`bundled-runtime`，构建期那句）与契约快照里的 `nodeRange`。
+
+**哪条自检守着**：「环境自检：通用的区间判据是唯一的实现（两句老常量与它逐档一致；认不出来给 null）」「环境自检：「Node 版本」= 本机那份 dsh 说的 + 兜底那句，两句都要满足（23 靠兜底那句挡住）」「环境自检：本机那句的优先序与文案」「环境自检：从本机安装树读得出"这一份 dsh 要哪个 Node"」（真实文件系统建临时目录 + 符号链接）「环境自检：完整探测才读安装树」；`scripts/env-doctor-cases.mjs` 的 C 段钉边界、T 段钉本机证据那 12 条。
 
 ### 7.25 环境自检的探测不许阻塞主进程，也不许去调"转发器"
 
@@ -680,7 +696,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，276 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，281 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

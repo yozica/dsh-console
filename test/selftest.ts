@@ -2388,6 +2388,167 @@ async function main(): Promise<void> {
     `vite: ${envViteEngines}`,
   );
 
+  // 本机那份 dsh 对 Node 的要求（用户裁决：不是所有人装的是同一份 dsh，别只信抄来的常量）
+  const envLocalFixture: envDoctor.LocalDshRequirement = {
+    version: '0.1.5-rc.1',
+    root: '/x/node_modules/@deepseek-ai/dsh',
+    declared: null,
+    required: { range: '>=22.19.0', name: 'undici', version: '8.10.2', count: 3 },
+    scanned: 524,
+  };
+  check(
+    '环境自检：通用的区间判据是唯一的实现（两句老常量与它逐档一致；认不出来给 null）',
+    (() => {
+      const sweep: envDoctor.NodeVersion[] = [];
+      for (let major = 18; major <= 26; major += 1) {
+        for (const minor of [0, 11, 12, 18, 19, 20, 99]) {
+          sweep.push({ major, minor, patch: 0 });
+        }
+      }
+      return (
+        sweep.every(
+          (version) =>
+            envDoctor.satisfiesNodeRange(version) ===
+            (envDoctor.satisfiesSimpleRange(version, envDoctor.NODE_RANGE) === true),
+        ) &&
+        sweep.every(
+          (version) =>
+            envDoctor.satisfiesBuildRange(version) ===
+            (envDoctor.satisfiesSimpleRange(version, envDoctor.NODE_RANGE_BUILD) === true),
+        ) &&
+        envDoctor.satisfiesSimpleRange({ major: 24, minor: 0, patch: 0 }, '不是区间') === null
+      );
+    })(),
+    `${envDoctor.NODE_RANGE} ／ ${envDoctor.NODE_RANGE_BUILD}：18–26 九档 × 7 个小版本`,
+  );
+  check(
+    '环境自检：「Node 版本」= 本机那份 dsh 说的 + 兜底那句，两句都要满足（23 靠兜底那句挡住）',
+    (() => {
+      const at = (text: string): envDoctor.NodeVersion =>
+        envDoctor.parseNodeVersion(text) as envDoctor.NodeVersion;
+      const ok = envDoctor.judgeNodeVersion(at('v24.19.0'), envLocalFixture);
+      const belowLocal = envDoctor.judgeNodeVersion(at('v22.17.1'), envLocalFixture);
+      // 依赖链那句 `>=22.19.0` 数学上包含奇数版 23，而 23 这条线没有 dsh 入口要的那个 Node API
+      const odd23 = envDoctor.judgeNodeVersion(at('v23.0.0'), envLocalFixture);
+      const stricter = envDoctor.judgeNodeVersion(at('v24.19.0'), {
+        ...envLocalFixture,
+        required: { range: '>=26.0.0', name: 'undici', version: '9.0.0', count: 1 },
+      });
+      const alone = envDoctor.judgeNodeVersion(at('v20.9.0'), undefined);
+      return (
+        ok.status === 'ok' &&
+        ok.failedBy === null &&
+        belowLocal.status === 'warn' &&
+        belowLocal.failedBy === 'local' &&
+        odd23.status === 'warn' &&
+        odd23.failedBy === 'upstream' &&
+        stricter.status === 'warn' &&
+        stricter.failedBy === 'local' &&
+        alone.status === 'warn' &&
+        alone.failedBy === 'upstream' &&
+        alone.local === null
+      );
+    })(),
+  );
+  check(
+    '环境自检：本机那句的优先序与文案（依赖链 > 它自己声明的；点名"来自哪个依赖、几个包也在要"）',
+    envDoctor.localNodeRange(envLocalFixture)?.source === 'local' &&
+      envDoctor.requirementPhrase(envDoctor.localNodeRange(envLocalFixture)!) ===
+        '本机这份 dsh 的要求 >=22.19.0（来自依赖 undici 8.10.2 等 3 个包）' &&
+      envDoctor.localNodeRange({
+        ...envLocalFixture,
+        required: null,
+        declared: '^22.19.0 || >=24.0.0',
+      })?.source === 'declared' &&
+      envDoctor.localNodeRange({ ...envLocalFixture, required: null, declared: null }) === null &&
+      envDoctor.localNodeRange(undefined) === null,
+  );
+  check(
+    '环境自检：从本机安装树读得出"这一份 dsh 要哪个 Node"（版本 / 声明的 engines / 依赖链最高的下限）',
+    (() => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-local-'));
+      try {
+        const root = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh');
+        const write = (relative: string, body: unknown): void => {
+          const file = path.join(root, relative);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, JSON.stringify(body));
+        };
+        const pkg = (name: string, version: string, node: string): unknown => ({
+          name,
+          version,
+          engines: { node },
+        });
+        write('package.json', {
+          name: '@deepseek-ai/dsh',
+          version: '9.9.9',
+          engines: { node: '^22.19.0 || >=24.0.0' },
+        });
+        write('lib/bin.js', '');
+        write('node_modules/undici/package.json', pkg('undici', '8.10.2', '>=22.19.0'));
+        write('node_modules/pi/package.json', pkg('pi', '0.1.0', '>=22.19.0'));
+        write('node_modules/old/package.json', pkg('old', '1.0.0', '>=18'));
+        write('node_modules/junk/package.json', pkg('junk', '1.0.0', '乱写'));
+        const launcher = (file: string, prefixArgs: string[]): processUtils.DshLauncher => ({
+          file,
+          prefixArgs,
+          viaCmd: false,
+          display: 'x',
+          kind: prefixArgs.length > 0 ? 'node-bin' : 'shim',
+        });
+        // 入口脚本那条路（node-bin / "自定义命令 + bin.js" 都走它）
+        const byEntry = envDoctor.readLocalDshRequirement(
+          launcher(path.join(dir, 'bin', 'node'), [path.join(root, 'lib', 'bin.js')]),
+        );
+        // shim 那条路：跟着符号链接找真入口（npm 装的 shim 就是软链）
+        const shim = path.join(dir, 'bin', 'dsh');
+        fs.mkdirSync(path.dirname(shim), { recursive: true });
+        fs.symlinkSync(path.join(root, 'lib', 'bin.js'), shim);
+        const byShim = envDoctor.readLocalDshRequirement(launcher(shim, []));
+        // 名字对不上就不是我们要的那份（同名的别的包不算）
+        const impostor = envDoctor.readLocalDshRequirement(
+          launcher(path.join(dir, 'bin', 'node'), [
+            path.join(dir, 'node_modules', 'not-dsh', 'lib', 'bin.js'),
+          ]),
+        );
+        return (
+          byEntry?.version === '9.9.9' &&
+          byEntry.declared === '^22.19.0 || >=24.0.0' &&
+          // 下限最高的是 3 个：undici 与 pi 的 `>=22.19.0`，加上 dsh 自己声明的
+          // `^22.19.0 || >=24.0.0`（下界也是 22.19.0）。同档时按名字排序取第一个 → pi
+          byEntry.required?.range === '>=22.19.0' &&
+          byEntry.required.name === 'pi' &&
+          byEntry.required.count === 3 &&
+          byEntry.scanned === 4 &&
+          byShim?.required?.range === '>=22.19.0' &&
+          impostor === null
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    })(),
+  );
+  check(
+    '环境自检：完整探测才读安装树（快速探测不起子进程、也不解析启动命令，读不到）',
+    (() => {
+      const source = fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8');
+      const full = source.slice(
+        source.indexOf('export async function collectEnvProbe'),
+        source.indexOf('function emptyProbe('),
+      );
+      const boot = source.slice(
+        source.indexOf('export function collectBootProbe'),
+        source.indexOf('export function judgeWizard'),
+      );
+      return (
+        /readLocalDshRequirement\(/.test(full) &&
+        /localDsh,/.test(full) &&
+        !/readLocalDshRequirement\(/.test(boot) &&
+        !/localDsh/.test(boot)
+      );
+    })(),
+  );
+
   // 每一份"有毛病"的夹具：非 ok 的行必须有 fixHint、所有行的 detail 非空
   const envNoNode = envProbe({
     node: envVersionProbe({ path: null, version: null, exitCode: null }),
@@ -2622,7 +2783,12 @@ async function main(): Promise<void> {
   check(
     '环境自检：探测不再走同步子进程（runVersion 里没有 spawnSync），四项并发跑',
     !/spawnSync/.test(stripStrings(functionBodyOf(envSource, 'runVersion'))) &&
-      /const \[node, npm, pnpm, dsh\] = await Promise\.all\(/.test(envCode) &&
+      // 四项**并发**发出：`Promise.all` 的数组一求值就 spawn（现在是"先发出去、再趁它们跑的时候
+      // 扫本机 dsh 的安装树、最后 await"）—— 盯的还是"一个 Promise.all 里四个探测"，不是串行
+      /Promise\.all\(\[\s*probeBinary\(nodeForRow[\s\S]*?probeBinary\(npmPath[\s\S]*?probeBinary\(pnpmPath[\s\S]*?collectDshProbe\(/.test(
+        envCode,
+      ) &&
+      /const \[node, npm, pnpm, dsh\] = await probes;/.test(envCode) &&
       // 超时要真的把子进程树收掉（只 kill 壳会留下孤儿的管道，实测进程退不出来）
       /killTreeSync\(pid\)/.test(envCode) &&
       /stdout\?\.destroy\(\)/.test(envCode),
