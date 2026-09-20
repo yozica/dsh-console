@@ -909,6 +909,20 @@ async function main(): Promise<void> {
     lockZ > 0 && topbarZ < lockZ,
     `lock=${lockZ} topbar=${topbarZ}`,
   );
+  check(
+    '渲染层：整块内容区不画焦点环（main 的焦点是程序化交过去的，不是 Tab 来的）',
+    (() => {
+      const ring = cssBlock(':focus-visible');
+      // 控件的焦点环必须原样留着（可达性），只掐掉 main 那一圈 —— 真机上用户报的
+      // "多余的框"就是它（CDP 强制 :focus-visible 复现：顶部/左边/下边各一条蓝边）
+      return (
+        /outline:\s*2px solid var\(--focus\)/.test(ring) &&
+        /outline-offset:\s*2px/.test(ring) &&
+        /outline:\s*none/.test(cssBlock('main:focus-visible'))
+      );
+    })(),
+    cssBlock('main:focus-visible').replace(/\s+/g, ' ').trim(),
+  );
 
   // ---------------------------------------------------------- 8. 发布：CHANGELOG 与版本号对齐
   //    发版时 Release 正文是按版本号从 CHANGELOG.md 里取的（tools/changelog-extract.mts）。

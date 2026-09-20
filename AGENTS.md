@@ -58,7 +58,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        282 项自检（`npm test`），不需要 Electron
+test/selftest.ts        283 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -100,7 +100,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（282 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（283 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -715,12 +715,33 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **哪条自检守着**：「环境自检页：圆点与内容永远左右并排（`.env-main` 的 flex 基宽是 0，不是内容宽度）」。
 
+### 7.28 整块内容区不画焦点环（`main:focus-visible`）
+
+**现象**（用户报的"每次启动时这里都有一个多余的框，不知道是什么"）：控制台页在紧贴顶栏下方、横跨整块内容区的位置，启动后总有一条淡蓝色的细带（左边 / 下边也各有一条，右边贴着窗口边缘看不见）—— 看着像一个空盒子。
+
+**是什么**：**不是元素，是 `<main>` 的焦点环**。门禁层（首启环境门禁）在启动瞬间显示过一次（"检查中"），收起时 `EnvGate.vue` 的 `focusMainContent()` 把焦点交给主内容区（交互 §11.5）；Chrome 把这种程序化交接当成了键盘驱动的焦点，于是命中全局那条
+
+```css
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+```
+
+`--focus` 是 35% 的蓝（`rgba(14, 116, 144, 0.35)`），2px + 2px 偏移正好落在 `main` 的上/左/下三条边上。**怎么确认的**：用 CDP 的 `CSS.forcePseudoState` 给 `main` 强制 `:focus-visible`，顶部 CSS y=32..33 立刻变成 `#a8c6d2`、左边与下边各一条 —— 与用户抓图的位置、颜色一致；DOM 里没有任何元素或伪元素在那儿有背景 / 边框 / 阴影（那一带的另一种更淡的痕迹是 `.focus-card` 的 `--shadow-focus` 上方洇出的 1~2 个色阶，属于设计里"全局唯一一处阴影"的固有软边，不是这个框）。
+
+**做法**：只给 `main` 加一条例外（`main:focus-visible { outline: none }`），**控件（按钮 / 输入框 / 列表项）的焦点环一个字不动** —— 容器是程序化接管焦点用的、Tab 不到它，画一圈框没有任何可达性收益，只有"界面坏了"的观感。
+
+**验证**（改完当场测的，CDP 强制伪类）：`main` 的 `outline=none`、那条带消失；`#btn-env-refresh` 与 `.rail-item` 仍是 `solid 2px rgba(14, 116, 144, 0.35)` ✓。
+
+**哪条自检守着**：「渲染层：整块内容区不画焦点环（main 的焦点是程序化交过去的，不是 Tab 来的）」。
+
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，282 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，283 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：
