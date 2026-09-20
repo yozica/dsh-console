@@ -37,6 +37,24 @@ jobs:
       - name: 自检
         run: npm test
 
+      # 反例脚本（`scripts/*-cases.mjs`）：沙箱门禁会自动收录它们，而 CI 这边过去只跑
+      # `npm test` —— AGENTS §7.25 那条"超时冒充静默退出"的误判就是这么攒下来的（CI 当时
+      # 是绿的，红的是没人天天跑的门禁）。这里按**文件名自动收录**，与门禁同一套约定：
+      # 新增一个 `<模块>-cases.mjs` 不必回来改这个 YAML，一个都没有也不算错。
+      - name: 反例脚本（scripts/*-cases.mjs，按文件名自动收录）
+        run: |
+          shopt -s nullglob
+          files=(scripts/*-cases.mjs)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "scripts/ 里没有 *-cases.mjs —— 按约定这不是错误"
+            exit 0
+          fi
+          for file in "${files[@]}"; do
+            echo "::group::$file"
+            node "$file"
+            echo "::endgroup::"
+          done
+
       - name: 代码规范
         run: npm run lint && npm run format:check && npm run typecheck
 

@@ -62,8 +62,8 @@ test/selftest.ts        283 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
-scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹具，32 条）—— 按约定放在这里、以 `-cases.mjs` 结尾，门禁会自动收录（第 5 节）
-scripts/env-wizard-cases.mjs  环境向导的独立反例脚本（门禁判定 + 安装引擎纯函数 + 逃生口，185 条）—— 同上，自动收录
+scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹具，32 条）—— 按约定放在这里、以 `-cases.mjs` 结尾，沙箱门禁与 CI 都会自动收录（第 5 节）
+scripts/env-wizard-cases.mjs  环境向导的独立反例脚本（门禁判定 + 安装引擎纯函数 + 逃生口，185 条）—— 同上，沙箱门禁与 CI 都会自动收录
 .changeset/             每条改动一个片段；config.json 里 changelog: false
 vite.config.mts         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
 tsconfig.*.json         三份配置，见第 3 节
@@ -221,7 +221,7 @@ git tag v0.2.3 && git push origin main --tags
 - **`publish`**（仅在标签构建时跑）：收齐两边产物 → `tools/release-notes.mts` 生成标题与正文（`--assets` 吃 `ls assets` 的输出）→ `gh release create --draft --title "$(cat .release/title.txt)" --notes-file .release/notes.md`（已存在就只补产物、正文不动）→ `gh release upload --clobber`。产物是 Windows 的 NSIS 安装包 + 便携版 exe、macOS 的 arm64 / x64 dmg 与 zip，外加 `latest.yml` / `latest-mac.yml` 与 `*.blockmap` —— 这些就是**自动更新（electron-updater）的更新源**：Windows 版按 `latest.yml` 检查与下载增量包，`*.blockmap` 是差分索引。手动触发 `release` 工作流则**只构建、不发版**，产物在 Artifacts 里。
 - **为什么打包与发布拆成不同 job**：v0.2.0 时两个 runner 各自 `electron-builder --publish always`，并发调 `getOrCreateRelease()` 都发现「没有 release」就各建一个，Windows 的安装包与 `latest.yml` 因此没传上去；更麻烦的是 electron-builder 默认 `releaseType=draft`，release 一旦被人点成「已发布」，后续上传会被**静默跳过**（步骤显示成功，只在日志里 warn）。现在草稿由 `gh release create` 自己建、产物用 `gh release upload --clobber` 传，重跑可以放心覆盖同名产物。**推论：不要改回 `--publish always`，也不要让两个平台各自建 Release。**
 
-**`ci.yml` 的闸门**：PR 与合入 `main` 时跑同一个 `check` job；PR 上额外跑 `npx changeset status --since=origin/<base>`，**改了代码却没带片段就失败**。这也是 `npx changeset add --empty` 的用途 —— 放一个空片段当「通行证」，它不产生版本、也不进 CHANGELOG，汇总时自动清掉。
+**`ci.yml` 的闸门**：PR 与合入 `main` 时跑同一个 `check` job —— `npm ci` → `npm test` → **反例脚本**（`scripts/*-cases.mjs` 按文件名自动收录，与沙箱门禁同一套约定；一个都没有也不算错）→ `lint && format:check && typecheck`；PR 上额外跑 `npx changeset status --since=origin/<base>`，**改了代码却没带片段就失败**。这也是 `npx changeset add --empty` 的用途 —— 放一个空片段当「通行证」，它不产生版本、也不进 CHANGELOG，汇总时自动清掉。
 
 **依赖归属**：`dependencies` 里**只放主进程运行时要 `require` 的包**（现在只有 `node-pty` 与 `electron-updater`）；`vue` / `@xterm/*` / `@fontsource/*` 这类渲染层依赖一律放 `devDependencies` —— 它们已经被 Vite 打进 `dist/renderer`，留在生产依赖里只会被 electron-builder **再拷一份**进 `app.asar`（实测：asar 2.1 MB → 20.2 MB、未压缩 .app 289 MB → 306 MB）。自检「打包：每个生产依赖都真的被主进程 require」与「渲染层依赖在 devDependencies」钉着这条。
 
@@ -689,7 +689,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **哪条自检守着**：「环境自检：探测不再走同步子进程（runVersion 里没有 spawnSync），四项并发跑」「环境自检：探测超时是黄灯（"它在忙"），不冒充"退出码 0 + 零输出"的静默退出」「环境自检：node 那一行报"dsh 要用的那份"，并报出被跳过的转发器（不执行它）」「环境自检：认得出"转发器"（最终目标不是 node），真实 node 的符号链接不算」（最后一条用真实文件系统建符号链接，不是纯静态检查）。
 
-**推论**：`scripts/*-cases.mjs` 只被沙箱门禁跑 —— 上面第 1 条那个"超时冒充静默退出"的误判就是这么攒下来的（CI 只跑 `npm test`，而它当时是绿的）。
+**推论**：反例脚本**必须由 CI 一起跑**（`ci.yml` 的 `check` 里有那一步，按文件名自动收录）—— 上面第 1 条那个"超时冒充静默退出"的误判就是这么攒下来的：当时 `npm test` 是绿的，红的是只在本地沙箱门禁里跑的那个脚本，而没人天天跑门禁。
 
 ### 7.27 自检页的圆点与内容必须永远左右并排（`.env-main` 的 flex 基宽是 0）
 
