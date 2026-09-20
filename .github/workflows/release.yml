@@ -57,7 +57,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: 安装依赖
@@ -102,7 +102,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: 安装依赖
@@ -147,6 +147,13 @@ jobs:
       # 取仓库里的 CHANGELOG.md 与提取脚本（Release 正文就来自 CHANGELOG）
       - uses: actions/checkout@v4
 
+      # 只跑 `npx tsx`（不 npm ci），但 Node 版本要**显式钉住** —— 不钉就是 runner 的默认那个，
+      # 说不清是哪个版本；这个 job 生成的标题/正文直接进 Release，别让它随 runner 漂
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
       - name: 收齐两个平台的产物
         uses: actions/download-artifact@v4
         with:
@@ -166,9 +173,9 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # 这个 job 没有 npm ci（只取产物 + 发 Release），所以用 npx --yes 现取一个 tsx：
-          # --yes 是必须的，非 TTY 下没有它 npx 会拒绝安装。要让版本完全可控，就给本 job
-          # 补 actions/setup-node + npm ci（代价是多下一次完整依赖，含 Electron 二进制）
+          # 这个 job 不 npm ci（只取产物 + 发 Release），所以用 npx --yes 现取一个 tsx：
+          # --yes 是必须的，非 TTY 下没有它 npx 会拒绝安装。（Node 版本见上面的 setup-node；
+          # 这里不用 npm ci —— 那会多下一整套依赖，含 Electron 二进制）
           ls -1 assets > assets.txt
           npx --yes tsx tools/release-notes.mts "$TAG" --assets assets.txt --out .release
           echo "---- 本次 Release 标题 ----"
