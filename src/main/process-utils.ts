@@ -726,13 +726,17 @@ export interface LaunchSpec {
 }
 
 function isCmdExe(file: string): boolean {
-  const base = path.basename(file).toLowerCase();
+  // Windows 路径一律 `path.win32`（§7.23）：用 `path.basename` 会跟着"跑测试这台机器"走 ——
+  // 在 macOS / Linux 上 `basename('C:\\Windows\\system32\\cmd.exe')` 返回整串，于是这里判成
+  // false、走进 `.exe` 那条直连分支（门禁里 `M launchSpec` 红的就是这一条）。
+  // Windows 上 `path.win32.basename === path.basename`，所以生产行为不变。
+  const base = path.win32.basename(file).toLowerCase();
   return base === 'cmd.exe' || base === 'cmd';
 }
 
 /** PE 映像可以直接 spawn；其它可执行文件（`.cmd` / `.bat`）在 Windows 上都要经 cmd.exe */
 function isPeImage(file: string): boolean {
-  const ext = path.extname(file).toLowerCase();
+  const ext = path.win32.extname(file).toLowerCase();
   return ext === '.exe' || ext === '.com';
 }
 
@@ -745,7 +749,9 @@ function isPeImage(file: string): boolean {
  */
 export function isRunnablePath(file: string, platform: string): boolean {
   if (platform !== 'win32') return true;
-  return WIN_RUNNABLE_EXTS.has(path.extname(file).toLowerCase());
+  // 同上：这个是 Windows 专用判据（`platform === 'win32'` 才走），用 win32 的取扩展名规则，
+  // 才能在非 Windows 的机器上被用例脚本测到（§7.23）。
+  return WIN_RUNNABLE_EXTS.has(path.win32.extname(file).toLowerCase());
 }
 
 /**

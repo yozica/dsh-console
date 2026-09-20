@@ -1136,6 +1136,55 @@ async function main(): Promise<void> {
       /app\.on\('before-quit'[\s\S]{0,200}?isQuitting = true;/.test(mainCloseCode),
   );
 
+  // ---------------------------------------------------------- 10b. 启动早期：日志与兜底
+  //    §7.24 的由来：真机上"双击没反应、过一会系统报崩溃"，而日志里一行都没有 —— 分不清
+  //    "进程没起来"和"起来了但没到 ready"。所以钉四件事：ready 之前就落一行启动记录、
+  //    拿不到单实例锁时**同步**记一行并立刻退出、未捕获异常落盘并弹带日志路径的框、
+  //    以及那个"立刻落盘"的原语真的是同步的（缓冲流那份会被 app.exit 丢掉）。
+  //    四条都是静态检查：真机行为要在打包后跑一次（见 §7.24「哪条自检守着」）。
+  check(
+    '启动早期：ready 之前就落一行启动记录（版本 / 平台 / 是否打包 / userData）',
+    /fileLog\.writeLine\(/.test(mainCloseCode) &&
+      // 位置即语义：必须在 whenReady 之前
+      mainCloseCode.indexOf('fileLog.writeLine(') < mainCloseCode.indexOf('app.whenReady()') &&
+      /app\.getVersion\(\)/.test(mainCloseCode) &&
+      /process\.platform/.test(mainCloseCode) &&
+      /process\.versions\.electron/.test(mainCloseCode),
+  );
+  check(
+    '启动早期：拿不到单实例锁时同步记一行、并立刻 exit（不再留一个没窗口的进程）',
+    /if \(!gotLock\) \{[\s\S]{0,400}?fileLog\.writeLine\(/.test(mainCloseCode) &&
+      /if \(!gotLock\) \{[\s\S]{0,700}?app\.exit\(0\);/.test(mainCloseCode) &&
+      // 这一条正是修掉的那个坑：ready 之前 quit 不保证真的退（会变成"没有响应"）。
+      // 窗口收紧到 300：再往后就是 window-all-closed 里那个**正当**的 app.quit()
+      !/if \(!gotLock\) \{[\s\S]{0,300}?app\.quit\(\)/.test(mainCloseCode),
+  );
+  check(
+    '启动早期：未捕获异常 / 未处理的 Promise 拒绝都落盘，并弹带日志路径的框',
+    /process\.on\('uncaughtException'/.test(mainCloseCode) &&
+      /process\.on\('unhandledRejection'/.test(mainCloseCode) &&
+      // showErrorBox 是官方文档写明"可以在 ready 之前安全调用"的那个 API
+      /dialog\.showErrorBox\([\s\S]{0,120}?describeValue\(value\)/.test(mainCloseCode) &&
+      /日志文件（把下面这段内容发出来就能定位）/.test(mainCloseCode) &&
+      // 记录之后不退出（与 Electron 默认行为一致：硬退会把"还能用一半"变成"完全不能用"）
+      !/uncaughtException'[\s\S]{0,500}?process\.exit\(/.test(mainCloseCode),
+  );
+  const loggerCode = fs
+    .readFileSync(path.join(repoRoot, 'src', 'main', 'logger.ts'), 'utf8')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  check(
+    '启动早期：writeLine 是同步落盘、没文件时仍打到终端，且日志流出错不带走主进程',
+    /writeLine: \(line: string\) => void;/.test(loggerCode) &&
+      /appendFileSync\(file/.test(loggerCode) &&
+      // 日志文件没建成时不能静默：至少保持"这一行看得见"
+      /file: '', writeLine: \(line: string\) => console\.log\(line\)/.test(loggerCode) &&
+      // WriteStream 的 error 没人接 = 未捕获异常（实测：删掉日志目录，整个 node 进程当场退出）
+      /stream\.on\('error'/.test(loggerCode) &&
+      /streamAlive = false;/.test(loggerCode) &&
+      /if \(!streamAlive\) return;/.test(loggerCode),
+  );
+
   // ---------------------------------------------------------- 11. 产物命名与更新源
   //    electron-updater 按 latest.yml / latest-mac.yml 里的文件名去 Releases 下载。名字一旦对不上
   //    就是"能检查到新版本、下载 404"。而 productName 里带空格时三个阶段会各改一次（磁盘保留空格、

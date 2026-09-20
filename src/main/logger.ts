@@ -13,12 +13,20 @@ const MAX_BYTES = 2 * 1024 * 1024;
 
 export interface FileLog {
   file: string;
+  /**
+   * 立刻**同步**落盘一行（同时打给终端）。
+   *
+   * 为什么单独一个入口：`console.log` 那条路是缓冲流，进程立刻退出时（`app.exit()` 不会等
+   * flush）那一行会丢 —— 而"启动早期就退出"恰恰是最需要留下痕迹的场合。
+   */
+  writeLine: (line: string) => void;
   close: () => void;
 }
 
 type ConsoleLevel = 'log' | 'warn' | 'error';
 
-function describe(value: unknown): string {
+/** 把任意值写成人能看的一段（Error 用 stack）—— 主进程的兜底对话框也用它 */
+export function describeValue(value: unknown): string {
   if (value instanceof Error) return value.stack || value.message;
   if (typeof value === 'string') return value;
   try {
@@ -46,7 +54,8 @@ export function installFileLogging(dir: string): FileLog {
       '[logger] 无法创建日志文件:',
       error instanceof Error ? error.message : String(error),
     );
-    return { file: '', close: () => {} };
+    // 没有文件可写：至少保持"这一行看得见"的语义（此时 console 还没被接管）
+    return { file: '', writeLine: (line: string) => console.log(line), close: () => {} };
   }
 
   const originals: Record<ConsoleLevel, (...args: unknown[]) => void> = {
@@ -55,9 +64,27 @@ export function installFileLogging(dir: string): FileLog {
     error: console.error.bind(console),
   };
 
+  /**
+   * 日志流自己出错（磁盘满、目录被删、外置卷弹出、权限变了）**不能把主进程带崩**：
+   * `WriteStream` 的 `error` 事件没人接就是一个未捕获异常 —— 实测过（探针里删掉日志目录，
+   * 流异步 open 失败，整个 node 进程当场退出）。出错就关掉这一路，终端与 `writeLine`
+   * （同步追加）照旧。
+   */
+  let streamAlive = true;
+  stream.on('error', (error) => {
+    streamAlive = false;
+    originals.error(`[logger] 日志文件写不了了（之后只写终端）: ${describeValue(error)}`);
+    try {
+      stream.destroy();
+    } catch {
+      /* ignore */
+    }
+  });
+
   const stamp = () => new Date().toISOString();
   const emit = (level: ConsoleLevel, args: unknown[]) => {
-    const text = args.map(describe).join(' ');
+    if (!streamAlive) return;
+    const text = args.map(describeValue).join(' ');
     try {
       stream.write(`${stamp()} [${level}] ${text}\n`);
     } catch {
@@ -75,10 +102,19 @@ export function installFileLogging(dir: string): FileLog {
 
   return {
     file,
+    writeLine: (line: string) => {
+      originals.log(line);
+      try {
+        fs.appendFileSync(file, `${stamp()} [log] ${line}\n`);
+      } catch {
+        /* 落盘失败不影响流程：终端里已经有了 */
+      }
+    },
     close: () => {
       console.log = originals.log;
       console.warn = originals.warn;
       console.error = originals.error;
+      streamAlive = false;
       try {
         stream.end();
       } catch {

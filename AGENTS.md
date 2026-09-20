@@ -57,7 +57,7 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
     panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        265 项自检（`npm test`），不需要 Electron
+test/selftest.ts        270 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -99,7 +99,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（265 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（270 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -617,14 +617,37 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **另一类同源假红**：断言里写死了"这台机器必然有 / 必然没有"的事实 —— 例如 `hasVcRuntime` 在**非 Windows 上恒为 `true`**（源码里就是这条语义），断言若写成"缺一个 DLL 就是 false"，在 Linux CI 上必红。这类要**按平台分支**（`IS_WINDOWS ? … : …`）；确实只对 Windows 成立的整条断言，用既有的 `if (!IS_WINDOWS) { skip(名字, 原因) }` 写法跳掉。
 
+**这一轮又补了三处同类**（门禁里 `M launchSpec` 在 macOS 上就是这么判红的）：`isCmdExe` / `isPeImage` / `isRunnablePath` 里的 `path.basename` / `path.extname` 全部换成 `path.win32.*` —— 在 POSIX 上 `basename('C:\\Windows\\system32\\cmd.exe')` 返回**整串**，于是 `cmd.exe` 被判成"不是 cmd.exe"，`launchSpec` 走进 `.exe` 直连分支（`verbatim=false`、不再包引号），而用例脚本期望的是 `""…" web"`。Windows 上两种写法等价，所以生产行为不变、只有非 Windows 的测试看得见差别。
+
 **哪条自检守着**：没有一条能直接钉住"路径拼对了几个平台"，这一条靠纪律 + CI 跨平台跑（`check` 在 `ubuntu-latest`）。**推论：不要在本地绿了就认为 CI 会绿** —— 涉及路径 / 分隔符 / 平台事实的改动，推上去看 `check` 才算完。
+
+**顺带一条**：`scripts/*-cases.mjs` 只被**沙箱门禁**（`node scripts/selftest-sandbox.mjs`）跑，CI 里没有这一步 —— 所以这类脚本红着不会有人知道（上面那条 `isCmdExe` 的红就是这么攒下来的）。改到它们覆盖的模块时，**跑一遍门禁**，别只看 `npm test`。
+
+### 7.24 启动早期必须留痕：日志、兜底与单实例锁
+
+**现象**：真机上"双击新版本没反应、过一会系统报崩溃"，而 `<userData>/logs/console.log` 里**一行都没有** —— 于是分不清"进程根本没起来"和"起来了但没到 ready"，只能靠猜。同一时期还发现：已经在跑一个实例时再启动，会留下一个**没窗口、没日志**的进程（macOS 上最后表现成系统那句"应用没有响应"）。
+
+**三个原因**（都在启动路径上）：
+
+1. `[main] 日志文件: …` 原来打在 `app.whenReady()` **里面** —— ready 之前挂掉就什么都不会写；而且 `installFileLogging` 之后走的是**缓冲流**，`app.exit()` 不等 flush，最需要留下的那几行反而会丢。
+2. `if (!gotLock) { app.quit(); }`：`quit` 的语义是"先关所有窗口、再走 `before-quit` / `will-quit`"，而第二个实例**一个窗口都没有**；ready 之前调它不保证真的退。官方文档里 `app.exit([exitCode])` 才是"立刻退出、不发那两个事件"。
+3. 主进程抛异常时 Electron 默认只弹一句英文 `A JavaScript error occurred in the main process` —— 用户拿不到任何能发出来的东西。
+
+**现在的做法**（`src/main/main.ts` + `src/main/logger.ts`，三处都很小）：
+
+- `FileLog.writeLine()`：**同步** `appendFileSync`（同时打给终端）。`console.log` 那条缓冲通道留着不动，两者分工写在 `logger.ts` 的接口注释里。日志文件没建成时它退化成 `console.log` —— 不能静默。
+- **ready 之前**落一行启动记录：版本 / 平台 / Electron / 开发态还是打包版 / userData。于是"到没到 ready"一眼可辨。
+- `!gotLock` → 先 `writeLine` 记一行，再 `app.exit(0)`。
+- `process.on('uncaughtException' / 'unhandledRejection')` → 落盘 + `dialog.showErrorBox(标题, 错误 + 日志路径)`；**记录之后不退出**（与 Electron 默认行为一致：硬退会把"还能用一半"变成"完全不能用"，而原因已经摆在眼前）。选 `showErrorBox` 是因为官方文档明确写着它**可以在 ready 之前安全调用**（Linux 上那时只写 stderr），正是为启动早期报错准备的。
+
+**哪条自检守着**：四条**静态检查**（启动记录出现在 `app.whenReady()` 之前、`!gotLock` 分支走 `app.exit` 且不出现 `app.quit()`、两个 `process.on` + `showErrorBox` + 日志路径、`writeLine` 是同步的且没有文件时仍打终端）。**这些分支只在真机上才会真正跑到**，所以改完要手工验一次：起两个实例（第二个应当立刻干净退出，日志里多一行说明）、临时在主进程里 `throw new Error('probe')` 看对话框是否带日志路径（验完删掉）。
 
 ## 8. 调试手段
 
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，265 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，270 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：
