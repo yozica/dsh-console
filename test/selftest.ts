@@ -2572,6 +2572,29 @@ async function main(): Promise<void> {
     })(),
   );
   check(
+    '命令解析：PATH 上的转发器不算"找到真 node"（真 node 优先，一个都没有才退它）',
+    (() => {
+      const source = fs.readFileSync(
+        path.join(repoRoot, 'src', 'main', 'process-utils.ts'),
+        'utf8',
+      );
+      return (
+        /const pathShim = fromPath !== null && isNodeShim\(fromPath\) \? fromPath : null;/.test(
+          source,
+        ) &&
+        // PATH 上是真 node 就直接用；是转发器就往下走候选表
+        /if \(fromPath && !pathShim\) return fromPath;/.test(source) &&
+        // 两趟扫描之后才轮到它 —— 这是 2026-09-20 那个缺口的落点：
+        // .zshrc 里 `. "$HOME/.vite-plus/env"` 把转发器塞在 PATH 最前面，直接 return 就等于
+        // 把转发器当成系统 Node（它报的版本还随启动环境变，见 §7.25）
+        /return pathShim;/.test(source) &&
+        /if \(isExecutableFile\(candidate\) && !isNodeShim\(candidate\)\) return candidate;/.test(
+          source,
+        )
+      );
+    })(),
+  );
+  check(
     '环境自检：探测不再走同步子进程（runVersion 里没有 spawnSync），四项并发跑',
     !/spawnSync/.test(stripStrings(functionBodyOf(envSource, 'runVersion'))) &&
       /const \[node, npm, pnpm, dsh\] = await Promise\.all\(/.test(envCode) &&

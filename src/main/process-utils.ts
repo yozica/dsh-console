@@ -313,7 +313,17 @@ export function isNodeShim(file: string): boolean {
 export function findNodeExe(): string | null {
   // Windows 上不写死 `node.exe`：交给 whichSync 按 PATHEXT 展开（`pnpm.exe` / `node.exe` 都可能）
   const fromPath = whichSync('node');
-  if (fromPath) return fromPath;
+  /**
+   * PATH 上那个 node 如果是**转发器**，它不算"找到了真 node"。
+   *
+   * 为什么：`~/.vite-plus/env` 会把 `~/.vite-plus/bin` 塞到 PATH **最前面**（用户的 .zshrc 里就
+   * 有一行 `. "$HOME/.vite-plus/env"`），而那里的 `node` 是指向 `vp` 的符号链接 —— 它报出来的
+   * 版本**随启动环境变**：终端里转发到 nvm 的 22.17.1、GUI 的窄 PATH 下回退到它自带的 24.21.0
+   *（真机事故见 §7.25）。所以真 node 永远优先，PATH 上那个转发器只在"一个真 node 都找不到"
+   * 时兜底 —— 有总比没有强。
+   */
+  const pathShim = fromPath !== null && isNodeShim(fromPath) ? fromPath : null;
+  if (fromPath && !pathShim) return fromPath;
   if (isWindows) return firstExisting(windowsBinCandidates(process.env, homeDir()), ['node.exe']);
   const candidates = nodeCandidatePaths();
   // **两趟**：先要真 node（能看到版本、不会替我们装东西），实在没有才退到转发器。
@@ -325,7 +335,7 @@ export function findNodeExe(): string | null {
   for (const candidate of candidates) {
     if (isExecutableFile(candidate)) return candidate;
   }
-  return null;
+  return pathShim;
 }
 
 /**
