@@ -53,9 +53,11 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      # 动作版本取「声明 runs.using: node24」的那一档：老的 @v4 跑在 Node 20 上，GitHub 现在会警告
+      # 「Node.js 20 is deprecated … being forced to run on Node.js 24」（见 AGENTS §6）。
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -86,7 +88,7 @@ jobs:
 
       # 无条件上传：publish job 要靠这两个 artifact 建 Release
       - name: 上传产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dsh-console-windows
           path: |
@@ -98,9 +100,9 @@ jobs:
   build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -128,7 +130,7 @@ jobs:
         run: ls -lh release
 
       - name: 上传产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dsh-console-macos
           path: |
@@ -145,17 +147,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # 取仓库里的 CHANGELOG.md 与提取脚本（Release 正文就来自 CHANGELOG）
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 只跑 `npx tsx`（不 npm ci），但 Node 版本要**显式钉住** —— 不钉就是 runner 的默认那个，
       # 说不清是哪个版本；这个 job 生成的标题/正文直接进 Release，别让它随 runner 漂
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
 
       - name: 收齐两个平台的产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
