@@ -18,6 +18,9 @@
  *     那三条最终都调 `reopenGate()` —— 它是用户显式发起的新一轮，不是自动重锁。
  *   - 单向状态机管的是"门禁层还显不显示"，**不管"门禁层里显示哪一步"**：
  *     显示期间步骤状态、当前步骤、复检结论每轮都按最新报告重算（冻结 §1 R-18）。
+ *   - **正文画哪一步**另外有一层"视图相位"（t43 / 冻结 §0.3 的 R-29 / R-30）：默认跟着判定给的
+ *     当前步骤；用户在左轨点了走过的节点之后**钉住**，判定再前进也不动它（只出一行提示）。
+ *     纯规则在 `lib/wizard-view.ts`，这里只存"钉住了哪一步"。
  *
  * `gateVisible` 是**唯一**的"门禁层此刻该不该显示"来源（顶栏 R-03 也读它）：
  *
@@ -36,6 +39,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue';
 
 import { bootLockVisible } from './boot-lock.js';
+import { canViewStep, resolveViewedStep, type ViewPin } from './wizard-view.js';
 import { envFix, envReport } from './env-doctor.js';
 import type {
   EnvInstallPhase,
@@ -101,6 +105,8 @@ let started = false;
 let reopenRequested = false;
 /** 本轮门禁层是否显示过挡住页（决定 `released` 是不是"原地变放行页"） */
 let blocking = false;
+/** 这一轮是用户显式重开的（`reopenGate()`）：判成 `open` 也要显示放行页（t43 / R-31） */
+let reopened = false;
 /** 相位是 `checking` 时门禁层要不要显示 */
 let checkingVisible = false;
 
@@ -157,9 +163,75 @@ export const gateVisible: ComputedRef<boolean> = computed(() => {
   const phase = gatePhase.value;
   if (phase === 'blocked') return true;
   if (phase === 'checking') return checkingVisible;
-  if (phase === 'released') return blocking;
+  // released：本轮挡过人（原地变放行页）**或**这一轮是用户显式重开的（"重新打开环境向导"的目的
+  // 就是看这一屏，判成 open 也留在屏幕上 —— t43 / R-31）。健康机器首轮两条都不成立，什么都不显示。
+  if (phase === 'released') return blocking || reopened;
   return false;
 });
+
+/**
+ * 正文「钉住」在看哪一步（t43 / R-29）：null = 跟着判定给的当前步骤。
+ *
+ * 只存一个 id，不存"钉住时的状态"：报告换了之后那一步可能已经不是 `done` 了，
+ * `resolveViewedStep` 会据当下的报告判断还看不看得动，看不动的静默回到当前步骤。
+ */
+export const pinnedStepId: Ref<EnvWizardStepId | null> = ref(null);
+
+/**
+ * 钉住那一刻判定给的当前步骤（t43 / R-30）：`advanceNotice` 靠它回答"判定前进了没有"。
+ * 存下来而不是现算 —— 现算只能得到"正在看的 ≠ 当前"，那会把"用户往回翻看、判定原地没动"
+ * 也当成一次前进（真机验证时抓到的第一版就是这个错）。
+ */
+const pinnedAtStepId: Ref<EnvWizardStepId | null> = ref(null);
+
+/** 正文实际画哪一步（默认 = 判定的当前步骤；钉住且仍看得动 = 那一步） */
+export const viewedStepId: ComputedRef<EnvWizardStepId | null> = computed(() =>
+  resolveViewedStep(
+    wizard.value?.currentStepId ?? null,
+    pinnedStepId.value,
+    wizard.value?.steps ?? [],
+  ),
+);
+
+/** 正文是不是"回看"（钉住的不是判定给的当前步骤）—— 界面据此画只读回看卡 */
+export const reviewing: ComputedRef<boolean> = computed(
+  () => viewedStepId.value !== null && viewedStepId.value !== (wizard.value?.currentStepId ?? null),
+);
+
+/** 钉住状态此刻还成立吗（钉的那一步仍然看得动）—— 不成立时一律按"没钉住"对待 */
+export const pinActive: ComputedRef<boolean> = computed(
+  () => pinnedStepId.value !== null && viewedStepId.value === pinnedStepId.value,
+);
+
+/**
+ * 此刻仍然成立的那次「钉住回看」（没钉住 / 钉住已失效时为 null）。
+ *
+ * 带着"钉住那一刻判定在哪一步"一起给界面 —— `advanceNotice` 靠它回答"判定前进了没有"。
+ * 没钉住与"钉住时本来就没有当前步骤"**必须分得开**，所以这里给的是一个对象而不是可空 id
+ * （见 `wizard-view.ts` 的 `ViewPin`）。
+ */
+export const activePin: ComputedRef<ViewPin | null> = computed(() =>
+  pinActive.value && pinnedStepId.value !== null
+    ? { stepId: pinnedStepId.value, currentAtPin: pinnedAtStepId.value }
+    : null,
+);
+
+/** 点左轨节点（R-28）：看得动就钉住；点当前这一步、或点一个看不动的 → 回来 */
+export function selectViewedStep(stepId: EnvWizardStepId): void {
+  const state = wizard.value;
+  const step = state?.steps.find((item) => item.id === stepId);
+  if (!state || !step) return;
+  const viewable = canViewStep(step, state.currentStepId);
+  pinnedStepId.value = viewable ? stepId : null;
+  // 连"钉住那一刻判定在哪一步"一起记下来：判定后来往前挪了才出提示（R-30）
+  pinnedAtStepId.value = viewable ? state.currentStepId : null;
+}
+
+/** 回到判定给出的当前步骤（回看卡的主按钮、提示行的按钮） */
+export function clearViewedStep(): void {
+  pinnedStepId.value = null;
+  pinnedAtStepId.value = null;
+}
 
 function isRetired(): boolean {
   const phase = gatePhase.value;
@@ -331,12 +403,19 @@ export async function stopNodeInstall(): Promise<void> {
 export function escapeGate(): void {
   gatePhase.value = 'escaped';
   checkingVisible = false;
+  // 离开门禁层就不再是"用户要看的那一轮"，钉住也一并清掉（下次重开从当前步骤重新开始）
+  reopened = false;
+  pinnedStepId.value = null;
+  pinnedAtStepId.value = null;
 }
 
 /** 放行页的「进入 DSH Console」：收起门禁层，走阶段一的正常流程 */
 export function enterMainUi(): void {
   gatePhase.value = 'entered';
   checkingVisible = false;
+  reopened = false;
+  pinnedStepId.value = null;
+  pinnedAtStepId.value = null;
 }
 
 /**
@@ -349,6 +428,10 @@ export function reopenGate(): void {
   started = false;
   reopenRequested = true;
   blocking = false;
+  // 这一轮是"用户自己要看向导"：判成 open 也停在放行页（R-31）；正文回到当前步骤（R-29）
+  reopened = true;
+  pinnedStepId.value = null;
+  pinnedAtStepId.value = null;
   gatePhase.value = 'checking';
   checkingVisible = true;
   void loadWizard();

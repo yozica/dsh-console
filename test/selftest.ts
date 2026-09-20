@@ -27,6 +27,7 @@ import * as profileBundles from '../src/main/profile-bundles';
 import * as envDoctor from '../src/main/env-doctor';
 // 渲染层的纯逻辑（`lib/**` 与 selftest 同属「契约与编排」那一层，见 AGENTS §2 的模块边界）
 import * as envDetail from '../src/renderer/lib/env-detail';
+import * as wizardView from '../src/renderer/lib/wizard-view';
 import * as nodeInstaller from '../src/main/node-installer';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
@@ -35,7 +36,9 @@ import type {
   EnvCheckStatus,
   EnvDoctorReport,
   EnvNodeOwner,
+  EnvStepStatus,
   EnvWizardState,
+  EnvWizardStep,
   EnvWizardStepId,
 } from '../src/shared/ipc';
 import { PtySessions } from '../src/main/pty-sessions';
@@ -4740,6 +4743,146 @@ async function main(): Promise<void> {
       // "读到之后"那条路（安装包真没签名）才读 releaseSigning 决定继续还是中止
       /plan\.releaseSigning === 'unsigned'/.test(installerCode),
     `${installerPlanNotes.length} 处 plan.note`,
+  );
+  // ---------------------------------------------------------- 18a. 向导的视图相位（t43）
+  //    冻结 §0.3 的 R-28 ~ R-31：左轨走过的节点可点（回看）、正文画"正在看哪一步"、
+  //    判定前进不推人、用户显式重开的那一轮判成 open 也显示放行页。
+  //    纯规则在 `lib/wizard-view.ts`（直接测），接线与"回看卡里没有动作"在 EnvGate.vue / env-wizard.ts。
+  const stepOf = (id: EnvWizardStepId, status: EnvStepStatus): EnvWizardStep => ({
+    id,
+    status,
+    detail: `${id} 的判据（带路径与版本）`,
+    checkIds: [],
+    skippable: id === 'pnpm',
+    fixAction: null,
+  });
+  const viewSteps = [stepOf('node', 'done'), stepOf('pnpm', 'done'), stepOf('dsh', 'todo')];
+  check(
+    '环境向导：左轨只有走过的步骤能点开看（已完成 / 已跳过可以，当前与没轮到的都不行）',
+    wizardView.canViewStep(stepOf('node', 'done'), 'dsh') === true &&
+      wizardView.canViewStep(stepOf('pnpm', 'skipped'), null) === true &&
+      // 当前步骤不给"可看"：点它的意思是回到当前（调用方把钉住清掉），不是钉住它
+      wizardView.canViewStep(stepOf('dsh', 'todo'), 'dsh') === false &&
+      // 还没轮到的、以及"我们没测出来"的，都不给点
+      wizardView.canViewStep(stepOf('pnpm', 'todo'), 'dsh') === false &&
+      wizardView.canViewStep(stepOf('dsh', 'unknown'), null) === false,
+  );
+  check(
+    '环境向导：正文画的是钉住的那一步（那一步不再成立时静默回到当前，不停在一条不成立的回看上）',
+    wizardView.resolveViewedStep('dsh', 'node', viewSteps) === 'node' &&
+      wizardView.resolveViewedStep('dsh', null, viewSteps) === 'dsh' &&
+      // 钉住的那一步已经不是"走过的"了（新报告换了状态）→ 回到当前
+      wizardView.resolveViewedStep('dsh', 'node', [
+        stepOf('node', 'todo'),
+        stepOf('pnpm', 'done'),
+        stepOf('dsh', 'todo'),
+      ]) === 'dsh' &&
+      // 那一步从列表里消失（兜底）→ 回到当前
+      wizardView.resolveViewedStep('dsh', 'node', [stepOf('dsh', 'todo')]) === 'dsh' &&
+      // 三步都完成（判定给的当前步骤是 null）+ 没钉住 → 正文没有步骤可画
+      wizardView.resolveViewedStep(null, null, [stepOf('node', 'done')]) === null,
+  );
+  check(
+    '环境向导：判定前进只出一行提示、不把用户推走（两种前进的文案 + 没前进时不出提示）',
+    (() => {
+      const titles: Record<EnvWizardStepId, string> = {
+        node: '安装 Node.js',
+        pnpm: '安装 pnpm',
+        dsh: '安装 dsh',
+      };
+      const title = (id: EnvWizardStepId): string => titles[id];
+      const next = wizardView.advanceNotice(
+        'pnpm',
+        { stepId: 'node', currentAtPin: 'node' },
+        title,
+      );
+      const done = wizardView.advanceNotice(null, { stepId: 'node', currentAtPin: 'node' }, title);
+      return (
+        // 没钉住（第二个参数 null）→ 没有提示
+        wizardView.advanceNotice('node', null, title) === null &&
+        // **判定没动**也没有提示：用户只是往回翻看，当前步骤原地没动 ——
+        // 真机验证抓到的第一版就是拿"正在看的 ≠ 当前"当判据，于是回看第一步时冒出一句
+        // 错的「下一步（安装 dsh）也已经就绪了」（dsh 那时还没好）
+        wizardView.advanceNotice('dsh', { stepId: 'node', currentAtPin: 'dsh' }, title) === null &&
+        // 从**放行页**点开回看（钉住时本来就没有当前步骤）→ 不能与"没钉住"混为一谈，
+        // 判定变成已放行时同样要出「三步都完成了」（真机验证抓到的第二处）
+        wizardView.advanceNotice(null, { stepId: 'node', currentAtPin: null }, title) === null &&
+        // 第一步在完成、判定前进了
+        next?.text === '下一步（安装 pnpm）也已经就绪了' &&
+        next.action === '继续' &&
+        // 三步全部完成：当前步骤成了 null
+        done?.text === '三步都完成了' &&
+        done.action === '看看结果'
+      );
+    })(),
+    '两种前进',
+  );
+  const reviewCard = gateRaw.slice(
+    gateRaw.indexOf('<div v-if="reviewStep"'),
+    gateRaw.indexOf('<div v-else-if="currentStep"'),
+  );
+  const railButton =
+    /<button[\s\S]{0,400}?class="gate-node-body gate-node-button"[\s\S]{0,400}?↩ 回看这一步/.exec(
+      gateRaw,
+    )?.[0] ?? '';
+  check(
+    '环境向导：左轨走过的节点是按钮（进 Tab 顺序、aria-current 标出正在看的那一步）',
+    railButton.length > 100 &&
+      /:aria-current="item\.viewed \? 'true' : undefined"/.test(railButton) &&
+      /@click="viewStepFromRail\(item\.id\)"/.test(railButton) &&
+      // 没走到的那一支仍然是纯读数（div，不是按钮；保持 R-01 ② 的原意）
+      /<div v-else class="gate-node-body">/.test(gateRaw) &&
+      // 可点与否来自纯函数，不在模板里手写状态判断
+      /viewable: canViewStep\(step, id\)/.test(gateCode),
+  );
+  check(
+    '环境向导：只读回看卡里没有安装 / 跳过动作（回看时屏上仍然只有一件事可做）',
+    reviewCard.length > 200 &&
+      /reviewStep\.detail/.test(reviewCard) &&
+      /@click="backToCurrent"/.test(reviewCard) &&
+      !/openNodeConfirm|openFixConfirm|openSkipConfirm|runNodeInstall|runEnvFix|openNodeSwitch|retryFix|skipStep/.test(
+        reviewCard,
+      ) &&
+      // 两句结论都在卡里（已完成 / 你选择了跳过）
+      /这一步已经完成，不用再做什么/.test(reviewCard) &&
+      /这一步你选择了跳过/.test(reviewCard),
+  );
+  check(
+    '环境向导：判定前进 / 重开后正文不会被推走（回看优先于放行页、新报告不清钉住）',
+    // 回看优先于放行页：钉住期间判定即使已经放行，正文也留在回看卡上，点了「看看结果」才进放行页
+    /const screen = computed<'checking' \| 'blocked' \| 'released'>\(\(\) => \{[\s\S]{0,300}?if \(reviewStep\.value\) return 'blocked';/.test(
+      gateCode,
+    ) &&
+      // 提示行是唯一的前进入口（不是自动跳）
+      /v-if="notice"[\s\S]{0,260}?@click="backToCurrent"/.test(gateCode) &&
+      // 新报告进来时**不许**清钉住 —— 清了就等于把用户推走
+      !/pinnedStepId/.test(blockOf(wizardSource, 'function applyWizardState(')) &&
+      // 挡住页的表头跟着判定说：回看时不能把"已就绪"说成"还没准备好"
+      /wizard\?\.gate === 'open' \? '运行环境已经就绪' : '运行环境还没准备好'/.test(gateCode),
+  );
+  check(
+    '环境向导：用户显式重开的那一轮判成 open 也显示放行页（R-31），离开时把这一轮与钉住都清掉',
+    (() => {
+      const gateVisibleBody = blockOf(wizardSource, 'export const gateVisible');
+      const reopenBody = blockOf(wizardSource, 'export function reopenGate(');
+      const selectBody = blockOf(wizardSource, 'export function selectViewedStep(');
+      return (
+        /if \(phase === 'released'\) return blocking \|\| reopened;/.test(gateVisibleBody) &&
+        /reopened = true;/.test(reopenBody) &&
+        /pinnedStepId\.value = null;/.test(reopenBody) &&
+        // 点当前步骤 / 点一个看不动的步骤 → 回来（不是钉住一个不允许看的步骤）；
+        // 同时记下"钉住那一刻判定在哪一步"，判定后来往前挪了才出提示（R-30）
+        /const viewable = canViewStep\(step, state\.currentStepId\);/.test(selectBody) &&
+        /pinnedStepId\.value = viewable \? stepId : null;/.test(selectBody) &&
+        /pinnedAtStepId\.value = viewable \? state\.currentStepId : null;/.test(selectBody) &&
+        // 没钉住与"钉住时本来就没有当前步骤"分得开：界面拿到的是对象（`activePin`）而不是可空 id
+        /export const activePin: ComputedRef<ViewPin \| null> = computed/.test(wizardSource) &&
+        // 两个"离开门禁层"的动作都要把「用户要看的那一轮」清掉
+        /reopened = false;/.test(blockOf(wizardSource, 'export function escapeGate(')) &&
+        /reopened = false;/.test(blockOf(wizardSource, 'export function enterMainUi('))
+      );
+    })(),
+    'R-31',
   );
   // ---------------------------------------------------------- 18b. 提权那一次（F-02 / F-03）
   //    都是**真调用**纯函数（不是源码正则）：四种结果分开判 + 三种失败各自的文案/出路 +

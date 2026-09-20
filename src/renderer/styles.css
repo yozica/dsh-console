@@ -3475,6 +3475,81 @@ body[data-gate-visible='true'] .rail > * {
   min-width: 0;
 }
 
+/* 走过的节点是个真按钮（t43 / R-28）：平时与纯读数长得一模一样，只有悬停 / 键盘聚焦时才给一层
+   `--surface` 底和一行「↩ 回看这一步」—— 常驻不留装饰，正在看哪一步由正文里的「回看」标识说清。
+   没走到的节点没有这一层（不可点、不进 Tab 顺序，保持 R-01 ② 的原意）。 */
+.gate-node-button {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gate-node-button:hover,
+.gate-node-button:focus-visible {
+  background: var(--surface);
+}
+
+.gate-node-back {
+  display: none;
+  margin-top: 2px;
+  color: var(--accent);
+  font-size: var(--t-xs);
+}
+
+.gate-node-button:hover .gate-node-back,
+.gate-node-button:focus-visible .gate-node-back {
+  display: block;
+}
+
+/* 只读回看卡（t43 / R-29）：一句结论 + 判定给的那几句事实 + 一个「回到当前步骤」。
+   卡里没有安装 / 跳过动作 —— 回看时屏上仍然只有一件事可做。 */
+.gate-card-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-panel);
+  background: var(--run-soft);
+  color: var(--run);
+  font-size: var(--t-sm);
+}
+
+.gate-card-done[data-status='skipped'] {
+  background: var(--surface-2);
+  color: var(--ink-dim);
+}
+
+.gate-card-fact {
+  margin-top: 10px;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+/* 判定前进时的那一行提示（t43 / R-30）：它是一条"可以过去"的提示，不是错误也不是警告 ——
+   所以借强调色，不借 amber / rose。 */
+.gate-advance {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: var(--wizard-card);
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: var(--r-panel);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--t-sm);
+}
+
 .gate-node-step {
   display: block;
   color: var(--ink-dim);

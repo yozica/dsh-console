@@ -1,0 +1,843 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>环境向导：能不能回上一步、重开要不要自动收起（DSH Console）</title>
+    <!--
+      这份文件回答你说的那两件事，各给几种**能看的**摆法：
+
+        0. 重开门禁后自动收起 —— 这条你已经定了（不要），所以这里只是把「现在 / 改后」两屏摆出来
+           让你确认我的理解没错；
+        1. 「返回上一步」的入口放哪（A 左轨可点 / B 卡片里的次按钮 / C 两者都有）；
+        2. 回看旧步骤时，正文里是什么（A 只读回看 / B 完整卡片、主操作变「重新装 / 更新」）；
+        3. 你正在看旧步骤、判定却前进了，要不要把你推到新步骤（A 不推 / B 推）。
+
+      每一屏都用真实尺寸（顶栏 36px、左轨 --rail-w 188px、卡片列 --wizard-card 760px）与既有
+      设计变量（styles.css 的亮色取值）摆出来，零脚本、双击就能开。
+
+      怎么用：逐条看，在最后一节那张表里写下你的选择，回一句「1A 2A 3A」即可；我按裁决先改
+      docs 里的交互规格，再动代码。
+    -->
+    <style>
+      :root {
+        /* 既有设计变量（styles.css 亮色取值，原样抄来） */
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --rail-w: 188px;
+        --bar-h: 36px;
+        --wizard-card: 760px;
+        --wizard-rail-dot: 14px;
+        --dur: 140ms;
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --rail: #e6ebf2;
+        --hairline: rgba(16, 24, 40, 0.12);
+        --hairline-strong: rgba(16, 24, 40, 0.2);
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+        --accent: #0e7490;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(8, 145, 178, 0.16);
+        --run: #047857;
+        --sky: #0369a1;
+        --amber: #92400e;
+        --rose: #be123c;
+        --ok-soft: rgba(4, 120, 87, 0.12);
+        --focus: rgba(14, 116, 144, 0.35);
+        --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 24px 80px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          'Segoe UI',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+      h1 {
+        font-size: 21px;
+        margin: 0 0 6px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 40px 0 4px;
+      }
+      h2 .tag {
+        font-size: var(--t-xs);
+        font-weight: 500;
+        color: var(--ink-faint);
+        margin-left: 8px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 24px 0 8px;
+      }
+      p.lead,
+      p.caption {
+        color: var(--ink-dim);
+        margin: 0 0 12px;
+        max-width: 1000px;
+      }
+      p.caption {
+        font-size: var(--t-md);
+      }
+      code {
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: var(--t-sm);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      .verdict {
+        display: inline-block;
+        font-size: var(--t-xs);
+        color: var(--amber);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        padding: 1px 9px;
+        margin-left: 6px;
+      }
+
+      /* ---- 一屏门禁层（真实尺寸）---- */
+      .screen {
+        width: 1220px;
+        max-width: 100%;
+        margin: 10px 0 6px;
+        background: var(--bg);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        overflow: hidden;
+        box-shadow: var(--shadow-focus);
+      }
+      .screen .bar {
+        height: var(--bar-h);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px;
+        background: var(--rail);
+        border-bottom: 1px solid var(--hairline);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .screen .gate {
+        display: grid;
+        grid-template-columns: var(--rail-w) minmax(0, 1fr);
+      }
+      .screen .rail {
+        background: var(--rail);
+        border-right: 1px solid var(--hairline);
+        padding: 16px 12px 12px;
+      }
+      .screen .col {
+        padding: 24px 20px 20px;
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      .brand .logo {
+        font-weight: 600;
+      }
+      .brand .sub {
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .brand-sub {
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+        margin-top: 2px;
+      }
+      .queue {
+        list-style: none;
+        margin: 16px 0 0;
+        padding: 0;
+      }
+      .node {
+        position: relative;
+        display: grid;
+        grid-template-columns: var(--wizard-rail-dot) minmax(0, 1fr);
+        gap: 8px;
+        padding-bottom: 18px;
+      }
+      .node:last-child {
+        padding-bottom: 0;
+      }
+      .spine {
+        position: absolute;
+        left: calc(var(--wizard-rail-dot) / 2 - 1px);
+        top: 15px;
+        bottom: 0;
+        width: 2px;
+        background: var(--hairline-strong);
+      }
+      .node:last-child .spine {
+        display: none;
+      }
+      .dot {
+        grid-column: 1;
+        width: 8px;
+        height: 8px;
+        margin: 4px auto 0;
+        border-radius: 50%;
+        background: var(--ink-faint);
+      }
+      .node-body {
+        display: grid;
+        gap: 1px;
+      }
+      .node .step {
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .node .title {
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .node .state {
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .node[data-state='done'] .dot,
+      .node[data-state='done'] .spine {
+        background: var(--run);
+      }
+      .node[data-state='done'] .state {
+        color: var(--run);
+      }
+      .node[data-state='done'] .spine {
+        background: var(--run);
+      }
+      .node[data-state='current'] .dot {
+        background: var(--rose);
+      }
+      .node[data-state='current'] .title,
+      .node[data-state='busy'] .title {
+        color: var(--ink);
+      }
+      .node[data-state='current'] .state {
+        color: var(--rose);
+      }
+      .node[data-state='todo'] .dot,
+      .node[data-state='skipped'] .dot {
+        background: transparent;
+        border: 1.5px solid var(--hairline-strong);
+      }
+      /* 「可点」的样子：只有走过的节点给这个（新加的那条交互） */
+      .node.clickable {
+        cursor: pointer;
+      }
+      .node.clickable .back {
+        color: var(--accent);
+        font-size: var(--t-xs);
+      }
+      .node.clickable.hover .node-body {
+        background: var(--surface);
+        border-radius: var(--r-control);
+        outline: 1px solid var(--hairline);
+        margin: -3px -6px -3px;
+        padding: 3px 6px;
+      }
+      .rail-note {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px solid var(--hairline);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+
+      .gate-title {
+        margin: 0 0 4px;
+        font-size: 19px;
+      }
+      .gate-lead {
+        margin: 0 0 14px;
+        color: var(--ink-dim);
+        font-size: var(--t-md);
+      }
+      .card {
+        max-width: var(--wizard-card);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        box-shadow: var(--shadow-focus);
+        padding: 18px 20px 20px;
+      }
+      .card-title {
+        margin: 0 0 4px;
+        font-size: 16px;
+      }
+      .card-why {
+        margin: 0 0 12px;
+        color: var(--ink-dim);
+        font-size: var(--t-md);
+      }
+      .band {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 14px;
+        padding: 8px 10px;
+        border-radius: var(--r-panel);
+        background: var(--ok-soft);
+        color: var(--run);
+        font-size: var(--t-sm);
+      }
+      .band.info {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .facts {
+        display: grid;
+        gap: 6px;
+        margin: 0 0 14px;
+      }
+      .fact {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        font-size: var(--t-sm);
+      }
+      .fact .k {
+        color: var(--ink-faint);
+        min-width: 62px;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 4px;
+      }
+      .actions .spacer {
+        flex: 1;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 30px;
+        padding: 0 13px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        background: var(--surface-2);
+        color: var(--ink);
+        font-size: var(--t-sm);
+        white-space: nowrap;
+      }
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      .btn.ghost {
+        background: transparent;
+        border-color: transparent;
+        color: var(--ink-dim);
+      }
+      .btn.tiny {
+        height: 23px;
+        padding: 0 9px;
+        font-size: var(--t-xs);
+      }
+      .stateword {
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+      }
+
+      /* ---- 选项的排版 ---- */
+      .opt {
+        margin: 6px 0 26px;
+        padding: 14px 16px 6px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: rgba(255, 255, 255, 0.6);
+      }
+      .opt.sel {
+        border-color: var(--accent);
+        background: #fff;
+      }
+      .opt > header {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .opt > header b {
+        font-size: 15px;
+      }
+      .opt > header .why {
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .pair {
+        display: grid;
+        gap: 14px;
+      }
+      table {
+        border-collapse: collapse;
+        margin: 10px 0 0;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        overflow: hidden;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--hairline);
+        padding: 8px 14px;
+        text-align: left;
+        font-size: var(--t-md);
+      }
+      th {
+        background: var(--surface-2);
+        font-weight: 600;
+        color: var(--ink-dim);
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .swatch {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: middle;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>环境向导：能不能回上一步、重开要不要自动收起</h1>
+    <p class="lead">
+      你说的两件事我都对上了代码，先确认一下我的理解，再请你挑摆法。真实尺寸与既有变量，下面每一屏都可以直接量。
+      现在实现里：<b>左轨那三个节点是纯读数、不可点</b>（视觉规格 §4.2
+      明确写着「不可聚焦、不可点」），
+      <b>正文只显示主进程判出来的「当前这一步」</b> —— 所以步骤一完成就被自动推到下一步，回不去。
+    </p>
+
+    <h2>0. 先看「重开后自动收起」这条<span class="tag">不是选择，是你说不要的那条</span></h2>
+    <p class="caption">
+      原因找到了：门禁层有一条规则「<code>released</code>（放行页）只在本轮真挡过人时才显示」。从环境自检页
+      / 横幅点「重新打开环境向导」时，这一轮<b>没有挡过人</b>，判定一回来看是
+      <code>open</code>，层就<b>立刻收起</b>了 —— 你只看到「检查中」闪一下。改法：<b
+        >用户显式重开的那一轮，即使判定是 open 也停在放行页</b
+      >，只有你点 「进入 DSH Console」/「Esc」/逃生口才走。下面两屏是现在与改后。
+    </p>
+
+    <h3>现在（从自检页点「重新打开环境向导」）</h3>
+    <div class="screen">
+      <div class="bar">
+        <span>DSH Console</span><span>·</span><span>环境自检</span><span>·</span
+        ><span>← 你在这里点了「重新打开环境向导」</span>
+      </div>
+      <div class="gate">
+        <div class="rail">
+          <div class="brand"><span class="logo">DSH</span><span class="sub">Console</span></div>
+          <div class="brand-sub">运行环境已就绪</div>
+          <ul class="queue">
+            <li class="node" data-state="done">
+              <span class="spine"></span><span class="dot"></span>
+              <div class="node-body">
+                <span class="step">第一步</span><span class="title">安装 Node.js</span
+                ><span class="state">已完成</span>
+              </div>
+            </li>
+            <li class="node" data-state="done">
+              <span class="spine"></span><span class="dot"></span>
+              <div class="node-body">
+                <span class="step">第二步</span><span class="title">安装 pnpm</span
+                ><span class="state">已完成</span>
+              </div>
+            </li>
+            <li class="node" data-state="done">
+              <span class="spine"></span><span class="dot"></span>
+              <div class="node-body">
+                <span class="step">第三步</span><span class="title">安装 dsh</span
+                ><span class="state">已完成</span>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <div class="col">
+          <h2 class="gate-title">正在检查这台电脑上的运行环境</h2>
+          <p class="gate-lead">大约几秒钟，不会改动任何东西</p>
+          <div class="band info" style="max-width: var(--wizard-card)">
+            这一屏只显示几百毫秒 —— 判定一回来看是「已经就绪」，门禁层就自己收起了。<b
+              >你想看的向导没有出现。</b
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">↓ 几百毫秒后</p>
+    <div class="screen">
+      <div class="bar"><span>DSH Console</span><span>·</span><span>环境自检</span></div>
+      <div class="gate">
+        <div class="rail">
+          <div class="brand"><span class="logo">DSH</span><span class="sub">Console</span></div>
+          <div class="brand-sub">运行环境已就绪</div>
+        </div>
+        <div class="col">
+          <div class="band" style="max-width: var(--wizard-card)">
+            门禁层没了 —— 你还在环境自检页上，等于「点了没反应」。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>改后（同一操作）</h3>
+    <div class="screen">
+      <div class="bar"><span>DSH Console</span><span>·</span><span>环境自检</span></div>
+      <div class="gate">
+        <div class="rail">
+          <div class="brand"><span class="logo">DSH</span><span class="sub">Console</span></div>
+          <div class="brand-sub">运行环境已就绪</div>
+          <ul class="queue">
+            <li class="node" data-state="done">
+              <span class="dot"></span>
+              <div class="node-body">
+                <span class="step">第一步</span><span class="title">安装 Node.js</span
+                ><span class="state">已完成</span>
+              </div>
+            </li>
+            <li class="node" data-state="done">
+              <span class="dot"></span>
+              <div class="node-body">
+                <span class="step">第二步</span><span class="title">安装 pnpm</span
+                ><span class="state">已完成</span>
+              </div>
+            </li>
+            <li class="node" data-state="done">
+              <span class="dot"></span>
+              <div class="node-body">
+                <span class="step">第三步</span><span class="title">安装 dsh</span
+                ><span class="state">已完成</span>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <div class="col">
+          <h2 class="gate-title">运行环境已经就绪</h2>
+          <p class="gate-lead">三步都完成了（可跳过的项按你的选择处理），现在可以进入了。</p>
+          <div class="band" style="max-width: var(--wizard-card)">
+            停在这一屏不动 —— 只有你点「进入 DSH Console」或按 Esc 才收起。
+          </div>
+          <div class="actions">
+            <button class="btn primary">进入 DSH Console</button>
+            <button class="btn">再看看环境自检</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2>1. 「返回上一步」的入口放哪<span class="tag">选一个</span></h2>
+    <p class="caption">
+      下面每一屏都是同一个场景：Node 与 pnpm 都装好了，当前这一步是
+      dsh，用户<b>点回了第一步</b>（Node）。 差别只在「回到上一步」这个动作长在哪。
+    </p>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 左轨节点可点（我建议这个）</b>
+        <span class="why"
+          >走过的节点变成可点（悬停给底色 + 出现「↩
+          回看」），没走到的仍然不可点。改动最小：左轨本来就在那儿，
+          而且它天生就是「三步总览」，点哪看哪最符合直觉；代价是要把视觉规格
+          §4.2「不可点」那条改掉。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="bar"><span>DSH Console</span><span>·</span><span>门禁层</span></div>
+        <div class="gate">
+          <div class="rail">
+            <div class="brand"><span class="logo">DSH</span><span class="sub">Console</span></div>
+            <div class="brand-sub">运行环境准备</div>
+            <ul class="queue">
+              <li class="node clickable hover" data-state="done">
+                <span class="spine"></span><span class="dot"></span>
+                <div class="node-body">
+                  <span class="step">第一步</span><span class="title">安装 Node.js</span
+                  ><span class="state">已完成</span>
+                  <span class="back">↩ 回看这一步</span>
+                </div>
+              </li>
+              <li class="node clickable" data-state="done">
+                <span class="spine"></span><span class="dot"></span>
+                <div class="node-body">
+                  <span class="step">第二步</span><span class="title">安装 pnpm</span
+                  ><span class="state">已完成</span>
+                </div>
+              </li>
+              <li class="node" data-state="current">
+                <span class="spine"></span><span class="dot"></span>
+                <div class="node-body">
+                  <span class="step">第三步</span><span class="title">安装 dsh</span
+                  ><span class="state">待办</span>
+                </div>
+              </li>
+            </ul>
+            <div class="rail-note">
+              上面那行「↩ 回看这一步」是鼠标悬停时才出现的（这里画的是悬停态）。
+            </div>
+          </div>
+          <div class="col">
+            <h2 class="gate-title">运行环境还没准备好</h2>
+            <p class="gate-lead">下面几步装好之后，就可以进入 DSH Console 了</p>
+            <div class="card">
+              <h3 class="card-title">安装 Node.js（第一步 · 回看）</h3>
+              <div class="band"><span>✓</span><span>这一步已经完成，不用再做什么</span></div>
+              <div class="facts">
+                <div class="fact">
+                  <span class="k">用哪一份</span
+                  ><span>官方安装包装的 <code>C:\Program Files\nodejs\node.exe</code></span>
+                </div>
+                <div class="fact">
+                  <span class="k">版本</span><span>v24.14.1（本机这份 dsh 要求 ≥22.19.0）</span>
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn">← 上一步</button>
+                <span class="spacer"></span>
+                <button class="btn primary">回到当前步骤（安装 dsh）</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="caption">
+        注：左轨可点之后，「回看」的同时卡片里还要不要留一个「← 上一步 / 下一步」的小按钮，可以再定
+        —— 见下面 B、C。
+      </p>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 卡片里加一个「← 上一步」次按钮</b>
+        <span class="why"
+          >左轨保持纯读数（一行规格都不用改），只在卡片底部的操作行左侧加一个次要按钮；
+          起点是第一步时它禁用。缺点：你得先看到卡片，才知道能往回走；而且「跳到任意一步」做不到，只能一步一步退。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="bar"><span>DSH Console</span><span>·</span><span>门禁层</span></div>
+        <div class="gate">
+          <div class="rail">
+            <div class="brand"><span class="logo">DSH</span><span class="sub">Console</span></div>
+            <div class="brand-sub">运行环境准备</div>
+            <ul class="queue">
+              <li class="node" data-state="done">
+                <span class="spine"></span><span class="dot"></span>
+                <div class="node-body">
+                  <span class="step">第一步</span><span class="title">安装 Node.js</span
+                  ><span class="state">已完成</span>
+                </div>
+              </li>
+              <li class="node" data-state="done">
+                <span class="spine"></span><span class="dot"></span>
+                <div class="node-body">
+                  <span class="step">第二步</span><span class="title">安装 pnpm</span
+                  ><span class="state">已完成</span>
+                </div>
+              </li>
+              <li class="node" data-state="current">
+                <span class="spine"></span><span class="dot"></span>
+                <div class="node-body">
+                  <span class="step">第三步</span><span class="title">安装 dsh</span
+                  ><span class="state">待办</span>
+                </div>
+              </li>
+            </ul>
+            <div class="rail-note">左轨一行不改，还是纯读数。</div>
+          </div>
+          <div class="col">
+            <h2 class="gate-title">运行环境还没准备好</h2>
+            <p class="gate-lead">下面几步装好之后，就可以进入 DSH Console 了</p>
+            <div class="card">
+              <h3 class="card-title">安装 dsh（第三步）</h3>
+              <p class="card-why">pnpm 装好之后，最后一步把 dsh 装上，控制台就能带你看它了。</p>
+              <div class="facts">
+                <div class="fact">
+                  <span class="k">装到哪</span
+                  ><span>全局 npm 目录（<code>npm i -g @deepseek-ai/dsh</code>）</span>
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn">← 上一步</button>
+                <span class="spacer"></span>
+                <button class="btn primary">安装 dsh</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>C. 两者都有</b>
+        <span class="why"
+          >左轨可点（跳到任意一步）+ 卡片里也有「←
+          上一步」（一步一步退）。多一个入口，也多一条要维护的规则；
+          好处是「我想看看上一步」和「我想跳回第一步」两种习惯都照顾到。</span
+        >
+      </header>
+      <p class="caption">（就是把 A 的左轨和 B 的按钮同时放上，不另画一屏。）</p>
+    </div>
+
+    <h2>2. 回看旧步骤时，正文里是什么<span class="tag">选一个</span></h2>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 只读回看卡（我建议这个）</b>
+        <span class="why"
+          >一句话说清「这一步已经完成，不用再做什么」+ 当时的关键读数 +
+          一个「回到当前步骤」的主按钮。
+          符合「一屏只有一件事可做」这条既有纪律：回看的时候那件事就是「回到当前」。</span
+        >
+      </header>
+      <div class="card" style="margin-bottom: 14px">
+        <h3 class="card-title">安装 pnpm（第二步 · 回看）</h3>
+        <div class="band"><span>✓</span><span>这一步已经完成，不用再做什么</span></div>
+        <div class="facts">
+          <div class="fact">
+            <span class="k">装到哪</span
+            ><span><code>C:\Users\yozica\AppData\Roaming\npm\pnpm.cmd</code></span>
+          </div>
+          <div class="fact"><span class="k">版本</span><span>10.15.0</span></div>
+        </div>
+        <div class="actions">
+          <button class="btn">← 上一步</button>
+          <span class="spacer"></span>
+          <button class="btn primary">回到当前步骤（安装 dsh）</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 完整卡片，主操作变成「重新装 / 更新」</b>
+        <span class="why"
+          >回看时也把这一步当成可以再动一次：Node 那步给「更新 Node.js」、pnpm / dsh
+          那步给「重新安装」。 更强，但和既有纪律冲突（回看时屏幕上有两件能做的事），而且 pnpm / dsh
+          的「重装」其实没什么意义。</span
+        >
+      </header>
+      <div class="card" style="margin-bottom: 14px">
+        <h3 class="card-title">安装 pnpm（第二步 · 回看）</h3>
+        <p class="card-why">pnpm 是插件页装 / 卸 / 升级要用的包管理器。</p>
+        <div class="facts">
+          <div class="fact"><span class="k">现在</span><span>已装 10.15.0</span></div>
+        </div>
+        <div class="actions">
+          <button class="btn">← 上一步</button>
+          <span class="spacer"></span>
+          <button class="btn primary">重新安装 pnpm</button>
+          <button class="btn">回到当前步骤</button>
+        </div>
+      </div>
+    </div>
+
+    <h2>3. 你正看着旧步骤、判定却前进了，要不要把你推走<span class="tag">选一个</span></h2>
+    <p class="caption">
+      场景：你在回看第一步，后台复检发现 pnpm
+      也已经就绪了（或者你刚在别处装好了）。现在实现会把你<b>直接换到新的一步</b>。
+    </p>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 不推，给一句话（我建议这个）</b>
+        <span class="why"
+          >你停在你正在看的那一步；卡片上方出现一条提示，点了才过去。你说的「回不去」正是不想被推着走。</span
+        >
+      </header>
+      <div class="card" style="margin-bottom: 14px">
+        <div class="band info" style="margin-bottom: 12px">
+          <span>下一步（安装 pnpm）也已经就绪了</span>
+          <span class="spacer" style="flex: 1"></span>
+          <button class="btn tiny">继续 →</button>
+        </div>
+        <h3 class="card-title">安装 Node.js（第一步 · 回看）</h3>
+        <div class="band"><span>✓</span><span>这一步已经完成，不用再做什么</span></div>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="btn primary">回到当前步骤（安装 pnpm）</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 自动推到新的当前步</b>
+        <span class="why"
+          >保持现在的行为（回看会被打断）。选它的话第 1、2
+          条基本没意义了，因为你会一直被推走。</span
+        >
+      </header>
+      <p class="caption">（就是把卡片换成 pnpm 的内容，和你现在看到的一样，不另画一屏。）</p>
+    </div>
+
+    <h2>回给我这张表就行</h2>
+    <table>
+      <tr>
+        <th>#</th>
+        <th>问题</th>
+        <th>我的建议</th>
+        <th>你的选择</th>
+      </tr>
+      <tr>
+        <td>0</td>
+        <td>重开门禁不再自动收起（停在放行页）</td>
+        <td>改（你已经定了）</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>「返回上一步」入口放哪</td>
+        <td>A 左轨可点</td>
+        <td>&nbsp;</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>回看旧步骤时正文是什么</td>
+        <td>A 只读回看卡</td>
+        <td>&nbsp;</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>判定前进时要不要把你推走</td>
+        <td>A 不推，给一句话</td>
+        <td>&nbsp;</td>
+      </tr>
+    </table>
+    <p class="caption" style="margin-top: 12px">
+      例：回一句「1A 2A 3A」就是全按我的建议走。<br />
+      顺带一提：这三条落地要动的地方是
+      <code>renderer/lib/env-wizard.ts</code>（多一个「正在看哪一步」的视图相位）、
+      <code>renderer/shell/EnvGate.vue</code>（左轨可点 + 回看卡）、以及
+      <code>docs/env-wizard-interaction.md</code>
+      与冻结表里对应的那几条（左轨「不可点」、放行页的显示条件）；自检与反例脚本会跟着补。
+    </p>
+  </body>
+</html>
