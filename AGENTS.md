@@ -358,6 +358,9 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
   三个动作），所以**它不在挂载清单里** —— 这就是为什么那条自检要认「被别的组件 import」。
   顶栏标题也跟着从 `dsh 终端` 改成 `终端`（这一页不再只有 dsh 那一路）；`TopBar.vue` 的 `PAGE_TITLES`
   里 `shell` / `env` 两个键同时删掉 —— `currentTab` 已经是七项的联合类型，留着就是死键。
+  会话条上的动作按钮用**镂空**（`.btn.outline`，与 `.btn.danger` 同形，只是换成 accent 色）：
+  它原来是 `.btn.primary`（实心 accent），比选中的标签还抢眼，**看不出正在看哪一路** ——
+  实心只留给选中态，那才是这条上唯一该"实"的东西。
 - **两路终端都绝对定位铺满 `.term-body`**（会话条下面那一块，`flex: 1 1 auto` + `position: relative`）。
   它**必须**是两路的定位基准：`.term-view` / `.term-host` 都是 `inset: 0`，少了这一层，dsh 那一路的
   `inset: 0` 会去对**整个 `.pane`** 算，它的状态条（清空显示 / 重新显示历史 / 发送 Ctrl+C）就与
@@ -391,7 +394,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 **哪条自检守着**：「渲染层：左栏七项（TabId 里没有 shell / env，页面容器也没有 pane-shell）」
 「渲染层：环境自检是设置里的详情层（不是页面）」
 「渲染层：环境自检详情层盖的是工作区（挂在 <main> 里，不吃掉左栏与顶栏）」
-「渲染层：终端页的会话条第一项固定是 dsh 终端」
+「渲染层：终端页的会话条第一项固定是 dsh 终端、新建按钮镂空（两路终端在一个页面里）」
 「渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）」
 「首启门禁：顶栏的标题与"右侧控件收起"读同一个 gateVisible（R-03）」（标题多了面包屑那一段，
 门禁分支仍然只认 `gateVisible`）

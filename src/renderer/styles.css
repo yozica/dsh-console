@@ -720,7 +720,8 @@ main {
 /* 禁用的主操作不该还像一个可点的 CTA：降级成普通禁用按钮的观感。
    否则"运行中"时那颗「启动」仍然亮着，看起来可以点。 */
 .btn.primary:disabled,
-.btn.danger:disabled {
+.btn.danger:disabled,
+.btn.outline:disabled {
   background: var(--surface-2);
   border-color: var(--hairline-strong);
   color: var(--ink-faint);
@@ -749,6 +750,22 @@ main {
   background: var(--rose-soft);
   border-color: var(--rose);
   color: var(--rose);
+}
+
+/* 镂空的强调按钮：透明底 + accent 描边与文字，形状和 .btn.danger 一样（那个是 rose 的）。
+   为什么要有这一档：会话条上「＋ 新建本地 Shell」原来是 `.btn.primary`（实心 accent），
+   它比**选中的那个会话标签**还抢眼 —— 一眼看过去分不清"当前在看的是哪一路"。
+   动作做成镂空，选中态才有机会成为整条上唯一实心的东西（对照 `.shell-tab.active` 的 accent-soft 底）。 */
+.btn.outline {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn.outline:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .btn.small {

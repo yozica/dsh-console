@@ -349,7 +349,7 @@ onUnmounted(() => {
       </template>
       <button
         id="btn-new-shell"
-        class="btn small primary"
+        class="btn small outline"
         :disabled="busy"
         :title="emptyHint"
         @click="createSession"

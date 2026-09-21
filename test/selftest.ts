@@ -1704,7 +1704,7 @@ async function main(): Promise<void> {
     mainBlock ? `main 那段 ${mainBlock.split('\n').length} 行` : '找不到 <main>',
   );
   check(
-    '渲染层：终端页的会话条第一项固定是 dsh 终端（两路终端在一个页面里）',
+    '渲染层：终端页的会话条第一项固定是 dsh 终端、新建按钮镂空（两路终端在一个页面里）',
     /id="tab-dsh-term"/.test(mergedTermSource) &&
       /activate\(DSH_ID\)/.test(mergedTermSource) &&
       /const DSH_ID = 'dsh';/.test(mergedTermSource) &&
@@ -1712,7 +1712,12 @@ async function main(): Promise<void> {
       // 关掉最后一个本地 Shell 要回到 dsh 那一路，不能停在"没有会话"的空屏上
       /activeId\.value = DSH_ID;/.test(mergedTermSource) &&
       // dsh 那一路是子组件：不在挂载清单里，但必须被宿主 import（上面那条通用检查盯着）
-      !mountJs.includes("from './panes/DshTerminal.vue'"),
+      !mountJs.includes("from './panes/DshTerminal.vue'") &&
+      // 会话条上的动作是**镂空**的（.btn.outline），实心只留给"当前在看的那一路"：
+      // 之前它用 .btn.primary（实心 accent），比选中的标签还抢眼，看不出选中了谁
+      /id="btn-new-shell"[\s\S]{0,80}class="btn small outline"/.test(mergedTermSource) &&
+      /\.btn\.outline \{[^}]*background: transparent/.test(cssText) &&
+      /\.shell-tab\.active \{[^}]*background: var\(--accent-soft\)/.test(cssText),
   );
   // 两路终端都得套在 .term-body 里：它的 inset:0 才是对"会话条下面那块区域"算的。
   // 少了这一层，dsh 那一路会去对整个 .pane 定位 —— 它的状态条（清空显示 / 显示历史 /
