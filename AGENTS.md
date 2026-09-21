@@ -319,6 +319,13 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：全部页面改为 `position:absolute + visibility:hidden` **常驻布局**（`.pane.active { visibility: visible }`），切换时再补一次视口重算。
 2. **`<webview>` 自己没写尺寸** → 它是替换元素，漏写 CSS 就退化成浏览器默认的约 300×150，页面上只出现顶部一小条。修法：两个内嵌页共用 `.embedded-view`（`width/height:100%`），**以后新增 webview 必须带上这个 class**。
 
+**推论（踩过）：页面里的元素不要自己写 `visibility: visible`。** `visibility` 是**继承**属性，
+`.pane` 靠 `.pane { visibility: hidden }` / `.pane.active { visibility: visible }` 藏整页，而子元素一旦
+显式写 `visible`，就会在别的 tab 上"穿"出来 —— 全仓库只该有 `.pane.active` 一处写 visible；要藏某个
+分支就给它自己写 `hidden`（写成 `:not(.active)` 这类），别把"显示"写成一条规则（用户抓图：
+切到 Harness 页，终端页的本地 Shell 还画在那一页顶上）。自检「渲染层：两路终端共用 .term-body」
+里有一条钉子专门盯着这个写法。
+
 自检：「样式：页面容器靠 visibility 隐藏，不用 display:none」与「样式：每个 webview 都有明确高度的样式」。另外 `vite.config.mts` 的 `compilerOptions.isCustomElement` 把 `<webview>` 声明为自定义元素，否则 Vue 编译器会试着把它当组件解析。两个内嵌页用**各自独立且持久**的分区（`persist:dsh-ui` 存令牌 / `persist:deepseek` 存登录态），且主进程在启动时统一抹掉 UA 里的 Electron 标识（`app.userAgentFallback`，不是等 webview 挂上来再改 —— 后者可能晚于该页的第一次请求）。
 
 ### 7.7 dsh 终端是**只读输出视图**（有意为之）
@@ -378,6 +385,11 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
   那是它 `.bar` 下面的 flex 子项；基础规则一改成绝对定位，它会铺满整个 `.term-view`、把 dsh 的状态条
   整行盖掉（踩过：工具栏整行"消失"，而元素其实还在，rect 量出来一切正常）。这一条同样由那条自检
   钉着（基础规则 relative + 作用域规则 absolute，两个都要在）。
+  两路之间用 `visibility` 互斥（`.term-body > .term-host:not(.active) { visibility: hidden }`）：
+  xterm 实例保持尺寸、切回来不用重建。**但只能给"不在看的那一路"写 hidden，不能给"在看的那一路"
+  写 visible** —— `visibility` 是继承属性，而 `.pane` 正是靠它藏整页的，子元素一旦显式写 visible
+  就会从隐藏的页面里穿出来（用户抓图：切到 Harness 页，本地 Shell 的 zsh 提示符还画在上面）。
+  写成 `:not(.active)` 之后，"在看的那一路"什么都不写，老老实实继承 `.pane` 的可见性。
 - **环境自检不再是页面**：设置页多一张「运行环境」卡（一行结论 `N 项正常 · N 项不正常 · N 项需要注意`
   —— 与详情视图顶部那句**一字不差**，免得点进详情像换了个说法 + 要求的那句 Node 区间 +
   「查看详情」「重新检测」），点「查看详情」打开**工作区上的详情层**

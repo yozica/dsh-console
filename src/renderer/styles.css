@@ -1206,15 +1206,20 @@ main {
    还有一条：这一块是不透明的终端底色，而它是**后画**的（DOM 里排在 .term-view 后面，
    两者 z-index 都是 auto），所以 dsh 那一路在的时候必须把它藏起来，否则照样盖住
    dsh 的状态条 —— 而且这种遮挡连"重叠面积"都量不出来（两者矩形本来就是重叠的）。
-   用 visibility 而不是 display：已经建好的 xterm 实例保持尺寸，切回来不用重建。 */
+   用 visibility 而不是 display：已经建好的 xterm 实例保持尺寸，切回来不用重建。
+
+   **只给"不在看的那一路"写 hidden，绝不给"在看的那一路"写 visible**：visibility 是
+   继承属性，而 `.pane` 正是靠它把整页藏起来的（全仓库只有 `.pane.active` 一处写 visible）。
+   子元素一旦显式写 visible，就会从隐藏的页面里"穿"出来 —— 切到别的 tab 时本地 Shell
+   的终端照样画在那一页上面（用户抓图：Harness 页顶上浮着 zsh 的提示符）。
+   写成 :not(.active) 之后，看的那一路**什么都不写**，于是老老实实继承 `.pane` 的可见性。 */
 .term-body > .term-host {
   position: absolute;
   inset: 0;
-  visibility: hidden;
 }
 
-.term-body > .term-host.active {
-  visibility: visible;
+.term-body > .term-host:not(.active) {
+  visibility: hidden;
 }
 
 .term-host .xterm {

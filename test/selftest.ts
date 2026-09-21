@@ -1735,10 +1735,12 @@ async function main(): Promise<void> {
   // 定位，它会铺满整个 `.term-view`、把状态条整行盖掉（踩过 —— 而且 rect 量出来一切
   // 正常，因为元素确实"在"。只有本地 Shell 那一路，直接挂在 `.term-body` 下的那个，
   // 才用 `.term-body > .term-host` 改绝对定位铺满）。
-  // 最后一条同样来自踩坑：本地 Shell 那一块是**不透明**的、又排在 .term-view 后面
+  // 最后两条同样来自踩坑：本地 Shell 那一块是**不透明**的、又排在 .term-view 后面
   // （两者 z-index 都是 auto），dsh 那一路在的时候必须靠 `active` 把它藏起来；
   // 否则它是"遮挡"而不是"重叠"，连重叠面积都量不出来（只有带 z-index 的空状态
-  // 能穿出来，看着像状态条凭空消失了）。所以 `active` 类绑定与那条 visibility 规则一起钉。
+  // 能穿出来，看着像状态条凭空消失了）。而"藏"的写法只能是给**不在看的那一路**写
+  // hidden —— visibility 会继承，给"在看的那一路"写 visible 就会连 `.pane` 的隐藏
+  // 一起穿掉（用户抓图：切到 Harness 页，本地 Shell 的终端还画在上面）。
   const termBodyBlock = divBlock(mergedTermSource, /<div class="term-body">/);
   check(
     '渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）',
@@ -1748,8 +1750,11 @@ async function main(): Promise<void> {
       /\.term-host \{[^}]*position: relative/.test(cssText) &&
       /\.term-host \{[^}]*flex: 1 1 auto/.test(cssText) &&
       /\.term-body > \.term-host \{[^}]*position: absolute/.test(cssText) &&
-      /\.term-body > \.term-host \{[^}]*visibility: hidden/.test(cssText) &&
-      /\.term-body > \.term-host\.active \{[^}]*visibility: visible/.test(cssText),
+      // 只给"不在看的那一路"写 hidden；**不许**给"在看的那一路"写 visible ——
+      // visibility 是继承属性，显式 visible 会从 `.pane` 的隐藏里穿出来
+      // （踩过：切到别的 tab，本地 Shell 的终端照样画在那一页上面）
+      /\.term-body > \.term-host:not\(\.active\) \{[^}]*visibility: hidden/.test(cssText) &&
+      !/\.term-body > \.term-host\.active[^{]*\{[^}]*visibility: visible/.test(cssText),
     termBodyBlock
       ? `term-body 套着 ${termBodyBlock.split('\n').length} 行`
       : 'term-body 里没套住两路',
