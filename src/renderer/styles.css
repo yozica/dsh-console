@@ -514,6 +514,19 @@ html[data-platform='darwin'] body[data-native-fullscreen='true'][data-immersive=
   padding-left: 20px;
 }
 
+/* 门禁层（首启向导 / 入口门禁）自己的左轨也要跟着撤回 —— 它是另一条左轨
+   （`.gate-rail`），顶栏那条 36px 带在它上面：窗口模式下那条带是红绿灯的位置，
+   全屏下就是一块纯留白（用户抓图指出：向导页全屏时左栏上面空一块，比"没有门禁时"
+   的左栏低了整整 36px）。做法是让左轨顶到窗口上沿、高度补回那 36px ——
+   它与被盖住的应用左栏同底色（`--rail`）、同一条右缘发丝线，所以接得上；
+   顶栏不在这一列，仍然留在 36px 以下（窗口照样能拖能关）。 */
+html[data-platform='darwin'] body[data-native-fullscreen='true'] .gate-rail {
+  align-self: start;
+  height: calc(100% + var(--bar-h));
+  margin-top: calc(-1 * var(--bar-h));
+  padding-top: 16px;
+}
+
 .page-title {
   font-size: var(--t-lg);
   font-weight: 600;

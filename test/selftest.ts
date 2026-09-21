@@ -666,11 +666,19 @@ async function main(): Promise<void> {
       /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.topbar[^{]*\{[^}]*padding-left/.test(
         cssText,
       ) &&
+      // 门禁层是**另一条左轨**（.gate-rail）：全屏时它也得顶到窗口上沿，
+      // 否则向导页的左栏会比"没有门禁时"低 36px（用户抓图指出过）
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.gate-rail\s*\{[^}]*margin-top: calc\(-1 \* var\(--bar-h\)\)/.test(
+        cssText,
+      ) &&
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.gate-rail\s*\{[^}]*padding-top: 16px/.test(
+        cssText,
+      ) &&
       /api\.onFullscreen\(/.test(rendererCode) &&
       /onFullscreen:/.test(preloadJs) &&
       /documentElement\.dataset\.platform\s*=/.test(platformJs) &&
       /setPlatform\(snapshot\.value\?\.env\?\.platform\)/.test(rendererCode),
-    '左栏让位 + 应用内全屏顶栏让位 + 系统全屏撤回 + 非全屏不缩进 + platform/全屏状态都有来源',
+    '两条左轨的让位与撤回 + 应用内全屏顶栏让位 + 非全屏不缩进 + platform/全屏状态都有来源',
   );
 
   // macOS 适配的契约二：三处快捷键处理器都必须走平台修饰键
