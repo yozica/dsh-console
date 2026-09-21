@@ -17,13 +17,11 @@ import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../lib/stor
 
 const PAGE_TITLES = {
   dashboard: '控制台',
-  terminal: 'dsh 终端',
-  shell: '本地 Shell',
+  terminal: '终端',
   ui: 'DeepSeek Harness',
   usage: 'DeepSeek 用量',
   archive: '归档会话',
   plugin: '插件',
-  env: '环境自检',
   settings: '设置',
 };
 

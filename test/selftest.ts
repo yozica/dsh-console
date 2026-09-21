@@ -1618,6 +1618,24 @@ async function main(): Promise<void> {
     '左栏顺序 = 快捷键 1..N',
   );
 
+  /**
+   * 取 `startPattern` 命中的那个 `<div>` **自己的整段**（按 div 开闭标签配对）。
+   * 用来断言"某个东西真的套在这个 div 里"，而不是靠前后顺序猜 —— 纯粹的
+   * indexOf 顺序检查抓不到"它跑到那个 div 后面并排站着了"这种错。
+   */
+  function divBlock(source: string, startPattern: RegExp): string {
+    const start = startPattern.exec(source);
+    if (!start) return '';
+    const tags = /<div\b|<\/div>/g;
+    tags.lastIndex = start.index;
+    let depth = 0;
+    for (let match = tags.exec(source); match; match = tags.exec(source)) {
+      depth += match[0] === '</div>' ? -1 : 1;
+      if (depth === 0) return source.slice(start.index, match.index + match[0].length);
+    }
+    return '';
+  }
+
   // ── t45：左栏 9 → 7（终端合并、环境自检挪进设置）。四条钉子盯住"合并之后不许两头都在"。
   const railSource = fs.readFileSync(path.join(rendererDir, 'shell', 'RailNav.vue'), 'utf8');
   const railStoreSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
@@ -1671,6 +1689,33 @@ async function main(): Promise<void> {
       /activeId\.value = DSH_ID;/.test(mergedTermSource) &&
       // dsh 那一路是子组件：不在挂载清单里，但必须被宿主 import（上面那条通用检查盯着）
       !mountJs.includes("from './panes/DshTerminal.vue'"),
+  );
+  // 两路终端都得套在 .term-body 里：它的 inset:0 才是对"会话条下面那块区域"算的。
+  // 少了这一层，dsh 那一路会去对整个 .pane 定位 —— 它的状态条（清空显示 / 显示历史 /
+  // Ctrl+C）就与会话条叠在同一行（真机上出现过，会话条上的标签和按钮糊成一片）。
+  // 而 `.term-host` 的**基础**规则必须留着 relative + flex：dsh 那一路的子组件
+  // DshTerminal 自己也用这个类（那是它 `.bar` 下面的 flex 子项）；把基础规则改成绝对
+  // 定位，它会铺满整个 `.term-view`、把状态条整行盖掉（踩过 —— 而且 rect 量出来一切
+  // 正常，因为元素确实"在"。只有本地 Shell 那一路，直接挂在 `.term-body` 下的那个，
+  // 才用 `.term-body > .term-host` 改绝对定位铺满）。
+  // 最后一条同样来自踩坑：本地 Shell 那一块是**不透明**的、又排在 .term-view 后面
+  // （两者 z-index 都是 auto），dsh 那一路在的时候必须靠 `active` 把它藏起来；
+  // 否则它是"遮挡"而不是"重叠"，连重叠面积都量不出来（只有带 z-index 的空状态
+  // 能穿出来，看着像状态条凭空消失了）。所以 `active` 类绑定与那条 visibility 规则一起钉。
+  const termBodyBlock = divBlock(mergedTermSource, /<div class="term-body">/);
+  check(
+    '渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）',
+    /class="term-view"/.test(termBodyBlock) &&
+      /<div class="term-host" :class="\{ active: !dshActive \}" ref="host">/.test(termBodyBlock) &&
+      /\.term-body \{[^}]*position: relative/.test(cssText) &&
+      /\.term-host \{[^}]*position: relative/.test(cssText) &&
+      /\.term-host \{[^}]*flex: 1 1 auto/.test(cssText) &&
+      /\.term-body > \.term-host \{[^}]*position: absolute/.test(cssText) &&
+      /\.term-body > \.term-host \{[^}]*visibility: hidden/.test(cssText) &&
+      /\.term-body > \.term-host\.active \{[^}]*visibility: visible/.test(cssText),
+    termBodyBlock
+      ? `term-body 套着 ${termBodyBlock.split('\n').length} 行`
+      : 'term-body 里没套住两路',
   );
   check(
     '设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层',

@@ -60,7 +60,7 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
-test/selftest.ts        297 项自检（`npm test`），不需要 Electron
+test/selftest.ts        298 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -102,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（297 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（298 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -356,8 +356,22 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
   不能改名也不能关闭），后面是各本地 Shell，`＋ 新建本地 Shell` 在最右；`关闭当前` 只在本地 Shell
   那一路上出现。dsh 那一路是子组件 `panes/DshTerminal.vue`（= 原来那一页，带它自己的状态条与
   三个动作），所以**它不在挂载清单里** —— 这就是为什么那条自检要认「被别的组件 import」。
-- **环境自检不再是页面**：设置页多一张「运行环境」卡（一行结论：N 项正常 / 需要注意 / 不可用 +
-  要求的那句 Node 区间 + 「查看详情」「重新检测」），点「查看详情」打开**工作区上的详情层**
+  顶栏标题也跟着从 `dsh 终端` 改成 `终端`（这一页不再只有 dsh 那一路）；`TopBar.vue` 的 `PAGE_TITLES`
+  里 `shell` / `env` 两个键同时删掉 —— `currentTab` 已经是七项的联合类型，留着就是死键。
+- **两路终端都绝对定位铺满 `.term-body`**（会话条下面那一块，`flex: 1 1 auto` + `position: relative`）。
+  它**必须**是两路的定位基准：`.term-view` / `.term-host` 都是 `inset: 0`，少了这一层，dsh 那一路的
+  `inset: 0` 会去对**整个 `.pane`** 算，它的状态条（清空显示 / 重新显示历史 / 发送 Ctrl+C）就与
+  会话条叠在同一行（真机上出现过：会话条上的标签与那排按钮糊成一片，而只看 `display` 值的检查
+  全是绿的）。这类「绝对定位挂错了基准」用前后顺序是抓不到的，所以那条自检按 **div 标签配对取整段**
+  来断言「`.term-view` 与 `.term-host` 真的套在 `.term-body` 里」。
+  **但绝对定位只给本地 Shell 那一路**（`.term-body > .term-host`）：`.term-host` 的**基础**规则
+  必须留着 `position: relative` + `flex: 1 1 auto` —— dsh 那一路的子组件 `DshTerminal` 自己也用这个类，
+  那是它 `.bar` 下面的 flex 子项；基础规则一改成绝对定位，它会铺满整个 `.term-view`、把 dsh 的状态条
+  整行盖掉（踩过：工具栏整行"消失"，而元素其实还在，rect 量出来一切正常）。这一条同样由那条自检
+  钉着（基础规则 relative + 作用域规则 absolute，两个都要在）。
+- **环境自检不再是页面**：设置页多一张「运行环境」卡（一行结论 `N 项正常 · N 项不正常 · N 项需要注意`
+  —— 与详情视图顶部那句**一字不差**，免得点进详情像换了个说法 + 要求的那句 Node 区间 +
+  「查看详情」「重新检测」），点「查看详情」打开**工作区上的详情层**
   `#env-detail-layer`（`lib/env-layer.ts` 的 `envDetailOpen` / `openEnvDetail` / `closeEnvDetail`）。
   它是覆盖层不是页面：**不进 `TAB_ORDER`**，盖工作区但不盖左栏 / 顶栏 / 状态栏，
   点左栏任何一项（`selectTab` → `closeEnvDetailOnTabChange`）都会收掉它，
@@ -370,6 +384,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 **哪条自检守着**：「渲染层：左栏七项（TabId 里没有 shell / env，页面容器也没有 pane-shell）」
 「渲染层：环境自检是设置里的详情层（不是页面）」「渲染层：终端页的会话条第一项固定是 dsh 终端」
+「渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）」
 「设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层」、以及改了措辞的那条
 「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」。
 
@@ -804,7 +819,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，297 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，298 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

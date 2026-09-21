@@ -1134,6 +1134,16 @@ main {
   border-left: 1px solid var(--hairline);
 }
 
+/* 「终端」页里会话条下面那块区域（t45）：两路终端（dsh / 各本地 Shell）都绝对定位
+   铺满它。它**必须**是两路的定位基准 —— 少了这一层，.term-view 的 inset:0 会去对
+   整个 .pane 算，dsh 那一路的状态条就盖住会话条（踩过）。
+   页面是列布局：会话条走内容高度，这块吃掉剩下的。 */
+.term-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* 终端面板：像 VS Code 的集成终端那样"与面板齐平"——
    不是浮在页面上的卡片，而是一整块延伸到面板边界的区域。
    所以：没有圆角、没有四周外边距，只用一条 hairline 与工具条分开，
@@ -1156,6 +1166,27 @@ main {
   overflow: hidden;
 }
 
+/* 「终端」页里**本地 Shell 那一路**的面板：它直接放在 .term-body 下、要铺满整块区域，
+   所以是绝对定位。**不能**把这条写进上面的 `.term-host` 基础规则 —— dsh 那一路的
+   子组件 `DshTerminal` 自己也用 `.term-host`，那是它 `.bar` 下面的 flex 子项；
+   一改就变成绝对定位铺满整个 `.term-view`，把 dsh 的状态条（清空显示 / 重新显示历史 /
+   发送 Ctrl+C）整个盖掉（踩过：会话条下面那条工具栏整行消失，但它其实还"在"，
+   只是被压在终端底下，量出来的 rect 一切正常）。
+
+   还有一条：这一块是不透明的终端底色，而它是**后画**的（DOM 里排在 .term-view 后面，
+   两者 z-index 都是 auto），所以 dsh 那一路在的时候必须把它藏起来，否则照样盖住
+   dsh 的状态条 —— 而且这种遮挡连"重叠面积"都量不出来（两者矩形本来就是重叠的）。
+   用 visibility 而不是 display：已经建好的 xterm 实例保持尺寸，切回来不用重建。 */
+.term-body > .term-host {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+}
+
+.term-body > .term-host.active {
+  visibility: visible;
+}
+
 .term-host .xterm {
   height: 100%;
 }
@@ -1174,24 +1205,20 @@ main {
 
 /* 终端面板里的空状态：跟着终端配色走。
    深色终端上用默认的深色字会看不见，而默认的 .empty-fill 是不透明白底。 */
-#pane-terminal .empty-fill,
-#pane-shell .empty-fill {
+#pane-terminal .empty-fill {
   background: var(--term-bg, var(--well));
 }
 
-#pane-terminal .empty h2,
-#pane-shell .empty h2 {
+#pane-terminal .empty h2 {
   color: var(--term-fg);
 }
 
-#pane-terminal .empty p,
-#pane-shell .empty p {
+#pane-terminal .empty p {
   color: var(--term-fg);
   opacity: 0.72;
 }
 
-#pane-terminal .empty-i,
-#pane-shell .empty-i {
+#pane-terminal .empty-i {
   color: var(--term-fg);
   opacity: 0.5;
 }

@@ -369,22 +369,31 @@ onUnmounted(() => {
     </button>
   </div>
 
-  <!-- dsh 那一路：子组件自带一行状态与三个动作（清空显示 / 重新显示历史 / 发送 Ctrl+C），
-       所以这里只负责"什么时候显示它"。 -->
-  <div class="term-view" :class="{ active: dshActive }">
-    <DshTerminal />
-  </div>
+  <!-- 两路终端共用这一块"会话条下面的区域"：.term-body 是它的定位基准，
+       两路各自绝对定位铺满它 —— 这样 dsh 那一路的工具栏才是**在会话条下面**，
+       而不是贴着页面根去覆盖会话条（t45 踩过：.term-view 直接挂在页面根上，
+       它的 inset:0 是对整个 .pane 算的，于是 DshTerminal 的状态条与会话条叠在一起）。
+       两路**同一时刻只显示一路**（`active` 类）：本地 Shell 那块是不透明的终端底色，
+       它又是后画的，盖在 dsh 那一路上面 —— 不藏起来就会把 DshTerminal 的状态条整行盖掉
+       （踩过：只有带 z-index 的空状态能"穿"出来，看着像状态条凭空消失了）。 -->
+  <div class="term-body">
+    <!-- dsh 那一路：子组件自带一行状态与三个动作（清空显示 / 重新显示历史 / 发送 Ctrl+C），
+         所以这里只负责"什么时候显示它"。 -->
+    <div class="term-view" :class="{ active: dshActive }">
+      <DshTerminal />
+    </div>
 
-  <div class="term-host" ref="host">
-    <div
-      v-for="item in sessions"
-      :key="item.id"
-      class="shell-pane"
-      :class="{ active: !dshActive && item.id === activeId }"
-      :data-shell-id="item.id"
-    >
-      <!-- xterm 挂在这一层：它里面没有 Vue 管理的子节点，两边不抢 DOM -->
-      <div class="term-mount" :ref="(el) => setPaneEl(item.id, el)"></div>
+    <div class="term-host" :class="{ active: !dshActive }" ref="host">
+      <div
+        v-for="item in sessions"
+        :key="item.id"
+        class="shell-pane"
+        :class="{ active: !dshActive && item.id === activeId }"
+        :data-shell-id="item.id"
+      >
+        <!-- xterm 挂在这一层：它里面没有 Vue 管理的子节点，两边不抢 DOM -->
+        <div class="term-mount" :ref="(el) => setPaneEl(item.id, el)"></div>
+      </div>
     </div>
   </div>
 </template>
