@@ -17,6 +17,7 @@
 import { computed, ref, watch } from 'vue';
 import { requestEnvFocus } from '../lib/env-anchor.js';
 import { envFix, wireEnvDoctor } from '../lib/env-doctor.js';
+import { openEnvDetail } from '../lib/env-layer.js';
 import { currentTab, snapshot } from '../lib/store.js';
 import type {
   PluginEntry,
@@ -200,7 +201,8 @@ function installPnpm(): void {
     return;
   }
   requestEnvFocus('pnpm', 'install-pnpm');
-  currentTab.value = 'env';
+  // 环境自检不再是左栏一项（t45）：打开详情视图，并在那一行上展开确认区
+  openEnvDetail();
 }
 
 // ---------------------------------------------------------------- 救援（dsh 起不来 / 配置读坏）

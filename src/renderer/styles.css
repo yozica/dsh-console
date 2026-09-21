@@ -55,8 +55,11 @@
 
   /* 首启环境向导与入口门禁（说明见 docs/env-wizard-visual.md §9.1）。
      五条全是主题无关的尺度 / 层号，**不进浅色块**（两套主题同值）。
-     --z-gate 必须低于启动锁的 60：两者互斥交接的那一帧永远是锁盖住门禁。 */
+     --z-gate 必须低于启动锁的 60：两者互斥交接的那一帧永远是锁盖住门禁。
+     --z-env 是环境自检的详情视图（t45）：它盖工作区、但不盖左栏 / 顶栏 / 状态栏，
+     所以层号只要求高于页面本身（页面没有 z-index），远低于门禁层与启动锁。 */
   --z-gate: 58;
+  --z-env: 30;
   --wizard-read: 620px;
   --wizard-card: 760px;
   --wizard-rail-dot: 14px;
@@ -1243,6 +1246,20 @@ main {
   position: absolute;
   inset: 0;
   display: none;
+}
+
+/* dsh 那一路的容器（t45）：与 .shell-pane 同样是绝对定位、非 active 时不显示，
+   区别是它是**列**布局 —— 子组件 DshTerminal 是「一行状态条 + 终端本体」两个兄弟。 */
+.term-view {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.term-view.active {
+  display: flex;
 }
 
 .shell-pane.active {
@@ -3306,6 +3323,30 @@ body[data-immersive='true'] .webview-wrap {
   grid-template-columns: var(--rail-w) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   background: var(--bg);
+}
+
+/* 设置页「运行环境」卡里那行按钮（t45） */
+.env-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* 环境自检的详情视图（t45）：设置页「运行环境」卡点「查看详情」才出现。
+   它是**工作区上的覆盖层** —— 左栏、顶栏、状态栏都留着（用户可以点左栏切走，切页会收掉它），
+   所以位置与 .pane 一样是 `inset: 0`（相对同一个容器），只是多一层底与层号压在页面之上。 */
+.env-detail {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-env);
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.env-detail.open {
+  display: flex;
 }
 
 /* 左轨：与既有左栏同宽、同底、同内边距 —— 门禁收起时屏幕上没有任何横向跳动 */

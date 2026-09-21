@@ -23,6 +23,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { envFocus } from '../lib/env-anchor.js';
 import { detailSegments } from '../lib/env-detail.js';
+import { closeEnvDetail } from '../lib/env-layer.js';
 import {
   cancelEnvFix,
   clearEnvFixOutput,
@@ -381,6 +382,14 @@ function refresh(): void {
 /** 逃生之后回到向导的那条明路（交互 §2.8 第 2 条）：不写盘、不改判定，只是把覆盖层再显示出来 */
 function openWizard(): void {
   reopenGate();
+}
+
+/**
+ * 详情视图的「← 返回」：它是工作区上的覆盖层，收掉就回到打开它的那一页
+ * （设置、控制台横幅、插件页都可能打开它）—— 所以这里不改 `currentTab`。
+ */
+function backFromDetail(): void {
+  closeEnvDetail();
 }
 
 async function openDownloadPage(): Promise<void> {
@@ -774,6 +783,10 @@ onUnmounted(() => {
 <template>
   <div class="env">
     <div class="bar">
+      <!-- 它是设置页「运行环境」卡的详情视图（t45）：左栏没有这一项，所以给一个显式的回程 -->
+      <button id="btn-env-back" class="btn small" @click="backFromDetail">
+        <svg class="i"><use href="#i-back" /></svg><span>返回</span>
+      </button>
       <button
         id="btn-env-refresh"
         class="btn small primary"

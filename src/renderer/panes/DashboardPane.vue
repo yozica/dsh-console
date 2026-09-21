@@ -18,7 +18,8 @@ import { formatDurationMs, formatUptime } from '../lib/format.js';
 import { forceStopFlow, openUiExternally, restartFlow, stopFlow } from '../lib/dsh-actions.js';
 import { requestEnvFocus } from '../lib/env-anchor.js';
 import { envReport } from '../lib/env-doctor.js';
-import { currentTab, dsh, snapshot, startStore } from '../lib/store.js';
+import { openEnvDetail } from '../lib/env-layer.js';
+import { dsh, snapshot, startStore } from '../lib/store.js';
 import type { DshLogEntry } from '../../shared/ipc.js';
 
 const api = window.dshConsole;
@@ -98,7 +99,8 @@ function goEnvDoctor(): void {
   const id = envReport.value?.firstProblemId;
   // 带锚点过去：自检页会滚到那一行（没有首选项时只是切页）
   if (id) requestEnvFocus(id);
-  currentTab.value = 'env';
+  // 环境自检不再是左栏一项（t45）：打开设置页那张卡的详情视图，再滚到这一行
+  openEnvDetail();
 }
 
 // 延迟趋势：复用主进程已经采集的 latencyHistory

@@ -125,16 +125,11 @@
             <div id="dashboard-root"></div>
           </section>
 
-          <!-- ============================ dsh 终端 ============================ -->
-          <!-- 这一页已迁到 Vue（src/renderer/panes/），这里只留挂载点 -->
+          <!-- ============================ 终端 ============================ -->
+          <!-- dsh 终端 + 本地 Shell 合成一个「终端」页（一条统一会话条）：
+               TerminalPane 是会话条的宿主，dsh 那一路是它的子组件 DshTerminal。 -->
           <section class="pane" id="pane-terminal">
             <div id="terminal-root"></div>
-          </section>
-
-          <!-- ============================ 本地 Shell ============================ -->
-          <!-- 这一页已迁到 Vue（src/renderer/panes/），这里只留挂载点 -->
-          <section class="pane" id="pane-shell">
-            <div id="shell-root"></div>
           </section>
 
           <!-- ============================ DeepSeek Harness ============================ -->
@@ -161,12 +156,6 @@
             <div id="plugin-root"></div>
           </section>
 
-          <!-- ============================ 环境自检 ============================ -->
-          <!-- 这台机器的基础环境（node / npm / pnpm / dsh / 自带运行时）怎么样、怎么修 -->
-          <section class="pane" id="pane-env">
-            <div id="env-root"></div>
-          </section>
-
           <!-- ============================ 设置 ============================ -->
           <!-- 这一页已迁到 Vue（src/renderer/panes/SettingsPane.vue），这里只留挂载点 -->
           <section class="pane" id="pane-settings">
@@ -185,6 +174,14 @@
          盖住顶栏以下的全部内容（含左栏与状态栏），顶栏不设 z-index、窗口还能拖能关；
          层号 --z-gate 低于启动锁，两者互斥。见 docs/env-wizard-freeze.md §1 R-08。 -->
     <div id="gate-root"></div>
+
+    <!-- 环境自检的详情视图（t45）：左栏不再有这一项，它是设置页「运行环境」卡的详情。
+         它是**工作区上的覆盖层**（top 让开顶栏、left 让开左栏、底部让开状态栏），
+         所以既不是第 8 个页面、也不进 TAB_ORDER；点左栏任何一项都会收掉它。
+         挂载点仍是 env-root —— 组件与挂载清单一个字都不用改。 -->
+    <div class="env-detail" id="env-detail-layer">
+      <div id="env-root"></div>
+    </div>
 
     <!-- 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住标题栏以下的所有内容。
          标题栏（顶栏）不锁，窗口还能拖动和关闭。 -->

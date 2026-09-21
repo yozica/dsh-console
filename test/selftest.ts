@@ -545,19 +545,30 @@ async function main(): Promise<void> {
       : '没有会话功能',
   );
 
-  // 每个组件都必须在 mount.ts 的挂载清单里，否则界面上那块永远是空的
+  // 每个组件都必须**有人用**：要么在 mount.ts 的挂载清单里，要么被别的组件 import
+  //（t45 起「终端」页把 dsh 那一路拆成了子组件 DshTerminal，它不该出现在挂载清单里）。
+  // 两种都不占的组件等于死代码 —— 界面上那块永远空着，或者根本没人渲染它。
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
-  const unmounted = vueFiles
+  const allVueSources =
+    mountJs +
+    vueFiles
+      .map(({ dir, name }) => fs.readFileSync(path.join(rendererDir, dir, name), 'utf8'))
+      .join('\n');
+  const unusedVue = vueFiles
     .filter(({ dir, name }) => {
       const stem = name.replace(/\.vue$/, '');
-      const spec = dir === 'panes' ? `./panes/${stem}.vue` : `./shell/${stem}.vue`;
-      return !mountJs.includes(`from '${spec}'`);
+      // 两种写法都算：挂载清单里是 `./panes/X.vue`，同目录的组件之间是 `./X.vue`
+      const specs = [
+        dir === 'panes' ? `./panes/${stem}.vue` : `./shell/${stem}.vue`,
+        `./${stem}.vue`,
+      ];
+      return !specs.some((spec) => allVueSources.includes(`from '${spec}'`));
     })
     .map(({ name }) => name);
   check(
-    '渲染层：每个 .vue 组件都在挂载清单里',
-    vueFiles.length > 0 && unmounted.length === 0,
-    unmounted.length ? `未挂载 ${unmounted.join(', ')}` : `${vueFiles.length} 个组件`,
+    '渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）',
+    vueFiles.length > 0 && unusedVue.length === 0,
+    unusedVue.length ? `没人用 ${unusedVue.join(', ')}` : `${vueFiles.length} 个组件`,
   );
   // 挂了终端的页面必须自己订阅容器尺寸变化。"靠全局 resize"或"切页时才 fit"都不够：
   // 本地 Shell 就因此不跟随窗口（踩过 —— 旧代码里是 app.js 的全局 resize 处理器负责，
@@ -1601,9 +1612,73 @@ async function main(): Promise<void> {
       const orderBlock = /TAB_ORDER: TabId\[\] = \[([\s\S]*?)\]/.exec(appTs)?.[1] ?? '';
       const order = [...orderBlock.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
       const rail = [...railVue.matchAll(/\{ id: '([a-z]+)'/g)].map((match) => match[1]);
-      return order.length >= 8 && order.join() === rail.join();
+      // 不比"至少 8 项"：页面数会随左栏增删（t45 就是 9 → 7），"两边逐项一致"才是契约
+      return order.length > 0 && order.join() === rail.join();
     })(),
     '左栏顺序 = 快捷键 1..N',
+  );
+
+  // ── t45：左栏 9 → 7（终端合并、环境自检挪进设置）。四条钉子盯住"合并之后不许两头都在"。
+  const railSource = fs.readFileSync(path.join(rendererDir, 'shell', 'RailNav.vue'), 'utf8');
+  const railStoreSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
+  const appSource = fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8');
+  const mergedTermSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'TerminalPane.vue'),
+    'utf8',
+  );
+  const railSettingsSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
+    'utf8',
+  );
+  const envLayerSource = fs.readFileSync(path.join(rendererDir, 'lib', 'env-layer.ts'), 'utf8');
+  const htmlCode = html.replace(/<!--[\s\S]*?-->/g, '');
+  const tabIdUnion = /export type TabId =([\s\S]*?);/.exec(railStoreSource)?.[1] ?? '';
+  const tabIds = [...tabIdUnion.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
+  check(
+    '渲染层：左栏七项（TabId 里没有 shell / env，页面容器也没有 pane-shell）',
+    tabIds.length === 7 &&
+      !tabIds.includes('shell') &&
+      !tabIds.includes('env') &&
+      !/\{ id: 'shell'/.test(railSource) &&
+      !/\{ id: 'env'/.test(railSource) &&
+      !/id="pane-shell"/.test(htmlCode) &&
+      // 快捷键顺序里也不许再出现这两个 id（不再是"至少 8 项"，这一轮就是 7 项）
+      !/TAB_ORDER[\s\S]{0,220}?'(shell|env)'/.test(appSource) &&
+      // 快捷键正则也不能再放行 8 / 9
+      /\^\[1-7\]\$/.test(fs.readFileSync(path.join(rendererDir, 'lib', 'xterm.ts'), 'utf8')),
+    `TabId = ${tabIds.join(', ')}`,
+  );
+  check(
+    '渲染层：环境自检是设置里的详情层（不是页面）',
+    /id="env-detail-layer"/.test(htmlCode) &&
+      /id="env-root"/.test(htmlCode) &&
+      /export function openEnvDetail\(\): void \{/.test(envLayerSource) &&
+      /export function closeEnvDetail\(\): void \{/.test(envLayerSource) &&
+      /export function closeEnvDetailOnTabChange\(\): void \{/.test(envLayerSource) &&
+      // 四个入口都改成打开详情层了，谁都不许再切到 'env'
+      !/currentTab\.value = 'env'/.test(rendererCode) &&
+      (rendererCode.match(/openEnvDetail\(\)/g) ?? []).length >= 4 &&
+      // 切页要收掉这一层，免得盖住用户刚点的那一页
+      /closeEnvDetailOnTabChange\(\);/.test(railSource),
+  );
+  check(
+    '渲染层：终端页的会话条第一项固定是 dsh 终端（两路终端在一个页面里）',
+    /id="tab-dsh-term"/.test(mergedTermSource) &&
+      /activate\(DSH_ID\)/.test(mergedTermSource) &&
+      /const DSH_ID = 'dsh';/.test(mergedTermSource) &&
+      /<DshTerminal \/>/.test(mergedTermSource) &&
+      // 关掉最后一个本地 Shell 要回到 dsh 那一路，不能停在"没有会话"的空屏上
+      /activeId\.value = DSH_ID;/.test(mergedTermSource) &&
+      // dsh 那一路是子组件：不在挂载清单里，但必须被宿主 import（上面那条通用检查盯着）
+      !mountJs.includes("from './panes/DshTerminal.vue'"),
+  );
+  check(
+    '设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层',
+    /<h3>运行环境<\/h3>/.test(railSettingsSource) &&
+      /id="btn-env-detail"/.test(railSettingsSource) &&
+      /@click="openEnvDetail"/.test(railSettingsSource) &&
+      /id="btn-env-recheck"/.test(railSettingsSource) &&
+      /loadEnvReport\(true\)/.test(railSettingsSource),
   );
 
   // 装 / 卸 / 升级：spec 只用于"确认文案与提示"，命令原样透传给 pnpm；错误归纳要认出常见失败。

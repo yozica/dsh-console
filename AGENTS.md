@@ -50,15 +50,17 @@ src/
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
   shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
   renderer/             Vue 3 + Vite，产物 dist/renderer/
-    index.html          页面骨架：九个页面容器 + 挂载点 + 门禁层容器 + 启动锁 + 内联图标精灵
+    index.html          页面骨架：七个页面容器 + 挂载点 + 门禁层容器 + 环境自检详情层 + 启动锁 + 内联图标精灵
     main.ts             入口：样式导入顺序 → app.ts → 建立共享状态 → 挂载
     app.ts              应用级胶水：启动守卫、启动锁状态机、门禁改道（gateDiversion）、自动打开、快捷键
     mount.ts            挂载清单：外壳三块 + 全部页面 + 门禁层与横幅
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
-    panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        291 项自检（`npm test`），不需要 Electron
+    panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
+                         Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
+                         页面，而是设置页「运行环境」卡的详情视图，见 7.30）
+test/selftest.ts        297 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -79,7 +81,7 @@ eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 - **主进程 / preload / shared 由 tsc 直出 CJS**（`tsconfig.main.json` 的 `rootDir=src`、`outDir=dist`）：产物与源码一一对应（`src/main/main.ts → dist/main/main.js`），`main.ts` 里的相对路径（preload、`dist/renderer`、`build/icon.png`）编译后依然成立，**不需要为了打包改写业务代码** —— 这也是选 tsc 而不是 bundler 的主要原因。
 - **渲染层由 Vite 打包成单个自包含的普通脚本**（见下）。
 - **共享状态只有一份**：`lib/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
-- **门禁层是一个覆盖层，不是第 10 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
+- **门禁层是一个覆盖层，不是第 8 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
 - **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/selftest.ts`；渲染层 = `renderer/{panes/**,shell/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
 
 **一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。启动后 1.5 秒另有一轮**只读**的运行环境自检在后台跑（`main/env-doctor.ts`，见 7.20）：它不参与启动、不碰 dsh 进程，结果由渲染层 `envCheck()` 拉取。
@@ -100,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（291 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（297 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -323,7 +325,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 ### 7.8 共享状态、挂载与 xterm
 
-- **每个组件都必须在 `mount.ts` 的挂载清单里**，否则界面上那块永远是空的。自检「渲染层：每个 .vue 组件都在挂载清单里」与「渲染层：外壳与页面的挂载点都在」守着。
+- **每个组件都必须有人用**：要么挂在 `mount.ts` 的挂载清单里，要么被别的组件 `import`（t45 起「终端」页就有个子组件 `DshTerminal`，它不该出现在挂载清单里）。两种都不占的组件等于死代码。自检「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」与「渲染层：外壳与页面的挂载点都在」守着。
 - **挂载点必须是 `display: contents`**（见 `styles.css`）：漏一个就会把父级的 flex/grid 链断掉，`flex: 1` 全部失效 —— 症状是内嵌页只剩顶上一条。自检「渲染层：每个挂载点都是 display: contents」守着。
 - **xterm 独占的元素里不能有 Vue 管理的子节点**：两边往同一块 DOM 里塞东西会打架。所以终端挂在 `.term-mount`（空元素）上，空状态覆盖层是它的**兄弟**而不是子节点。
 - **xterm 与 addon 必须用导入的类，不能绕 window 全局**。曾经留过一层 `window.FitAddon = FitAddon` 的过渡，而 UMD 全局是**命名空间对象**（`window.FitAddon.FitAddon` 才是类），把 ESM 导入的类本身挂上去后 `new window.FitAddon.FitAddon()` 就变成 `undefined`，**fit addon 静默装不上、终端永远停在 80×24**。自检「渲染层：xterm 与 addon 用导入的类，不经过 window 全局」守着。
@@ -343,6 +345,33 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 `starting` 就把回合收成 `done`（**没有等待就不上锁** —— dsh 已经在跑、或这一轮只是接管外部实例时，
 锁不该只是闪一下）；窗口之外用户自己点的「启动」永远不算这一轮。别把它改成「每次状态变化重新判定」——
 那正是这一节开头那个 bug（解锁之后条件又变回不满足，锁又扣上来）。
+
+### 7.30 左栏只有七项：终端合并、环境自检在设置里
+
+**现象 / 决定**（t45，用户裁定；摆法示例 `docs/rail-simplify-choices.html`、改判记在 `docs/env-doctor.md` 的 t45 段）：
+左栏原来是九项，其中「dsh 终端」与「本地 Shell」是同一件事的两个入口、「环境自检」多数时候只看一眼结论。
+现在：
+
+- **一个「终端」页**（`panes/TerminalPane.vue`）：一条会话条，**第一项固定是 `dsh 终端`**（保留 id `'dsh'`，
+  不能改名也不能关闭），后面是各本地 Shell，`＋ 新建本地 Shell` 在最右；`关闭当前` 只在本地 Shell
+  那一路上出现。dsh 那一路是子组件 `panes/DshTerminal.vue`（= 原来那一页，带它自己的状态条与
+  三个动作），所以**它不在挂载清单里** —— 这就是为什么那条自检要认「被别的组件 import」。
+- **环境自检不再是页面**：设置页多一张「运行环境」卡（一行结论：N 项正常 / 需要注意 / 不可用 +
+  要求的那句 Node 区间 + 「查看详情」「重新检测」），点「查看详情」打开**工作区上的详情层**
+  `#env-detail-layer`（`lib/env-layer.ts` 的 `envDetailOpen` / `openEnvDetail` / `closeEnvDetail`）。
+  它是覆盖层不是页面：**不进 `TAB_ORDER`**，盖工作区但不盖左栏 / 顶栏 / 状态栏，
+  点左栏任何一项（`selectTab` → `closeEnvDetailOnTabChange`）都会收掉它，
+  详情视图左上角的「← 返回」只收层、**不改 `currentTab`**（这样从控制台横幅、插件页进来的用户回到原处）。
+  原来那一页里的一切（灯 / 结论 / 一键修复 / 重新打开环境向导 / 安装下载来源 / 重新检测）都在。
+- **快捷键 9 → 7**：`TAB_ORDER`（`app.ts`）、状态栏那句 `⌘/Ctrl+1~7`、终端里放行 `Ctrl+数字` 的
+  正则（`lib/xterm.ts` 的 `passAppShortcutsThrough` 是 `/^[1-7]$/`）、以及 `docs/` 里的页面数说法一起改。
+- **`envFocus` 锚点机制没变**：控制台横幅、插件页的「一键装 pnpm」、门禁层的两条出路都改成
+  `openEnvDetail()` + `requestEnvFocus(...)`；自检里有一条钉子盯着**全仓库不许再有 `currentTab.value = 'env'`**。
+
+**哪条自检守着**：「渲染层：左栏七项（TabId 里没有 shell / env，页面容器也没有 pane-shell）」
+「渲染层：环境自检是设置里的详情层（不是页面）」「渲染层：终端页的会话条第一项固定是 dsh 终端」
+「设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层」、以及改了措辞的那条
+「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」。
 
 ### 7.10 本地 Shell 有意**不持久化**
 
@@ -528,7 +557,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 ### 7.20 运行环境自检：探测是只读的，修复只有两个动作
 
-**为什么有这一页**：dsh 起不来时界面上只有一句「已停止」，而最常见的原因恰恰是说不出口的那种 —— 本机 Node 版本不兼容时 dsh **静默退出**（退出码 0、零输出，见 7.4），光看退出码永远发现不了；插件的装 / 卸 / 升级又会因为 GUI 应用的 PATH 很窄而缺 pnpm（7.18 第 2 条）。所以左栏第 8 页把「这台机器上到底有什么、能不能用」逐条摆出来。
+**为什么有这一页**：dsh 起不来时界面上只有一句「已停止」，而最常见的原因恰恰是说不出口的那种 —— 本机 Node 版本不兼容时 dsh **静默退出**（退出码 0、零输出，见 7.4），光看退出码永远发现不了；插件的装 / 卸 / 升级又会因为 GUI 应用的 PATH 很窄而缺 pnpm（7.18 第 2 条）。所以把「这台机器上到底有什么、能不能用」逐条摆出来（t45 之前它是左栏第 8 页，现在是设置页「运行环境」卡的详情视图，见 7.30）。
 
 **探测与判定分家**：`main/env-doctor.ts` 的 `collectEnvProbe()` 只负责收集事实（跑 `--version`、查 PATH 与已知目录、读 `process.versions`），`judgeEnvironment(raw)` 是**纯函数** —— 入参只有已经收集好的结果，不碰磁盘、不起子进程、不读 `process.*`、也不看时钟（`checkedAt` 由调用方塞进 `raw`）。所以那 8 项的所有分支在自检里都能用**手工构造的对象字面量**跑完，不需要装 pnpm、不需要起任何进程（与 `parseNetstatForPort` / `checkDumpResult` / `windowsBinCandidates` 是同一套路）。加一项判定时改 `EnvCheckId` 联合类型，渲染层那张 `Record<EnvCheckId, string>` 的标题映射会跟着报错，漏不掉。
 
@@ -775,7 +804,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，291 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，297 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

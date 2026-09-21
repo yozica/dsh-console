@@ -1,4 +1,24 @@
 <script setup lang="ts">
+// 这一页里「运行环境」那张卡（t45）：平时只显示一行结论，点「查看详情」才打开完整那套
+//（左栏不再有「环境自检」这一项，改动理由与落点见 docs/env-doctor.md 的 t45 改判）。
+const envCounts = computed(() => envReport.value?.counts ?? null);
+const envSummary = computed(() => {
+  const counts = envCounts.value;
+  if (!counts) {
+    return envReportLoading.value ? '正在检查这台电脑上的运行环境…' : '还没查过';
+  }
+  // 措辞与顺序跟详情视图顶部那一行完全一致（EnvPane 的那句结论），点进详情不该像换了个说法
+  return `${counts.ok} 项正常 · ${counts.missing} 项不正常 · ${counts.warn} 项需要注意`;
+});
+const envRequirement = computed(() =>
+  envReport.value ? `要求 Node ${envReport.value.nodeRange}（dsh 与它依赖链的要求）` : '',
+);
+
+/** 「重新检测」：请主进程清缓存重跑一轮（真结论由它给，界面不自己判） */
+function recheckEnv(): void {
+  if (envReportLoading.value) return;
+  void loadEnvReport(true);
+}
 /**
  * 设置页（第一个迁到 Vue 的页面）。
  *
@@ -11,6 +31,8 @@
  * 不共享可变全局。
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { envReport, envReportLoading, loadEnvReport } from '../lib/env-doctor.js';
+import { openEnvDetail } from '../lib/env-layer.js';
 import { settings, snapshot, update } from '../lib/store.js';
 import { isMac } from '../lib/platform.js';
 import { scrollIntoViewEased } from '../lib/scroll.js';
@@ -546,6 +568,26 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <section class="panel">
+      <header class="panel-head"><h3>运行环境</h3></header>
+      <div class="panel-block">
+        <p class="hint" id="settings-env-summary">{{ envSummary }}</p>
+        <p v-if="envRequirement" class="hint" id="settings-env-requirement">
+          {{ envRequirement }}
+        </p>
+        <div class="env-actions">
+          <button id="btn-env-detail" class="btn small" @click="openEnvDetail">查看详情</button>
+          <button
+            id="btn-env-recheck"
+            class="btn small"
+            :disabled="envReportLoading"
+            @click="recheckEnv"
+          >
+            重新检测
+          </button>
+        </div>
+      </div>
+    </section>
     <section class="panel">
       <header class="panel-head"><h3>保存</h3></header>
       <div class="panel-block">
