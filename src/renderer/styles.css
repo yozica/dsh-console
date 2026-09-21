@@ -3361,8 +3361,15 @@ body[data-immersive='true'] .webview-wrap {
 
 /* 环境自检的详情视图（t45）：设置页「运行环境」卡点「查看详情」才出现。
    它是**工作区上的覆盖层** —— 左栏、顶栏、状态栏都留着（用户可以点左栏切走，切页会收掉它），
-   所以位置与 .pane 一样是 `inset: 0`（相对同一个容器），只是多一层底与层号压在页面之上。 */
-.env-detail {
+   所以位置与 .pane 一样是 `inset: 0`：**前提是它挂在 `<main>` 里** —— main 是 `position: relative`，
+   它的 `inset: 0` 正好是"页面区"；挂在 .app 外面（body 下）时这一条就成了整个窗口，
+   左栏与顶栏一起被吃掉（踩过：详情视图里左栏整条不见了，等于把人从设置里拽走）。
+   自检盯着 index.html 里它必须在 `<main>` 的那一段之内。
+
+   类名**不能**叫 `.env-detail` —— 那个名字是自检页里每行结论下面那串说明文字用的
+   （`EnvPane` 的 `<p class="env-detail">`，带 `margin: 3px 0 0` 与那套行高）。
+   复用会让整层跟着偏移 3px 并继承那套文字样式（踩过：层比页面区矮 3px、还带着行高）。 */
+.env-detail-layer {
   position: absolute;
   inset: 0;
   z-index: var(--z-env);
@@ -3372,7 +3379,7 @@ body[data-immersive='true'] .webview-wrap {
   background: var(--bg);
 }
 
-.env-detail.open {
+.env-detail-layer.open {
   display: flex;
 }
 

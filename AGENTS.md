@@ -60,7 +60,7 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
-test/selftest.ts        298 项自检（`npm test`），不需要 Electron
+test/selftest.ts        299 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -102,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（298 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（299 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -373,18 +373,28 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
   —— 与详情视图顶部那句**一字不差**，免得点进详情像换了个说法 + 要求的那句 Node 区间 +
   「查看详情」「重新检测」），点「查看详情」打开**工作区上的详情层**
   `#env-detail-layer`（`lib/env-layer.ts` 的 `envDetailOpen` / `openEnvDetail` / `closeEnvDetail`）。
-  它是覆盖层不是页面：**不进 `TAB_ORDER`**，盖工作区但不盖左栏 / 顶栏 / 状态栏，
-  点左栏任何一项（`selectTab` → `closeEnvDetailOnTabChange`）都会收掉它，
-  详情视图左上角的「← 返回」只收层、**不改 `currentTab`**（这样从控制台横幅、插件页进来的用户回到原处）。
+  它是覆盖层不是页面：**不进 `TAB_ORDER`**，点左栏任何一项（`selectTab` → `closeEnvDetailOnTabChange`）
+  都会收掉它；回程按钮只收层、**不改 `currentTab`**（这样从控制台横幅、插件页进来的用户回到原处），
+  文案跟着来路走 —— 从设置卡进来是「← 设置」（摆法预览 2A 里就是这么画的），别的来路是「← 返回」。
+  顶栏在它打开时显示面包屑 `<当前页> › 运行环境`，也是 2A 里的样子。
   原来那一页里的一切（灯 / 结论 / 一键修复 / 重新打开环境向导 / 安装下载来源 / 重新检测）都在。
+- **这一层必须挂在 `<main>` 里**（`index.html`），不要挂到 `.app` 外面：`main` 是 `position: relative`，
+  它的 `inset: 0` 正好等于"页面区"，所以左栏 / 顶栏 / 状态栏是**结构上**留在外面的，不靠 z-index 让位。
+  挂到 body 下时同一条规则就成了整个窗口 —— 左栏被整条吃掉，`EnvPane` 自己的步骤栏占着左栏的位置，
+  看着像"左栏变成了向导"（踩过：`open` 类、行数、结论全对，只有截图看得出来）。自检按 `<main>…</main>`
+  取整段来钉它。
 - **快捷键 9 → 7**：`TAB_ORDER`（`app.ts`）、状态栏那句 `⌘/Ctrl+1~7`、终端里放行 `Ctrl+数字` 的
   正则（`lib/xterm.ts` 的 `passAppShortcutsThrough` 是 `/^[1-7]$/`）、以及 `docs/` 里的页面数说法一起改。
 - **`envFocus` 锚点机制没变**：控制台横幅、插件页的「一键装 pnpm」、门禁层的两条出路都改成
   `openEnvDetail()` + `requestEnvFocus(...)`；自检里有一条钉子盯着**全仓库不许再有 `currentTab.value = 'env'`**。
 
 **哪条自检守着**：「渲染层：左栏七项（TabId 里没有 shell / env，页面容器也没有 pane-shell）」
-「渲染层：环境自检是设置里的详情层（不是页面）」「渲染层：终端页的会话条第一项固定是 dsh 终端」
+「渲染层：环境自检是设置里的详情层（不是页面）」
+「渲染层：环境自检详情层盖的是工作区（挂在 <main> 里，不吃掉左栏与顶栏）」
+「渲染层：终端页的会话条第一项固定是 dsh 终端」
 「渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）」
+「首启门禁：顶栏的标题与"右侧控件收起"读同一个 gateVisible（R-03）」（标题多了面包屑那一段，
+门禁分支仍然只认 `gateVisible`）
 「设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层」、以及改了措辞的那条
 「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」。
 
@@ -819,7 +829,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，298 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，299 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

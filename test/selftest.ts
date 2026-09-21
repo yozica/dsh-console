@@ -1679,6 +1679,30 @@ async function main(): Promise<void> {
       // 切页要收掉这一层，免得盖住用户刚点的那一页
       /closeEnvDetailOnTabChange\(\);/.test(railSource),
   );
+  // 详情层必须挂在 <main> 里面：main 是 position: relative，它的 inset: 0 正好是"页面区"。
+  // 挂在 .app 外面（body 下）时 inset: 0 是整个窗口 —— 左栏与顶栏一起被吃掉
+  // （真机上出现过：点「查看详情」之后左栏整条不见了，EnvPane 自己的步骤栏占着左栏的位置，
+  // 看着像左栏变成了向导；只看 open 类的检查全是绿的，因为它确实"打开了"）。
+  const mainBlock = /<main\b[^>]*>([\s\S]*?)<\/main>/.exec(htmlCode)?.[1] ?? '';
+  check(
+    '渲染层：环境自检详情层盖的是工作区（挂在 <main> 里，不吃掉左栏与顶栏）',
+    /id="env-detail-layer"/.test(mainBlock) &&
+      /id="env-root"/.test(mainBlock) &&
+      // 类名必须是这一层独有的：`.env-detail` 是 EnvPane 里每行结论下面那串说明文字用的
+      // （带 margin 3px 与那套行高），撞上会让整层跟着偏移并继承文字样式（踩过）
+      /<div class="env-detail-layer" id="env-detail-layer">/.test(mainBlock) &&
+      /\.env-detail-layer \{[^}]*position: absolute/.test(cssText) &&
+      /\.env-detail-layer \{[^}]*inset: 0/.test(cssText) &&
+      /\.env-detail-layer\.open \{[^}]*display: flex/.test(cssText) &&
+      // 前提：左栏与顶栏本来就在 <main> 外面（所以"留在外面"是结构保证的，不靠 z-index 让位）
+      /id="rail-root"/.test(htmlCode) &&
+      /id="topbar-root"/.test(htmlCode) &&
+      !/id="rail-root"/.test(mainBlock) &&
+      !/id="topbar-root"/.test(mainBlock) &&
+      // 出现且只出现一次（别为了"盖住工作区"再复制一层出来）
+      (htmlCode.match(/id="env-detail-layer"/g) ?? []).length === 1,
+    mainBlock ? `main 那段 ${mainBlock.split('\n').length} 行` : '找不到 <main>',
+  );
   check(
     '渲染层：终端页的会话条第一项固定是 dsh 终端（两路终端在一个页面里）',
     /id="tab-dsh-term"/.test(mergedTermSource) &&
@@ -4836,7 +4860,8 @@ async function main(): Promise<void> {
   check(
     '首启门禁：顶栏的标题与"右侧控件收起"读同一个 gateVisible（R-03）',
     (topBarCode.match(/gateVisible/g) ?? []).length >= 3 &&
-      /gateVisible\.value \? '运行环境准备'/.test(topBarCode) &&
+      // 标题里的门禁分支只由 gateVisible 决定（t45 起前面还有一条"详情层面包屑"，所以是 if 而不是三元）
+      /if \(gateVisible\.value\) return '运行环境准备';/.test(topBarCode) &&
       /v-if="!gateVisible"/.test(topBarCode) &&
       // 顶栏不许自己去读判定结果（两套显示条件就会漂）
       !/wizard\.value|gatePhase|judgeWizard/.test(topBarCode),

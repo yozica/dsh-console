@@ -161,6 +161,17 @@
           <section class="pane" id="pane-settings">
             <div id="settings-root"></div>
           </section>
+
+          <!-- 环境自检的详情视图（t45）：左栏不再有这一项，它是设置页「运行环境」卡的详情。
+               它是**工作区上的覆盖层**：必须挂在 <main> 里面 —— <main> 是 position: relative，
+               它的 inset: 0 正好等于"页面区"（让开左栏、顶栏、状态栏与横幅）。
+               挂在 .app 外面（body 下）时 inset: 0 是整个窗口，会把左栏与顶栏一起吃掉
+               （踩过：详情视图里左栏不见了，等于把人从"设置"里拽到另一个世界去）。
+               它既不是第 8 个页面、也不进 TAB_ORDER；点左栏任何一项都会收掉它。
+               挂载点仍是 env-root —— 组件与挂载清单一个字都不用改。 -->
+          <div class="env-detail-layer" id="env-detail-layer">
+            <div id="env-root"></div>
+          </div>
         </main>
       </div>
     </div>
@@ -174,14 +185,6 @@
          盖住顶栏以下的全部内容（含左栏与状态栏），顶栏不设 z-index、窗口还能拖能关；
          层号 --z-gate 低于启动锁，两者互斥。见 docs/env-wizard-freeze.md §1 R-08。 -->
     <div id="gate-root"></div>
-
-    <!-- 环境自检的详情视图（t45）：左栏不再有这一项，它是设置页「运行环境」卡的详情。
-         它是**工作区上的覆盖层**（top 让开顶栏、left 让开左栏、底部让开状态栏），
-         所以既不是第 8 个页面、也不进 TAB_ORDER；点左栏任何一项都会收掉它。
-         挂载点仍是 env-root —— 组件与挂载清单一个字都不用改。 -->
-    <div class="env-detail" id="env-detail-layer">
-      <div id="env-root"></div>
-    </div>
 
     <!-- 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住标题栏以下的所有内容。
          标题栏（顶栏）不锁，窗口还能拖动和关闭。 -->
