@@ -81,6 +81,7 @@ import {
   wizardError,
 } from '../lib/env-wizard.js';
 import { advanceNotice, canViewStep } from '../lib/wizard-view.js';
+import { openEnvDetail } from '../lib/env-layer.js';
 import { currentTab, settings } from '../lib/store.js';
 import type {
   EnvCheck,
@@ -886,11 +887,11 @@ function dismissAllConfirms(): void {
   decision.value = null;
 }
 
-/** 「再看看环境自检」/「去环境自检看详情」：收起门禁层并切到左栏第 8 项 */
+/** 「再看看环境自检」/「去环境自检看详情」：收起门禁层并打开环境自检的详情视图（t45 起它挂在设置里） */
 function openEnvPane(): void {
   dismissAllConfirms();
   escapeGate();
-  currentTab.value = 'env';
+  openEnvDetail();
 }
 
 /** 「在设置里写死一条能跑的启动命令」：既有出路（设置页的 dshCommand） */
@@ -914,7 +915,7 @@ async function openDownloadPage(): Promise<void> {
 function openSourcePanel(): void {
   dismissAllConfirms();
   escapeGate();
-  currentTab.value = 'env';
+  openEnvDetail();
   say('在「安装下载来源」里填一个新的地址，保存之后回来重新检测');
 }
 

@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>左栏简化：终端合并 / 环境自检挪进设置（DSH Console）</title>
+    <!--
+      这份文件回答你要的两处简化，各自给几种能看的摆法：
+
+        1. dsh 终端 + 本地 Shell 合成一个 tab —— 三种摆法（分段控件 / 统一会话条 / 左列会话列表）；
+        2. 环境自检挪进设置、简化展示 —— 设置卡长什么样 + 「查看详情」落在哪（就地展开 / 详情视图 / 仍然是页面）；
+        3. 顺带：剩下七项要不要也动（你开头说“大多数很少会用到”，所以这条也列出来让你点）。
+
+      每一屏都用真实尺寸（左栏 --rail-w 188px、顶栏 36px、状态栏）与既有设计变量，零脚本、双击就能开。
+
+      怎么用：在最后一节那张表里写「1B 2B 3 不动」这种，或直接说哪几条要动 —— 我按你的裁决先改规格
+      （docs/env-doctor.md 里那句「新增第九个页面，不复用设置页」要改判），再动代码。
+    -->
+    <style>
+      :root {
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --t-lg: 15.5px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --rail-w: 188px;
+        --bar-h: 36px;
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --rail: #e6ebf2;
+        --well: #f2f5f9;
+        --hairline: rgba(16, 24, 40, 0.12);
+        --hairline-strong: rgba(16, 24, 40, 0.2);
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+        --accent: #0e7490;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(8, 145, 178, 0.16);
+        --run: #047857;
+        --rose: #be123c;
+        --amber: #92400e;
+        --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 24px 80px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          'Segoe UI',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+      h1 {
+        font-size: 21px;
+        margin: 0 0 6px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 40px 0 4px;
+      }
+      h2 .tag {
+        font-size: var(--t-xs);
+        font-weight: 500;
+        color: var(--ink-faint);
+        margin-left: 8px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 20px 0 6px;
+      }
+      p.lead,
+      p.caption {
+        color: var(--ink-dim);
+        margin: 0 0 12px;
+        max-width: 1060px;
+      }
+      p.caption {
+        font-size: var(--t-md);
+      }
+      code {
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: var(--t-sm);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+
+      /* ---- 一屏窗口：顶栏 36 + 左栏 188 + 内容 + 状态栏 ---- */
+      .screen {
+        width: 1220px;
+        max-width: 100%;
+        margin: 10px 0 6px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        overflow: hidden;
+        box-shadow: var(--shadow-focus);
+      }
+      .topbar {
+        height: var(--bar-h);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px 0 calc(var(--rail-w) + 12px);
+        background: var(--surface);
+        border-bottom: 1px solid var(--hairline);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .body {
+        display: grid;
+        grid-template-columns: var(--rail-w) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) auto;
+        background: var(--bg);
+      }
+      .rail {
+        grid-row: 1 / span 2;
+        background: var(--rail);
+        border-right: 1px solid var(--hairline);
+        padding: 12px 8px;
+      }
+      .rail-brand {
+        font-weight: 600;
+        font-size: var(--t-md);
+        padding: 4px 8px 10px;
+      }
+      .rail-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 6px 8px;
+        border-radius: var(--r-control);
+        color: var(--ink-dim);
+        font-size: var(--t-md);
+      }
+      .rail-item.on {
+        background: var(--surface);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .rail-item .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        border: 1.5px solid currentColor;
+        opacity: 0.75;
+        flex: 0 0 auto;
+      }
+      .rail-item.cut {
+        opacity: 0.45;
+        text-decoration: line-through;
+      }
+      .rail-item .new {
+        color: var(--accent);
+        font-size: var(--t-xs);
+        margin-left: auto;
+      }
+      .main {
+        min-width: 0;
+        padding: 16px 20px;
+      }
+      .statusbar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 6px 20px;
+        background: var(--rail);
+        border-top: 1px solid var(--hairline);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+
+      /* ---- 页面里的公共件 ---- */
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 30px;
+        padding: 0 13px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        background: var(--surface-2);
+        color: var(--ink);
+        font-size: var(--t-sm);
+        white-space: nowrap;
+      }
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      .btn.tiny {
+        height: 23px;
+        padding: 0 9px;
+        font-size: var(--t-xs);
+      }
+      .chips {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 10px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .chip.on {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        overflow: hidden;
+        background: var(--surface);
+      }
+      .seg > span {
+        padding: 4px 12px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+      }
+      .seg > span.on {
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      .term {
+        height: 190px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: #12161c;
+        color: #cbd5e1;
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: var(--t-sm);
+        padding: 10px 12px;
+        overflow: hidden;
+      }
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        padding: 12px 14px;
+        margin-bottom: 12px;
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 6px;
+      }
+      .panel-head h3 {
+        margin: 0;
+        font-size: var(--t-md);
+      }
+      .fact {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+      }
+      .ok {
+        color: var(--run);
+        font-weight: 600;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 160px minmax(0, 1fr);
+        gap: 12px;
+      }
+      .list {
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: var(--surface);
+        overflow: hidden;
+      }
+      .list > div {
+        padding: 6px 10px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        border-bottom: 1px solid var(--hairline);
+      }
+      .list > div:last-child {
+        border-bottom: 0;
+      }
+      .list > div.on {
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .sheet {
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        background: var(--surface);
+        box-shadow: var(--shadow-focus);
+        padding: 14px 16px;
+      }
+
+      /* ---- 选项排版 ---- */
+      .opt {
+        margin: 6px 0 26px;
+        padding: 14px 16px 8px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: rgba(255, 255, 255, 0.6);
+      }
+      .opt.sel {
+        border-color: var(--accent);
+        background: #fff;
+      }
+      .opt > header {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .opt > header b {
+        font-size: 15px;
+      }
+      .opt > header .why {
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      table {
+        border-collapse: collapse;
+        margin: 10px 0 0;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        overflow: hidden;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--hairline);
+        padding: 8px 14px;
+        text-align: left;
+        font-size: var(--t-md);
+      }
+      th {
+        background: var(--surface-2);
+        font-weight: 600;
+        color: var(--ink-dim);
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>左栏简化：终端合并 / 环境自检挪进设置</h1>
+    <p class="lead">
+      左栏现在 9 项，其中「dsh 终端」与「本地
+      Shell」是同一件事的两个入口，而「环境自检」多数时候只看一眼结论。
+      两处简化各有几种说得通的摆法，下面按真实尺寸摆出来给你挑。顺带把「剩下那七项要不要也动」也列成了第三个问题
+      —— 你开头说「大多数很少会用到」，所以那条我留给你点。
+    </p>
+
+    <h2>0. 现状<span class="tag">要动的是划掉的两项</span></h2>
+    <div class="screen">
+      <div class="topbar"><span>控制台</span></div>
+      <div class="body">
+        <div class="rail">
+          <div class="rail-brand">DSH Console</div>
+          <div class="rail-item"><span class="dot"></span>控制台</div>
+          <div class="rail-item cut"><span class="dot"></span>dsh 终端</div>
+          <div class="rail-item cut"><span class="dot"></span>本地 Shell</div>
+          <div class="rail-item"><span class="dot"></span>DeepSeek Harness</div>
+          <div class="rail-item"><span class="dot"></span>DeepSeek 用量</div>
+          <div class="rail-item"><span class="dot"></span>归档会话</div>
+          <div class="rail-item"><span class="dot"></span>插件</div>
+          <div class="rail-item cut"><span class="dot"></span>环境自检</div>
+          <div class="rail-item"><span class="dot"></span>设置</div>
+        </div>
+        <div class="main" style="color: var(--ink-faint); font-size: var(--t-sm)">
+          九个页面，快捷键 <code>Ctrl/⌘+1~9</code>。合并之后左栏是 <b>7</b> 项，快捷键跟着变成
+          <code>1~7</code>
+          （状态栏提示、设置页里那句「快捷键 9」、规格与自检都要一起改 —— 这条我会一并处理）。
+        </div>
+        <div class="statusbar">
+          <span>运行中，外部实例，http://127.0.0.1:3080</span><span>⌘+1~9 切换页面</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>1. dsh 终端 + 本地 Shell 合成一个 tab<span class="tag">选一个</span></h2>
+    <p class="caption">
+      两者都是「终端 + 一条工具条」，差别只在 dsh 终端是**只读的服务端输出**、本地 Shell
+      可以有多开。 所以问题其实是：<b>「本地 Shell 那排会话标签」和「dsh 终端」怎么放在一起。</b>
+    </p>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 一条统一的会话条（我建议这个）</b>
+        <span class="why"
+          >会话条的第一个条目固定是 <b>dsh 终端</b>（只读），后面是各本地 Shell，「新建本地
+          Shell」放在最右。 只有一层标签，不会出现「上面一排页面、下面一排会话」两层叠着；本地 Shell
+          原来的改名 / 关闭照旧。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar"><span>终端</span></div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item"><span class="dot"></span>控制台</div>
+            <div class="rail-item on"><span class="dot"></span>终端</div>
+            <div class="rail-item"><span class="dot"></span>DeepSeek Harness</div>
+            <div class="rail-item"><span class="dot"></span>DeepSeek 用量</div>
+            <div class="rail-item"><span class="dot"></span>归档会话</div>
+            <div class="rail-item"><span class="dot"></span>插件</div>
+            <div class="rail-item"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="chips">
+                <span class="chip on">dsh 终端</span>
+                <span class="chip">本地 Shell 1</span>
+                <span class="chip">npm run dev</span>
+                <span class="chip">＋ 新建本地 Shell</span>
+              </div>
+              <div style="flex: 1"></div>
+              <span class="btn tiny">发送 Ctrl+C</span>
+              <span class="btn tiny">清空显示</span>
+            </div>
+            <div class="term">
+              dsh web 0.1.5-rc.1 · profile web<br />
+              [web] listening on http://127.0.0.1:3080<br />
+              [web] token: ****************<br />
+              _（dsh 终端是只读输出：在这里打字不会有反应）
+            </div>
+          </div>
+          <div class="statusbar"><span>运行中，外部实例</span><span>⌘+1~7 切换页面</span></div>
+        </div>
+      </div>
+      <p class="caption">
+        「发送 Ctrl+C / 清空显示」这两个按钮只在 dsh 终端这一条上出现；切到某个本地 Shell
+        时，工具条换成 「关闭当前」（本地 Shell 那条线上现在就是这样）。
+      </p>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 顶部分段控件：`dsh 终端 | 本地 Shell`</b>
+        <span class="why"
+          >上半排是两选一的分段控件，下半排还是本地 Shell
+          那排会话标签。语义直白，但**两层标签叠在一起**： 切到「本地
+          Shell」时，上面一排和下面一排都在，眼睛要先分清楚点哪个。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar"><span>终端</span></div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item on"><span class="dot"></span>终端</div>
+            <div class="rail-item"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <span class="seg"><span>dsh 终端</span><span class="on">本地 Shell</span></span>
+            </div>
+            <div class="bar">
+              <div class="chips">
+                <span class="chip on">本地 Shell 1</span>
+                <span class="chip">npm run dev</span>
+                <span class="chip">＋ 新建</span>
+              </div>
+              <div style="flex: 1"></div>
+              <span class="btn tiny">关闭当前</span>
+            </div>
+            <div class="term">
+              $ npm run dev<br />▸ 上层这一排是切「dsh 终端 / 本地 Shell」，下层这排是切具体哪一个
+              shell
+            </div>
+          </div>
+          <div class="statusbar"><span>运行中，外部实例</span><span>⌘+1~7 切换页面</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>C. 左列会话列表 + 右侧终端</b>
+        <span class="why"
+          >页面里再切一列窄栏：上面固定「dsh 终端」，下面列各本地
+          Shell（＋新建）。像编辑器的终端面板。
+          好处是会话多的时候不挤；代价是页面里多一列，内容区窄一截。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar"><span>终端</span></div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item on"><span class="dot"></span>终端</div>
+            <div class="rail-item"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="split">
+              <div class="list">
+                <div class="on">dsh 终端</div>
+                <div>本地 Shell 1</div>
+                <div>npm run dev</div>
+                <div style="color: var(--accent)">＋ 新建本地 Shell</div>
+              </div>
+              <div class="term">
+                $ npm run dev<br />▸
+                左边选会话，右边是终端本体；工具条只留「关闭当前」这类跟当前会话有关的
+              </div>
+            </div>
+          </div>
+          <div class="statusbar"><span>运行中，外部实例</span><span>⌘+1~7 切换页面</span></div>
+        </div>
+      </div>
+    </div>
+
+    <h2>2. 环境自检挪进设置<span class="tag">选一个详情落点</span></h2>
+    <p class="caption">
+      设置里放一张卡，平时只显示**一行结论**（几项正常 / 几项需要注意 / 几项不可用 + 要求的那句 Node
+      区间）；
+      「查看详情」才铺开完整那套（每一行的灯、结论、依据、一键修复、安装下载来源、重新检测）。
+    </p>
+
+    <div class="opt sel">
+      <header><b>设置里那张卡（简化展示，三选一都长这样）</b></header>
+      <div class="sheet" style="max-width: 760px">
+        <div class="panel-head"><h3>运行环境</h3></div>
+        <div class="fact">
+          <span class="ok">8 项正常</span><span>·</span><span>0 项需要注意</span><span>·</span
+          ><span>0 项不可用</span>
+        </div>
+        <div class="fact" style="margin-top: 4px">
+          <span>要求 Node <code>^22.19.0 || &gt;=24.0.0</code>（dsh 与它依赖链的要求）</span>
+        </div>
+        <div class="bar" style="margin: 10px 0 0">
+          <span class="btn tiny">查看详情</span>
+          <span class="btn tiny">重新检测</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 点「查看详情」→ 一个详情视图（整屏，照现在那一页的样子）（我建议这个）</b>
+        <span class="why"
+          >现在的环境自检页原封不动当成详情视图：左上角多一个「← 设置」，其余（灯 / 结论 / 一键修复
+          / 重新打开环境向导 / 安装下载来源 /
+          重新检测）全都还在。好处是**你现在熟悉的那一屏一点没变**， 只是入口从「左栏第 8
+          项」换成了设置里的一行。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar"><span>设置 › 运行环境</span></div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item"><span class="dot"></span>控制台</div>
+            <div class="rail-item"><span class="dot"></span>终端</div>
+            <div class="rail-item on"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <span class="btn tiny">← 设置</span>
+              <span class="btn tiny">重新检测</span>
+              <span class="btn tiny">重新打开环境向导</span>
+            </div>
+            <div class="panel" style="margin-bottom: 8px">
+              <div class="fact">
+                <span class="ok">●</span><span>外部 Node</span
+                ><span style="margin-left: auto" class="ok">正常</span>
+              </div>
+              <div class="fact" style="margin-top: 4px; color: var(--ink-faint)">
+                找到了外部 Node：…/v24.14.1/bin/node（v24.14.1）—— dsh 就用这一份跑
+              </div>
+            </div>
+            <div class="panel" style="margin-bottom: 0">
+              <div class="fact">
+                <span class="ok">●</span><span>dsh 能不能跑</span
+                ><span style="margin-left: auto" class="ok">正常</span>
+              </div>
+            </div>
+            <p class="caption" style="margin: 8px 0 0">（下面还有 6 行，与现在那一页完全一样）</p>
+          </div>
+          <div class="statusbar"><span>运行中，外部实例</span><span>⌘+1~7 切换页面</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 点「查看详情」→ 就在设置页里铺开</b>
+        <span class="why"
+          >不新增任何表面：卡片下面直接把那 8
+          行铺出来（与自检页同样的行样式）。最省事，但设置页会变长；
+          而且自检页原来那个「整页只有这一件事」的观感就没了。</span
+        >
+      </header>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>C. 环境自检仍然是一个页面，只是不进左栏</b>
+        <span class="why"
+          >点「查看详情」切到那一页（左栏仍高亮「设置」）。改动比 A
+          还小，但左栏高亮的位置与页面内容不一致， 看久了容易糊涂。</span
+        >
+      </header>
+    </div>
+
+    <h2>3. 剩下那七项要不要也动<span class="tag">可以多选，也可以全不动</span></h2>
+    <p class="caption">
+      合并 + 挪走之后剩下：<b
+        >控制台 / 终端 / DeepSeek Harness / DeepSeek 用量 / 归档会话 / 插件 / 设置</b
+      >。 你开头说「大多数很少会用到」—— 如果还想再瘦，我列几个说得通的走向（都还没做，等你点）：
+    </p>
+    <table>
+      <tr>
+        <th>候选</th>
+        <th>怎么动</th>
+        <th>代价</th>
+      </tr>
+      <tr>
+        <td>DeepSeek 用量</td>
+        <td>并进「控制台」页（做成控制台里的一张卡）</td>
+        <td>控制台那页会长一些；用量页现在有图表与筛选，得挤一挤</td>
+      </tr>
+      <tr>
+        <td>归档会话</td>
+        <td>并进「设置」页（或并进控制台的一张卡）</td>
+        <td>归档是列表 + 操作，塞进设置会显得设置页很杂</td>
+      </tr>
+      <tr>
+        <td>插件</td>
+        <td>并进「设置」页</td>
+        <td>插件页有层栈 / 清单 / 装删升级，是左栏里内容最重的一页之一</td>
+      </tr>
+      <tr>
+        <td>DeepSeek Harness</td>
+        <td>不动（它是主入口，内嵌界面本身）</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>控制台 / 终端 / 设置</td>
+        <td>不动</td>
+        <td>—</td>
+      </tr>
+    </table>
+
+    <h2>回给我这张表就行</h2>
+    <table>
+      <tr>
+        <th>#</th>
+        <th>问题</th>
+        <th>我的建议</th>
+        <th>你的选择</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>终端怎么合</td>
+        <td>A 一条统一的会话条</td>
+        <td>&nbsp;</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>环境自检的「查看详情」落在哪</td>
+        <td>A 整屏详情视图</td>
+        <td>&nbsp;</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>剩下七项还要不要再瘦</td>
+        <td>先不动（那两项已经够）</td>
+        <td>&nbsp;</td>
+      </tr>
+    </table>
+    <p class="caption" style="margin-top: 12px">
+      例：「1A 2A 3 不动」。落地时会一起处理：左栏 9 → 7、快捷键 <code>1~9</code> →
+      <code>1~7</code>（状态栏提示 / 设置页里那句 / 终端里放行 <code>Ctrl+数字</code> 的正则 /
+      规格与自检），以及 <code>docs/env-doctor.md</code> 里
+      那句要改判的「新增第九个页面「环境自检」，不复用设置页」。
+    </p>
+  </body>
+</html>

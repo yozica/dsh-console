@@ -126,7 +126,7 @@ export function passAppShortcutsThrough(
   term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     if (event.type !== 'keydown') return true;
     if (!isAppModifier(event) || event.shiftKey || event.altKey) return true;
-    if (/^[1-9]$/.test(event.key)) return false;
+    if (/^[1-7]$/.test(event.key)) return false;
     if (includeReload && String(event.key).toLowerCase() === 'r') return false;
     return true;
   });

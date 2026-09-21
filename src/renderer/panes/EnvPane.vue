@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * 环境自检页（左栏第 8 项，Ctrl+8）。
+ * 环境自检的**详情视图**（t45 起：它不是左栏的一项，而是设置页「运行环境」卡的详情，
+ * 由 `lib/env-layer.ts` 的 `openEnvDetail()` 打开，见 AGENTS 7.30）。
  *
  * 回答的是"打开 DSH 时这台机器到底行不行"：外部 node 在不在、版本够不够、npm / pnpm /
  * dsh 本体能不能用、应用自带的运行时是什么、本地 Shell 能不能起。八项都由主进程实测
@@ -23,6 +24,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { envFocus } from '../lib/env-anchor.js';
 import { detailSegments } from '../lib/env-detail.js';
+import { closeEnvDetail } from '../lib/env-layer.js';
 import {
   cancelEnvFix,
   clearEnvFixOutput,
@@ -47,7 +49,7 @@ import {
 } from '../lib/env-wizard.js';
 import { formatAgo } from '../lib/format.js';
 import { platform } from '../lib/platform.js';
-import { dsh, phase, settings } from '../lib/store.js';
+import { currentTab, dsh, phase, settings } from '../lib/store.js';
 import type {
   EnvCheck,
   EnvCheckId,
@@ -381,6 +383,19 @@ function refresh(): void {
 /** 逃生之后回到向导的那条明路（交互 §2.8 第 2 条）：不写盘、不改判定，只是把覆盖层再显示出来 */
 function openWizard(): void {
   reopenGate();
+}
+
+/**
+ * 详情视图的回程按钮：它是工作区上的覆盖层，收掉就回到打开它的那一页
+ * （设置、控制台横幅、插件页都可能打开它）—— 所以这里**不改** `currentTab`。
+ *
+ * 文案跟着来路走：从设置卡进来的写「设置」（与摆法预览 2A 一致），
+ * 从控制台横幅 / 插件页 / 门禁层进来的写「返回」更诚实 —— 它们回的是原处，不是设置页。
+ */
+const backLabel = computed(() => (currentTab.value === 'settings' ? '设置' : '返回'));
+
+function backFromDetail(): void {
+  closeEnvDetail();
 }
 
 async function openDownloadPage(): Promise<void> {
@@ -774,6 +789,10 @@ onUnmounted(() => {
 <template>
   <div class="env">
     <div class="bar">
+      <!-- 它是设置页「运行环境」卡的详情视图（t45）：左栏没有这一项，所以给一个显式的回程 -->
+      <button id="btn-env-back" class="btn small" @click="backFromDetail">
+        <svg class="i"><use href="#i-back" /></svg><span>{{ backLabel }}</span>
+      </button>
       <button
         id="btn-env-refresh"
         class="btn small primary"

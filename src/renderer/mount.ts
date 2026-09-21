@@ -17,7 +17,6 @@ import DashboardPane from './panes/DashboardPane.vue';
 import EnvPane from './panes/EnvPane.vue';
 import PluginPane from './panes/PluginPane.vue';
 import SettingsPane from './panes/SettingsPane.vue';
-import ShellPane from './panes/ShellPane.vue';
 import TerminalPane from './panes/TerminalPane.vue';
 import UiPane from './panes/UiPane.vue';
 import UsagePane from './panes/UsagePane.vue';
@@ -41,8 +40,9 @@ const MOUNTS: readonly MountEntry[] = [
   ['gate-root', EnvGate],
   ['gate-banner-root', GateBanner],
   ['dashboard-root', DashboardPane],
+  // 终端页的宿主：会话条 + 本地 Shell，dsh 那一路由它内部的子组件 DshTerminal 渲染
+  //（`MOUNTED_COMPONENTS` 只列挂载进去的那些，子组件由自检的另一条规则盯着）
   ['terminal-root', TerminalPane],
-  ['shell-root', ShellPane],
   ['ui-root', UiPane],
   ['usage-root', UsagePane],
   ['archive-root', ArchivePane],

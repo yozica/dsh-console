@@ -13,23 +13,29 @@
 import { computed } from 'vue';
 
 import { gateVisible } from '../lib/env-wizard.js';
+import { envDetailOpen } from '../lib/env-layer.js';
 import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../lib/store.js';
 
 const PAGE_TITLES = {
   dashboard: '控制台',
-  terminal: 'dsh 终端',
-  shell: '本地 Shell',
+  terminal: '终端',
   ui: 'DeepSeek Harness',
   usage: 'DeepSeek 用量',
   archive: '归档会话',
   plugin: '插件',
-  env: '环境自检',
   settings: '设置',
 };
 
-const title = computed(() =>
-  gateVisible.value ? '运行环境准备' : PAGE_TITLES[currentTab.value] || currentTab.value,
-);
+/**
+ * 标题：门禁层显示期间是「运行环境准备」；环境自检详情层打开时是「<当前页> › 运行环境」
+ * （摆法预览 2A 里就是这么画的，见 docs/rail-simplify-choices.html）—— 详情层盖在**当前页**
+ * 上面，所以面包屑前半段跟着 currentTab 走：从控制台横幅进来就是「控制台 › 运行环境」。
+ */
+const title = computed(() => {
+  if (gateVisible.value) return '运行环境准备';
+  const page = PAGE_TITLES[currentTab.value] || currentTab.value;
+  return envDetailOpen.value ? `${page} › 运行环境` : page;
+});
 
 /** 退出全屏：只改共享状态，body 属性与内嵌页视口由 app.ts / UiPane 各自 watch */
 function exitImmersive() {

@@ -10,6 +10,7 @@
  * 由 app.ts 与各页自己的 watch 处理。
  */
 import { computed } from 'vue';
+import { closeEnvDetailOnTabChange } from '../lib/env-layer.js';
 import {
   currentTab,
   dsh,
@@ -30,13 +31,14 @@ interface NavTab {
 
 const TABS: NavTab[] = [
   { id: 'dashboard', icon: 'i-gauge', label: '控制台' },
-  { id: 'terminal', icon: 'i-terminal', label: 'dsh 终端' },
-  { id: 'shell', icon: 'i-shell', label: '本地 Shell' },
+  // 「dsh 终端」与「本地 Shell」合并成一个「终端」页（一条统一会话条，见 AGENTS §7.30）：
+  // dsh 终端是会话条上固定存在的第一项，各本地 Shell 排在它后面。
+  { id: 'terminal', icon: 'i-terminal', label: '终端' },
   { id: 'ui', icon: 'i-browser', label: 'DeepSeek Harness' },
   { id: 'usage', icon: 'i-usage', label: 'DeepSeek 用量' },
   { id: 'archive', icon: 'i-archive', label: '归档会话' },
   { id: 'plugin', icon: 'i-plugin', label: '插件' },
-  { id: 'env', icon: 'i-warn', label: '环境自检' },
+  // 「环境自检」不再是左栏一项：设置页「运行环境」卡的详情视图（t45）
   { id: 'settings', icon: 'i-sliders', label: '设置' },
 ];
 
@@ -48,6 +50,8 @@ const owned = computed(() => Boolean(dsh.value?.owned));
 
 /** 切页：只改共享状态，"各页自己的副作用"由 app.ts 与各页的 watch 处理 */
 function selectTab(id: TabId): void {
+  // 环境自检的详情层盖着页面区（t45）：切页先把它收掉，免得挡住用户刚点的那一页
+  closeEnvDetailOnTabChange();
   currentTab.value = id;
 }
 

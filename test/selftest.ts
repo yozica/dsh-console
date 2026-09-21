@@ -545,19 +545,30 @@ async function main(): Promise<void> {
       : '没有会话功能',
   );
 
-  // 每个组件都必须在 mount.ts 的挂载清单里，否则界面上那块永远是空的
+  // 每个组件都必须**有人用**：要么在 mount.ts 的挂载清单里，要么被别的组件 import
+  //（t45 起「终端」页把 dsh 那一路拆成了子组件 DshTerminal，它不该出现在挂载清单里）。
+  // 两种都不占的组件等于死代码 —— 界面上那块永远空着，或者根本没人渲染它。
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
-  const unmounted = vueFiles
+  const allVueSources =
+    mountJs +
+    vueFiles
+      .map(({ dir, name }) => fs.readFileSync(path.join(rendererDir, dir, name), 'utf8'))
+      .join('\n');
+  const unusedVue = vueFiles
     .filter(({ dir, name }) => {
       const stem = name.replace(/\.vue$/, '');
-      const spec = dir === 'panes' ? `./panes/${stem}.vue` : `./shell/${stem}.vue`;
-      return !mountJs.includes(`from '${spec}'`);
+      // 两种写法都算：挂载清单里是 `./panes/X.vue`，同目录的组件之间是 `./X.vue`
+      const specs = [
+        dir === 'panes' ? `./panes/${stem}.vue` : `./shell/${stem}.vue`,
+        `./${stem}.vue`,
+      ];
+      return !specs.some((spec) => allVueSources.includes(`from '${spec}'`));
     })
     .map(({ name }) => name);
   check(
-    '渲染层：每个 .vue 组件都在挂载清单里',
-    vueFiles.length > 0 && unmounted.length === 0,
-    unmounted.length ? `未挂载 ${unmounted.join(', ')}` : `${vueFiles.length} 个组件`,
+    '渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）',
+    vueFiles.length > 0 && unusedVue.length === 0,
+    unusedVue.length ? `没人用 ${unusedVue.join(', ')}` : `${vueFiles.length} 个组件`,
   );
   // 挂了终端的页面必须自己订阅容器尺寸变化。"靠全局 resize"或"切页时才 fit"都不够：
   // 本地 Shell 就因此不跟随窗口（踩过 —— 旧代码里是 app.js 的全局 resize 处理器负责，
@@ -655,11 +666,19 @@ async function main(): Promise<void> {
       /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.topbar[^{]*\{[^}]*padding-left/.test(
         cssText,
       ) &&
+      // 门禁层是**另一条左轨**（.gate-rail）：全屏时它也得顶到窗口上沿，
+      // 否则向导页的左栏会比"没有门禁时"低 36px（用户抓图指出过）
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.gate-rail\s*\{[^}]*margin-top: calc\(-1 \* var\(--bar-h\)\)/.test(
+        cssText,
+      ) &&
+      /html\[data-platform='darwin'\]\s*body\[data-native-fullscreen='true'\]\s*\.gate-rail\s*\{[^}]*padding-top: 16px/.test(
+        cssText,
+      ) &&
       /api\.onFullscreen\(/.test(rendererCode) &&
       /onFullscreen:/.test(preloadJs) &&
       /documentElement\.dataset\.platform\s*=/.test(platformJs) &&
       /setPlatform\(snapshot\.value\?\.env\?\.platform\)/.test(rendererCode),
-    '左栏让位 + 应用内全屏顶栏让位 + 系统全屏撤回 + 非全屏不缩进 + platform/全屏状态都有来源',
+    '两条左轨的让位与撤回 + 应用内全屏顶栏让位 + 非全屏不缩进 + platform/全屏状态都有来源',
   );
 
   // macOS 适配的契约二：三处快捷键处理器都必须走平台修饰键
@@ -1601,9 +1620,152 @@ async function main(): Promise<void> {
       const orderBlock = /TAB_ORDER: TabId\[\] = \[([\s\S]*?)\]/.exec(appTs)?.[1] ?? '';
       const order = [...orderBlock.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
       const rail = [...railVue.matchAll(/\{ id: '([a-z]+)'/g)].map((match) => match[1]);
-      return order.length >= 8 && order.join() === rail.join();
+      // 不比"至少 8 项"：页面数会随左栏增删（t45 就是 9 → 7），"两边逐项一致"才是契约
+      return order.length > 0 && order.join() === rail.join();
     })(),
     '左栏顺序 = 快捷键 1..N',
+  );
+
+  /**
+   * 取 `startPattern` 命中的那个 `<div>` **自己的整段**（按 div 开闭标签配对）。
+   * 用来断言"某个东西真的套在这个 div 里"，而不是靠前后顺序猜 —— 纯粹的
+   * indexOf 顺序检查抓不到"它跑到那个 div 后面并排站着了"这种错。
+   */
+  function divBlock(source: string, startPattern: RegExp): string {
+    const start = startPattern.exec(source);
+    if (!start) return '';
+    const tags = /<div\b|<\/div>/g;
+    tags.lastIndex = start.index;
+    let depth = 0;
+    for (let match = tags.exec(source); match; match = tags.exec(source)) {
+      depth += match[0] === '</div>' ? -1 : 1;
+      if (depth === 0) return source.slice(start.index, match.index + match[0].length);
+    }
+    return '';
+  }
+
+  // ── t45：左栏 9 → 7（终端合并、环境自检挪进设置）。四条钉子盯住"合并之后不许两头都在"。
+  const railSource = fs.readFileSync(path.join(rendererDir, 'shell', 'RailNav.vue'), 'utf8');
+  const railStoreSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
+  const appSource = fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8');
+  const mergedTermSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'TerminalPane.vue'),
+    'utf8',
+  );
+  const railSettingsSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
+    'utf8',
+  );
+  const envLayerSource = fs.readFileSync(path.join(rendererDir, 'lib', 'env-layer.ts'), 'utf8');
+  const htmlCode = html.replace(/<!--[\s\S]*?-->/g, '');
+  const tabIdUnion = /export type TabId =([\s\S]*?);/.exec(railStoreSource)?.[1] ?? '';
+  const tabIds = [...tabIdUnion.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
+  check(
+    '渲染层：左栏七项（TabId 里没有 shell / env，页面容器也没有 pane-shell）',
+    tabIds.length === 7 &&
+      !tabIds.includes('shell') &&
+      !tabIds.includes('env') &&
+      !/\{ id: 'shell'/.test(railSource) &&
+      !/\{ id: 'env'/.test(railSource) &&
+      !/id="pane-shell"/.test(htmlCode) &&
+      // 快捷键顺序里也不许再出现这两个 id（不再是"至少 8 项"，这一轮就是 7 项）
+      !/TAB_ORDER[\s\S]{0,220}?'(shell|env)'/.test(appSource) &&
+      // 快捷键正则也不能再放行 8 / 9
+      /\^\[1-7\]\$/.test(fs.readFileSync(path.join(rendererDir, 'lib', 'xterm.ts'), 'utf8')),
+    `TabId = ${tabIds.join(', ')}`,
+  );
+  check(
+    '渲染层：环境自检是设置里的详情层（不是页面）',
+    /id="env-detail-layer"/.test(htmlCode) &&
+      /id="env-root"/.test(htmlCode) &&
+      /export function openEnvDetail\(\): void \{/.test(envLayerSource) &&
+      /export function closeEnvDetail\(\): void \{/.test(envLayerSource) &&
+      /export function closeEnvDetailOnTabChange\(\): void \{/.test(envLayerSource) &&
+      // 四个入口都改成打开详情层了，谁都不许再切到 'env'
+      !/currentTab\.value = 'env'/.test(rendererCode) &&
+      (rendererCode.match(/openEnvDetail\(\)/g) ?? []).length >= 4 &&
+      // 切页要收掉这一层，免得盖住用户刚点的那一页
+      /closeEnvDetailOnTabChange\(\);/.test(railSource),
+  );
+  // 详情层必须挂在 <main> 里面：main 是 position: relative，它的 inset: 0 正好是"页面区"。
+  // 挂在 .app 外面（body 下）时 inset: 0 是整个窗口 —— 左栏与顶栏一起被吃掉
+  // （真机上出现过：点「查看详情」之后左栏整条不见了，EnvPane 自己的步骤栏占着左栏的位置，
+  // 看着像左栏变成了向导；只看 open 类的检查全是绿的，因为它确实"打开了"）。
+  const mainBlock = /<main\b[^>]*>([\s\S]*?)<\/main>/.exec(htmlCode)?.[1] ?? '';
+  check(
+    '渲染层：环境自检详情层盖的是工作区（挂在 <main> 里，不吃掉左栏与顶栏）',
+    /id="env-detail-layer"/.test(mainBlock) &&
+      /id="env-root"/.test(mainBlock) &&
+      // 类名必须是这一层独有的：`.env-detail` 是 EnvPane 里每行结论下面那串说明文字用的
+      // （带 margin 3px 与那套行高），撞上会让整层跟着偏移并继承文字样式（踩过）
+      /<div class="env-detail-layer" id="env-detail-layer">/.test(mainBlock) &&
+      /\.env-detail-layer \{[^}]*position: absolute/.test(cssText) &&
+      /\.env-detail-layer \{[^}]*inset: 0/.test(cssText) &&
+      /\.env-detail-layer\.open \{[^}]*display: flex/.test(cssText) &&
+      // 前提：左栏与顶栏本来就在 <main> 外面（所以"留在外面"是结构保证的，不靠 z-index 让位）
+      /id="rail-root"/.test(htmlCode) &&
+      /id="topbar-root"/.test(htmlCode) &&
+      !/id="rail-root"/.test(mainBlock) &&
+      !/id="topbar-root"/.test(mainBlock) &&
+      // 出现且只出现一次（别为了"盖住工作区"再复制一层出来）
+      (htmlCode.match(/id="env-detail-layer"/g) ?? []).length === 1,
+    mainBlock ? `main 那段 ${mainBlock.split('\n').length} 行` : '找不到 <main>',
+  );
+  check(
+    '渲染层：终端页的会话条第一项固定是 dsh 终端、新建按钮镂空（两路终端在一个页面里）',
+    /id="tab-dsh-term"/.test(mergedTermSource) &&
+      /activate\(DSH_ID\)/.test(mergedTermSource) &&
+      /const DSH_ID = 'dsh';/.test(mergedTermSource) &&
+      /<DshTerminal \/>/.test(mergedTermSource) &&
+      // 关掉最后一个本地 Shell 要回到 dsh 那一路，不能停在"没有会话"的空屏上
+      /activeId\.value = DSH_ID;/.test(mergedTermSource) &&
+      // dsh 那一路是子组件：不在挂载清单里，但必须被宿主 import（上面那条通用检查盯着）
+      !mountJs.includes("from './panes/DshTerminal.vue'") &&
+      // 会话条上的动作是**镂空**的（.btn.outline），实心只留给"当前在看的那一路"：
+      // 之前它用 .btn.primary（实心 accent），比选中的标签还抢眼，看不出选中了谁
+      /id="btn-new-shell"[\s\S]{0,80}class="btn small outline"/.test(mergedTermSource) &&
+      /\.btn\.outline \{[^}]*background: transparent/.test(cssText) &&
+      /\.shell-tab\.active \{[^}]*background: var\(--accent-soft\)/.test(cssText),
+  );
+  // 两路终端都得套在 .term-body 里：它的 inset:0 才是对"会话条下面那块区域"算的。
+  // 少了这一层，dsh 那一路会去对整个 .pane 定位 —— 它的状态条（清空显示 / 显示历史 /
+  // Ctrl+C）就与会话条叠在同一行（真机上出现过，会话条上的标签和按钮糊成一片）。
+  // 而 `.term-host` 的**基础**规则必须留着 relative + flex：dsh 那一路的子组件
+  // DshTerminal 自己也用这个类（那是它 `.bar` 下面的 flex 子项）；把基础规则改成绝对
+  // 定位，它会铺满整个 `.term-view`、把状态条整行盖掉（踩过 —— 而且 rect 量出来一切
+  // 正常，因为元素确实"在"。只有本地 Shell 那一路，直接挂在 `.term-body` 下的那个，
+  // 才用 `.term-body > .term-host` 改绝对定位铺满）。
+  // 最后两条同样来自踩坑：本地 Shell 那一块是**不透明**的、又排在 .term-view 后面
+  // （两者 z-index 都是 auto），dsh 那一路在的时候必须靠 `active` 把它藏起来；
+  // 否则它是"遮挡"而不是"重叠"，连重叠面积都量不出来（只有带 z-index 的空状态
+  // 能穿出来，看着像状态条凭空消失了）。而"藏"的写法只能是给**不在看的那一路**写
+  // hidden —— visibility 会继承，给"在看的那一路"写 visible 就会连 `.pane` 的隐藏
+  // 一起穿掉（用户抓图：切到 Harness 页，本地 Shell 的终端还画在上面）。
+  const termBodyBlock = divBlock(mergedTermSource, /<div class="term-body">/);
+  check(
+    '渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）',
+    /class="term-view"/.test(termBodyBlock) &&
+      /<div class="term-host" :class="\{ active: !dshActive \}" ref="host">/.test(termBodyBlock) &&
+      /\.term-body \{[^}]*position: relative/.test(cssText) &&
+      /\.term-host \{[^}]*position: relative/.test(cssText) &&
+      /\.term-host \{[^}]*flex: 1 1 auto/.test(cssText) &&
+      /\.term-body > \.term-host \{[^}]*position: absolute/.test(cssText) &&
+      // 只给"不在看的那一路"写 hidden；**不许**给"在看的那一路"写 visible ——
+      // visibility 是继承属性，显式 visible 会从 `.pane` 的隐藏里穿出来
+      // （踩过：切到别的 tab，本地 Shell 的终端照样画在那一页上面）
+      /\.term-body > \.term-host:not\(\.active\) \{[^}]*visibility: hidden/.test(cssText) &&
+      !/\.term-body > \.term-host\.active[^{]*\{[^}]*visibility: visible/.test(cssText),
+    termBodyBlock
+      ? `term-body 套着 ${termBodyBlock.split('\n').length} 行`
+      : 'term-body 里没套住两路',
+  );
+  check(
+    '设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层',
+    /<h3>运行环境<\/h3>/.test(railSettingsSource) &&
+      /id="btn-env-detail"/.test(railSettingsSource) &&
+      /@click="openEnvDetail"/.test(railSettingsSource) &&
+      /id="btn-env-recheck"/.test(railSettingsSource) &&
+      /loadEnvReport\(true\)/.test(railSettingsSource),
   );
 
   // 装 / 卸 / 升级：spec 只用于"确认文案与提示"，命令原样透传给 pnpm；错误归纳要认出常见失败。
@@ -4716,7 +4878,8 @@ async function main(): Promise<void> {
   check(
     '首启门禁：顶栏的标题与"右侧控件收起"读同一个 gateVisible（R-03）',
     (topBarCode.match(/gateVisible/g) ?? []).length >= 3 &&
-      /gateVisible\.value \? '运行环境准备'/.test(topBarCode) &&
+      // 标题里的门禁分支只由 gateVisible 决定（t45 起前面还有一条"详情层面包屑"，所以是 if 而不是三元）
+      /if \(gateVisible\.value\) return '运行环境准备';/.test(topBarCode) &&
       /v-if="!gateVisible"/.test(topBarCode) &&
       // 顶栏不许自己去读判定结果（两套显示条件就会漂）
       !/wizard\.value|gatePhase|judgeWizard/.test(topBarCode),

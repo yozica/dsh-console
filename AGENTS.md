@@ -50,15 +50,17 @@ src/
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
   shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
   renderer/             Vue 3 + Vite，产物 dist/renderer/
-    index.html          页面骨架：九个页面容器 + 挂载点 + 门禁层容器 + 启动锁 + 内联图标精灵
+    index.html          页面骨架：七个页面容器 + 挂载点 + 门禁层容器 + 环境自检详情层 + 启动锁 + 内联图标精灵
     main.ts             入口：样式导入顺序 → app.ts → 建立共享状态 → 挂载
     app.ts              应用级胶水：启动守卫、启动锁状态机、门禁改道（gateDiversion）、自动打开、快捷键
     mount.ts            挂载清单：外壳三块 + 全部页面 + 门禁层与横幅
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
-    panes/              九个页面组件（第八页 EnvPane = 运行环境自检）
-test/selftest.ts        291 项自检（`npm test`），不需要 Electron
+    panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
+                         Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
+                         页面，而是设置页「运行环境」卡的详情视图，见 7.30）
+test/selftest.ts        299 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -79,7 +81,7 @@ eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 - **主进程 / preload / shared 由 tsc 直出 CJS**（`tsconfig.main.json` 的 `rootDir=src`、`outDir=dist`）：产物与源码一一对应（`src/main/main.ts → dist/main/main.js`），`main.ts` 里的相对路径（preload、`dist/renderer`、`build/icon.png`）编译后依然成立，**不需要为了打包改写业务代码** —— 这也是选 tsc 而不是 bundler 的主要原因。
 - **渲染层由 Vite 打包成单个自包含的普通脚本**（见下）。
 - **共享状态只有一份**：`lib/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
-- **门禁层是一个覆盖层，不是第 10 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
+- **门禁层是一个覆盖层，不是第 8 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
 - **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/selftest.ts`；渲染层 = `renderer/{panes/**,shell/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
 
 **一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。启动后 1.5 秒另有一轮**只读**的运行环境自检在后台跑（`main/env-doctor.ts`，见 7.20）：它不参与启动、不碰 dsh 进程，结果由渲染层 `envCheck()` 拉取。
@@ -100,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（291 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（299 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -258,7 +260,13 @@ git tag v0.2.3 && git push origin main --tags
 - 平台属性由 `lib/platform.ts` 写入（先用 UA 同步判定，快照到了再用主进程的 `env.platform` 校准）；**首帧的留白不能等 IPC**。标题栏高度在两侧各写一次（CSS 的 `--bar-h` 与主进程的 `TITLEBAR_HEIGHT`，都是 36），**必须一致**，否则系统按钮会和顶栏错位。
 - Windows / Linux 上 `Menu.setApplicationMenu(null)`（菜单留空），macOS 上保留最小原生菜单（应用 / 编辑 / 显示 / 窗口），否则 ⌘Q、⌘C/V 会失灵。
 
-自检「渲染层：macOS 红绿灯留白给左栏（应用内全屏让白、系统全屏撤回、非全屏顶栏不缩进）」守着这四种状态。
+**门禁层的左轨是另一条左轨**（`.gate-rail`，`.gate` 从 `top: var(--bar-h)` 起）：窗口模式下它落在
+36px 那条带下面（红绿灯就在那条带里），**系统全屏时同样要撤回** —— 让左轨顶到窗口上沿、高度补回那
+36px（`margin-top: calc(-1 * var(--bar-h))` + `height: calc(100% + var(--bar-h))`），否则向导页的
+左栏会比"没有门禁时"低整整 36px，看着就是左栏上面空一块（用户抓图指出过）。它盖住的应用左栏同底色
+（`--rail`）、同一条右缘发丝线，所以接得上；顶栏不在这一列，仍然留在 36px 以下。
+
+自检「渲染层：macOS 红绿灯留白给左栏（两条左轨的让位与撤回 + 应用内全屏让白、系统全屏撤回、非全屏顶栏不缩进）」守着这些状态。
 
 **「系统全屏」与「应用内全屏」是两件事**：
 
@@ -311,6 +319,13 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 1. **容器 `display:none`** → guest 以 0 尺寸挂载，切回来时视口还是旧的。修法：全部页面改为 `position:absolute + visibility:hidden` **常驻布局**（`.pane.active { visibility: visible }`），切换时再补一次视口重算。
 2. **`<webview>` 自己没写尺寸** → 它是替换元素，漏写 CSS 就退化成浏览器默认的约 300×150，页面上只出现顶部一小条。修法：两个内嵌页共用 `.embedded-view`（`width/height:100%`），**以后新增 webview 必须带上这个 class**。
 
+**推论（踩过）：页面里的元素不要自己写 `visibility: visible`。** `visibility` 是**继承**属性，
+`.pane` 靠 `.pane { visibility: hidden }` / `.pane.active { visibility: visible }` 藏整页，而子元素一旦
+显式写 `visible`，就会在别的 tab 上"穿"出来 —— 全仓库只该有 `.pane.active` 一处写 visible；要藏某个
+分支就给它自己写 `hidden`（写成 `:not(.active)` 这类），别把"显示"写成一条规则（用户抓图：
+切到 Harness 页，终端页的本地 Shell 还画在那一页顶上）。自检「渲染层：两路终端共用 .term-body」
+里有一条钉子专门盯着这个写法。
+
 自检：「样式：页面容器靠 visibility 隐藏，不用 display:none」与「样式：每个 webview 都有明确高度的样式」。另外 `vite.config.mts` 的 `compilerOptions.isCustomElement` 把 `<webview>` 声明为自定义元素，否则 Vue 编译器会试着把它当组件解析。两个内嵌页用**各自独立且持久**的分区（`persist:dsh-ui` 存令牌 / `persist:deepseek` 存登录态），且主进程在启动时统一抹掉 UA 里的 Electron 标识（`app.userAgentFallback`，不是等 webview 挂上来再改 —— 后者可能晚于该页的第一次请求）。
 
 ### 7.7 dsh 终端是**只读输出视图**（有意为之）
@@ -323,7 +338,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 ### 7.8 共享状态、挂载与 xterm
 
-- **每个组件都必须在 `mount.ts` 的挂载清单里**，否则界面上那块永远是空的。自检「渲染层：每个 .vue 组件都在挂载清单里」与「渲染层：外壳与页面的挂载点都在」守着。
+- **每个组件都必须有人用**：要么挂在 `mount.ts` 的挂载清单里，要么被别的组件 `import`（t45 起「终端」页就有个子组件 `DshTerminal`，它不该出现在挂载清单里）。两种都不占的组件等于死代码。自检「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」与「渲染层：外壳与页面的挂载点都在」守着。
 - **挂载点必须是 `display: contents`**（见 `styles.css`）：漏一个就会把父级的 flex/grid 链断掉，`flex: 1` 全部失效 —— 症状是内嵌页只剩顶上一条。自检「渲染层：每个挂载点都是 display: contents」守着。
 - **xterm 独占的元素里不能有 Vue 管理的子节点**：两边往同一块 DOM 里塞东西会打架。所以终端挂在 `.term-mount`（空元素）上，空状态覆盖层是它的**兄弟**而不是子节点。
 - **xterm 与 addon 必须用导入的类，不能绕 window 全局**。曾经留过一层 `window.FitAddon = FitAddon` 的过渡，而 UMD 全局是**命名空间对象**（`window.FitAddon.FitAddon` 才是类），把 ESM 导入的类本身挂上去后 `new window.FitAddon.FitAddon()` 就变成 `undefined`，**fit addon 静默装不上、终端永远停在 80×24**。自检「渲染层：xterm 与 addon 用导入的类，不经过 window 全局」守着。
@@ -343,6 +358,66 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 `starting` 就把回合收成 `done`（**没有等待就不上锁** —— dsh 已经在跑、或这一轮只是接管外部实例时，
 锁不该只是闪一下）；窗口之外用户自己点的「启动」永远不算这一轮。别把它改成「每次状态变化重新判定」——
 那正是这一节开头那个 bug（解锁之后条件又变回不满足，锁又扣上来）。
+
+### 7.30 左栏只有七项：终端合并、环境自检在设置里
+
+**现象 / 决定**（t45，用户裁定；摆法示例 `docs/rail-simplify-choices.html`、改判记在 `docs/env-doctor.md` 的 t45 段）：
+左栏原来是九项，其中「dsh 终端」与「本地 Shell」是同一件事的两个入口、「环境自检」多数时候只看一眼结论。
+现在：
+
+- **一个「终端」页**（`panes/TerminalPane.vue`）：一条会话条，**第一项固定是 `dsh 终端`**（保留 id `'dsh'`，
+  不能改名也不能关闭），后面是各本地 Shell，`＋ 新建本地 Shell` 在最右；`关闭当前` 只在本地 Shell
+  那一路上出现。dsh 那一路是子组件 `panes/DshTerminal.vue`（= 原来那一页，带它自己的状态条与
+  三个动作），所以**它不在挂载清单里** —— 这就是为什么那条自检要认「被别的组件 import」。
+  顶栏标题也跟着从 `dsh 终端` 改成 `终端`（这一页不再只有 dsh 那一路）；`TopBar.vue` 的 `PAGE_TITLES`
+  里 `shell` / `env` 两个键同时删掉 —— `currentTab` 已经是七项的联合类型，留着就是死键。
+  会话条上的动作按钮用**镂空**（`.btn.outline`，与 `.btn.danger` 同形，只是换成 accent 色）：
+  它原来是 `.btn.primary`（实心 accent），比选中的标签还抢眼，**看不出正在看哪一路** ——
+  实心只留给选中态，那才是这条上唯一该"实"的东西。
+- **两路终端都绝对定位铺满 `.term-body`**（会话条下面那一块，`flex: 1 1 auto` + `position: relative`）。
+  它**必须**是两路的定位基准：`.term-view` / `.term-host` 都是 `inset: 0`，少了这一层，dsh 那一路的
+  `inset: 0` 会去对**整个 `.pane`** 算，它的状态条（清空显示 / 重新显示历史 / 发送 Ctrl+C）就与
+  会话条叠在同一行（真机上出现过：会话条上的标签与那排按钮糊成一片，而只看 `display` 值的检查
+  全是绿的）。这类「绝对定位挂错了基准」用前后顺序是抓不到的，所以那条自检按 **div 标签配对取整段**
+  来断言「`.term-view` 与 `.term-host` 真的套在 `.term-body` 里」。
+  **但绝对定位只给本地 Shell 那一路**（`.term-body > .term-host`）：`.term-host` 的**基础**规则
+  必须留着 `position: relative` + `flex: 1 1 auto` —— dsh 那一路的子组件 `DshTerminal` 自己也用这个类，
+  那是它 `.bar` 下面的 flex 子项；基础规则一改成绝对定位，它会铺满整个 `.term-view`、把 dsh 的状态条
+  整行盖掉（踩过：工具栏整行"消失"，而元素其实还在，rect 量出来一切正常）。这一条同样由那条自检
+  钉着（基础规则 relative + 作用域规则 absolute，两个都要在）。
+  两路之间用 `visibility` 互斥（`.term-body > .term-host:not(.active) { visibility: hidden }`）：
+  xterm 实例保持尺寸、切回来不用重建。**但只能给"不在看的那一路"写 hidden，不能给"在看的那一路"
+  写 visible** —— `visibility` 是继承属性，而 `.pane` 正是靠它藏整页的，子元素一旦显式写 visible
+  就会从隐藏的页面里穿出来（用户抓图：切到 Harness 页，本地 Shell 的 zsh 提示符还画在上面）。
+  写成 `:not(.active)` 之后，"在看的那一路"什么都不写，老老实实继承 `.pane` 的可见性。
+- **环境自检不再是页面**：设置页多一张「运行环境」卡（一行结论 `N 项正常 · N 项不正常 · N 项需要注意`
+  —— 与详情视图顶部那句**一字不差**，免得点进详情像换了个说法 + 要求的那句 Node 区间 +
+  「查看详情」「重新检测」），点「查看详情」打开**工作区上的详情层**
+  `#env-detail-layer`（`lib/env-layer.ts` 的 `envDetailOpen` / `openEnvDetail` / `closeEnvDetail`）。
+  它是覆盖层不是页面：**不进 `TAB_ORDER`**，点左栏任何一项（`selectTab` → `closeEnvDetailOnTabChange`）
+  都会收掉它；回程按钮只收层、**不改 `currentTab`**（这样从控制台横幅、插件页进来的用户回到原处），
+  文案跟着来路走 —— 从设置卡进来是「← 设置」（摆法预览 2A 里就是这么画的），别的来路是「← 返回」。
+  顶栏在它打开时显示面包屑 `<当前页> › 运行环境`，也是 2A 里的样子。
+  原来那一页里的一切（灯 / 结论 / 一键修复 / 重新打开环境向导 / 安装下载来源 / 重新检测）都在。
+- **这一层必须挂在 `<main>` 里**（`index.html`），不要挂到 `.app` 外面：`main` 是 `position: relative`，
+  它的 `inset: 0` 正好等于"页面区"，所以左栏 / 顶栏 / 状态栏是**结构上**留在外面的，不靠 z-index 让位。
+  挂到 body 下时同一条规则就成了整个窗口 —— 左栏被整条吃掉，`EnvPane` 自己的步骤栏占着左栏的位置，
+  看着像"左栏变成了向导"（踩过：`open` 类、行数、结论全对，只有截图看得出来）。自检按 `<main>…</main>`
+  取整段来钉它。
+- **快捷键 9 → 7**：`TAB_ORDER`（`app.ts`）、状态栏那句 `⌘/Ctrl+1~7`、终端里放行 `Ctrl+数字` 的
+  正则（`lib/xterm.ts` 的 `passAppShortcutsThrough` 是 `/^[1-7]$/`）、以及 `docs/` 里的页面数说法一起改。
+- **`envFocus` 锚点机制没变**：控制台横幅、插件页的「一键装 pnpm」、门禁层的两条出路都改成
+  `openEnvDetail()` + `requestEnvFocus(...)`；自检里有一条钉子盯着**全仓库不许再有 `currentTab.value = 'env'`**。
+
+**哪条自检守着**：「渲染层：左栏七项（TabId 里没有 shell / env，页面容器也没有 pane-shell）」
+「渲染层：环境自检是设置里的详情层（不是页面）」
+「渲染层：环境自检详情层盖的是工作区（挂在 <main> 里，不吃掉左栏与顶栏）」
+「渲染层：终端页的会话条第一项固定是 dsh 终端、新建按钮镂空（两路终端在一个页面里）」
+「渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）」
+「首启门禁：顶栏的标题与"右侧控件收起"读同一个 gateVisible（R-03）」（标题多了面包屑那一段，
+门禁分支仍然只认 `gateVisible`）
+「设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层」、以及改了措辞的那条
+「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」。
 
 ### 7.10 本地 Shell 有意**不持久化**
 
@@ -528,7 +603,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 ### 7.20 运行环境自检：探测是只读的，修复只有两个动作
 
-**为什么有这一页**：dsh 起不来时界面上只有一句「已停止」，而最常见的原因恰恰是说不出口的那种 —— 本机 Node 版本不兼容时 dsh **静默退出**（退出码 0、零输出，见 7.4），光看退出码永远发现不了；插件的装 / 卸 / 升级又会因为 GUI 应用的 PATH 很窄而缺 pnpm（7.18 第 2 条）。所以左栏第 8 页把「这台机器上到底有什么、能不能用」逐条摆出来。
+**为什么有这一页**：dsh 起不来时界面上只有一句「已停止」，而最常见的原因恰恰是说不出口的那种 —— 本机 Node 版本不兼容时 dsh **静默退出**（退出码 0、零输出，见 7.4），光看退出码永远发现不了；插件的装 / 卸 / 升级又会因为 GUI 应用的 PATH 很窄而缺 pnpm（7.18 第 2 条）。所以把「这台机器上到底有什么、能不能用」逐条摆出来（t45 之前它是左栏第 8 页，现在是设置页「运行环境」卡的详情视图，见 7.30）。
 
 **探测与判定分家**：`main/env-doctor.ts` 的 `collectEnvProbe()` 只负责收集事实（跑 `--version`、查 PATH 与已知目录、读 `process.versions`），`judgeEnvironment(raw)` 是**纯函数** —— 入参只有已经收集好的结果，不碰磁盘、不起子进程、不读 `process.*`、也不看时钟（`checkedAt` 由调用方塞进 `raw`）。所以那 8 项的所有分支在自检里都能用**手工构造的对象字面量**跑完，不需要装 pnpm、不需要起任何进程（与 `parseNetstatForPort` / `checkDumpResult` / `windowsBinCandidates` 是同一套路）。加一项判定时改 `EnvCheckId` 联合类型，渲染层那张 `Record<EnvCheckId, string>` 的标题映射会跟着报错，漏不掉。
 
@@ -775,7 +850,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，291 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，299 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：
