@@ -3821,6 +3821,68 @@ async function main(): Promise<void> {
       );
     })(),
   );
+  // t47：装插件用的那份 pnpm 必须和这份 profile 记的大版本一致。
+  // 真机踩过：PATH 里先命中 nvm 里的 corepack shim（pnpm 9 / store v3），而 profile 是
+  // pnpm 10（store v10）装的 —— pnpm 直接拒绝动手，用户拿到一段看不懂的话。
+  const profileModulesYaml = [
+    'hoistPattern:',
+    'packageManager: pnpm@10.15.0',
+    'storeDir: /Users/someone/Library/pnpm/store/v10',
+    'virtualStoreDir: .pnpm',
+  ].join('\n');
+  check(
+    '插件安装：从 profile 的 .modules.yaml 读出"这份依赖是哪个大版本的 pnpm 装的"（纯函数）',
+    processUtils.parseProfilePnpmMajor(profileModulesYaml) === '10' &&
+      processUtils.parseProfilePnpmMajor('packageManager: pnpm@9.6.0\n') === '9' &&
+      // 没有这一行 / 空文本 → null（这时只能沿用老规矩：PATH 优先那份）
+      processUtils.parseProfilePnpmMajor('virtualStoreDir: .pnpm\n') === null &&
+      processUtils.parseProfilePnpmMajor('') === null &&
+      // 只认 packageManager 这一行，别把 storeDir 里的数字当版本
+      processUtils.parseProfilePnpmMajor('storeDir: /x/store/v10\n') === null,
+  );
+  check(
+    '插件安装：store 大版本不一致时给人话（不再是 pnpm 那段原文）',
+    (() => {
+      // 真机原文（用户截图里那段，截取关键几行）
+      const real = [
+        'The dependencies at "/Users/me/.dsh/profiles/web/node_modules" are currently linked from the store at',
+        '"/Users/me/Library/pnpm/store/v10".',
+        'pnpm now wants to use the store at "/Users/me/Library/pnpm/store/v3" to link dependencies.',
+        '(This error may happen if the node_modules was installed with a different major version of pnpm)',
+      ].join('\n');
+      const hint = pluginManager.summarizePluginFailure(real, 'dshmarket', {
+        used: '9.6.0',
+        expectedMajor: '10',
+      });
+      return (
+        typeof hint === 'string' &&
+        /pnpm 10/.test(hint) &&
+        /pnpm 9\.6\.0/.test(hint) &&
+        /store/.test(hint) &&
+        // 没有上下文时也得认出来（只是说不出具体版本）
+        typeof pluginManager.summarizePluginFailure(real) === 'string'
+      );
+    })(),
+  );
+  check(
+    '插件安装：装之前按 profile 挑 pnpm，并把选中的那份顶到子进程 PATH 最前',
+    (() => {
+      const pluginSource = fs.readFileSync(path.join(srcDir, 'main', 'plugin-manager.ts'), 'utf8');
+      const utils = fs.readFileSync(path.join(srcDir, 'main', 'process-utils.ts'), 'utf8');
+      const body = pluginSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      return (
+        /const pick = findPnpmForProfile\(pluginProfileDir\(\)\);/.test(body) &&
+        // 选中的那份要排在最前（dsh 在 profile 目录里裸 spawnSync('pnpm')，只认 PATH）
+        /env\[key\] = \[\s*dir,/.test(body) &&
+        /!pick\.matched && pick\.expectedMajor/.test(body) &&
+        // 既有那道"根本没 pnpm"的闸不许被顺手删掉
+        /if \(findPnpm\(\) === null\)/.test(body) &&
+        // 判定本身是纯的：解析只看 packageManager 那一行
+        /export function parseProfilePnpmMajor\(text: string\): string \| null/.test(utils) &&
+        /export function findPnpmForProfile\(profileDir: string\): PnpmPick/.test(utils)
+      );
+    })(),
+  );
   check(
     '环境自检（VM-09）：这条判据是共享的（findPnpm 与插件路径同一份偏好），且 process-utils 既有导出签名一个没改',
     (() => {

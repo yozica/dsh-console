@@ -60,7 +60,7 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
-test/selftest.ts        306 项自检（`npm test`），不需要 Electron
+test/selftest.ts        309 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -102,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（306 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（309 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -462,6 +462,35 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 「重启后进 Harness：就绪判据是 running + 已拿到带令牌地址」
 「重启后进 Harness：意图在调用重启之前立」「重启后进 Harness：四个入口都走同一条流程」
 「重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，Harness 页有可关闭的到达提示」。
+
+### 7.32 装插件用的 pnpm，必须和 profile 对得上（t47）
+
+**现象**（用户真机）：插件页装 `dshmarket` 失败，输出区里是 pnpm 的一段话 ——
+`… node_modules … currently linked from the store at …/store/v10 … pnpm now wants to use the store at
+…/store/v3 … (This error may happen if the node_modules was installed with a different major version of pnpm)`。
+
+**原因**：这台机器上两份 pnpm 各自认一个 store（实测）：`~/Library/pnpm/pnpm` = **10.15.0** → `store/v10`；
+PATH 里第一个是 nvm 22 的 corepack shim = **9.6.0** → `store/v3`。而 `~/.dsh/profiles/web/node_modules`
+是 **pnpm 10** 装的（`.modules.yaml` 的 `packageManager: pnpm@10.15.0` + `storeDir: …/store/v10`）。
+装插件的链路是 console 起 `dsh plugin …`，dsh 在 profile 目录里**裸 `spawnSync('pnpm')`（只认 PATH）**
+—— 它拿到 pnpm 9，pnpm 9 只肯用 store v3，于是拒绝动手。**store 布局按 pnpm 大版本走**，这是硬约束。
+
+**现在的做法**（细节与现场记录见 [`docs/plugin-install-pnpm.md`](docs/plugin-install-pnpm.md)）：
+
+- **装之前按 profile 挑**：`findPnpmForProfile(profileDir)` 读 `node_modules/.modules.yaml` 的
+  `packageManager`，在「PATH 里那份 + 各已知安装位置」里挑**大版本一致**的那份；一个都对不上就交回最靠前
+  那份 + `matched: false`（说实话，不静默用一个注定失败的版本）。判定拆成三个纯/薄函数：
+  `parseProfilePnpmMajor`（纯）、`readProfilePnpmMajor`、`pnpmVersionOf`（实测 `-v`，进程内缓存）。
+- **挑出来必须落成 PATH 前置**：dsh 只认 PATH，所以 `plugin-manager.ts` 把选中那份的目录顶到子进程
+  PATH 最前（`envWithKnownBins` 补的是 `findPnpm()` 那份 = PATH 优先，光靠它不够）。
+- **这种错误要给人话**：`summarizePluginFailure()` 新增一条，把上面那段原文翻成
+  「这份 profile 的依赖是用 pnpm 10 装的，而这次用的是 pnpm 9.6.0 …… 换成一致的那一档再装」。
+- 既有导出签名一个没改（`pathWithKnownBins` / `envWithKnownBins` / `findPnpm` 原样），
+  「根本没 pnpm」那道闸也保留。
+
+**哪条自检守着**：「插件安装：从 profile 的 .modules.yaml 读出"这份依赖是哪个大版本的 pnpm 装的"（纯函数）」
+「插件安装：store 大版本不一致时给人话（不再是 pnpm 那段原文）」（夹具就是真机那段原文）
+「插件安装：装之前按 profile 挑 pnpm，并把选中的那份顶到子进程 PATH 最前」。
 
 ### 7.10 本地 Shell 有意**不持久化**
 
