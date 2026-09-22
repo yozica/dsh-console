@@ -157,3 +157,17 @@ ready = phase === 'running' && Boolean(dsh.uiUrl);
 - 横条时代文字贴最左、「知道了」贴最右，**中间空着 972px**；轻提示是胶囊，不存在这个问题；
 - `.banner` 的 `align-items: flex-start` + 图标 `margin-top: 2px` 是给多行 banner 的，
   单行套上去图标/文字会比按钮**偏上 3~4px**（真机量出来的 4px / 2.9px）；轻提示用 `align-items: center`。
+
+### 再改判一次：从"浮层轻提示"改成"顶栏信息位亮一下"
+
+浮层那版（居中胶囊、4.5 秒消失）实物给用户看过之后被判「不好看，你学一下UI设计呗」。
+复盘出来的五条：34 个字塞进胶囊折成两行、半透明底压在人家的正文上显得脏、浮着却没有层级像贴纸、
+位置正好压住 Harness 页第一行内容、以及"为了居中而居中"。
+四个方案与实测数据留在 [`docs/harness-arrival-design.html`](harness-arrival-design.html)，最终按方案 A 落地：
+
+- 亮的是**顶栏右侧那格已有的信息位** `#topbar-note`（平时写「<地址>，PID …」），
+  `ARRIVAL_TOAST_MS = 4000` 之后自己换回；文案压到一句（按来路分：plugin「✓ 装配层改动已加载」、
+  dashboard「✓ dsh 已重启」、env「✓ Node 改动已生效」、ui「✓ 已接管为受管实例」）；
+- 为什么不是 Harness 页工具条右端那格 `#ui-note`：应用内全屏时
+  `body[data-immersive='true'] #pane-ui .bar` 会把整条工具条藏掉 —— 轻提示必须在我看不到工具条时也在；
+- 长解释留在插件页那条黄条里（它已经写着「dsh 已重启，装配层的改动已加载。」）。

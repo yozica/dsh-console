@@ -86,9 +86,11 @@ export const harnessArrivalNotice: Ref<string | null> = ref(null);
  * 「轻提示」自己待多久（t46 修正）。
  *
  * 用户裁定：**不要常驻提示**（原来那条带「知道了」的横条太吵），"确认一下"就够了 ——
- * 所以它是一条自己会消失的小胶囊，没有按钮、也不需要人去关。
+ * 所以它只是**借工具栏右端已有的状态槽**（`#ui-note`）亮一下：4 秒后自己换回「已载入 …」。
+ * 不新增任何表面，也不遮内嵌界面的内容（原来那条浮在正文上的胶囊被用户否了：
+ * "不好看，你学一下UI设计呗" —— 摆法与取舍见 docs/harness-arrival-design.html）。
  */
-export const ARRIVAL_TOAST_MS = 4500;
+export const ARRIVAL_TOAST_MS = 4000;
 let arrivalTimer: ReturnType<typeof setTimeout> | null = null;
 function clearArrivalTimer(): void {
   if (arrivalTimer !== null) clearTimeout(arrivalTimer);
@@ -136,11 +138,18 @@ export function restartArrived(
   return nav.leftRunning || nav.uiUrlAtBegin !== (uiUrl ?? null);
 }
 
+/**
+ * 到了 Harness 页之后那句**轻提示**的正文。
+ *
+ * 短到一眼看完（用户："给个轻提示就可以了"）—— 它显示在工具栏右端那条已有的状态槽里
+ * （`#ui-note`，平时写着「已载入 …」），所以**必须短**：那一格宽度有限，长了会被省略号截掉。
+ * 长解释留在插件页那条黄条里（它已经写着「dsh 已重启，装配层的改动已加载。」）。
+ */
 const ARRIVAL: Record<RestartReason, string> = {
-  plugin: '刚刚重启过 dsh，装配层的改动已经加载。以后改你自己的 cordis.patch.yml 不用重启。',
-  dashboard: '刚刚重启过 dsh。',
-  env: '刚刚重启过 dsh，Node 的改动已经生效。',
-  ui: '已接管为受管实例，内嵌界面已经可用。',
+  plugin: '✓ 装配层改动已加载',
+  dashboard: '✓ dsh 已重启',
+  env: '✓ Node 改动已生效',
+  ui: '✓ 已接管为受管实例',
 };
 
 const READY_MESSAGE: Record<RestartReason, string> = {

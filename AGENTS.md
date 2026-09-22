@@ -451,11 +451,15 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 - **收尾六态**：`ready`（切页 + 到达提示 + 状态栏一句）/ `failed`（重启调用本身失败，黄条变红说实话）/
   `unready`（相位落到 `stopped`/`degraded`/`conflict`，或超过 90 秒 = `BOOT_LOCK_MAX_MS`）/
   `external`（拿不到令牌，不切页）/ `escaped`（用户在锁上说了"不等了"→ **取消**跳转）/ `idle`。
-- **到达时给的是"轻提示"，不是常驻横条**：Harness 页里一条浮在内嵌界面顶部的胶囊 `#ui-arrival`
-  （「刚刚重启过 dsh，装配层的改动已经加载…」），**4.5 秒后自己消失**（`ARRIVAL_TOAST_MS`），
-  没有按钮、也不需要人去关，并且 `pointer-events: none` 绝不拦内嵌页的点击。
-  为什么不是可关闭的常驻提示：用户裁定「给个轻提示就可以了，不用给这种常驻提示」——
-  "确认一下"不值得占住页面顶上一条。
+- **到达时给的是"轻提示"，而且落在顶栏右侧那格已有的信息位上**（`#topbar-note`，平时写着
+  「<地址>，PID …」）：重启就绪后的 4 秒里它变成绿色小胶囊「✓ 装配层改动已加载」，然后自己换回。
+  没有按钮、没有新表面、不遮内嵌界面的任何内容。
+  - 为什么不用浮层：先做过"可关闭的常驻横条"（用户：「给个轻提示就可以了，不用给这种常驻提示」），
+    又做过"浮在正文上的胶囊"（用户：「不好看，你学一下UI设计呗」——半透明底压着别人的正文、
+    又没有层级，两行字还被圆角切碎）。四个方案与取舍见 [`docs/harness-arrival-design.html`](docs/harness-arrival-design.html)。
+  - 为什么是**顶栏**那格而不是 Harness 页工具条右端那格：应用内全屏时
+    `body[data-immersive='true'] #pane-ui .bar` 会把整条工具条藏掉，顶栏则两种模式下都在
+    （真机上量出来的，别改成工具条那格）。
 - **分层**：`lib/restart-nav.ts` 只有状态与纯判据（**不许有 DOM** —— 自检直接 import 它来钉就绪判据，
   而自检的编译图 `tsconfig.node.json` 没有 DOM 类型）；`lib/restart-flow.ts` 是编排（有 `alert`，谁也别
   import 它）；`app.ts` 负责等就绪 / 超时 / 切页 / 发状态栏消息。
@@ -464,7 +468,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 「启动锁：锁上的「不等了」/ Esc 取消这一轮跳转（唯一会取消的路径）」
 「重启后进 Harness：就绪判据是 running + 已拿到带令牌地址」
 「重启后进 Harness：意图在调用重启之前立」「重启后进 Harness：四个入口都走同一条流程」
-「重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，Harness 页是"会自动消失的轻提示"」。
+「重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，到达提示走顶栏那格已有的信息位（方案 A）」。
 
 ### 7.10 本地 Shell 有意**不持久化**
 

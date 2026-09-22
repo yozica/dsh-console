@@ -1099,6 +1099,7 @@ async function main(): Promise<void> {
   );
   const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
   const restartNavCode = fs.readFileSync(path.join(rendererDir, 'lib', 'restart-nav.ts'), 'utf8');
+  const topBarSource = fs.readFileSync(path.join(rendererDir, 'shell', 'TopBar.vue'), 'utf8');
   const stylesCode = fs.readFileSync(path.join(rendererDir, 'styles.css'), 'utf8');
   // t46：黄条的四态 + Harness 页那条到达提示（可关闭）
   check(
@@ -1111,27 +1112,37 @@ async function main(): Promise<void> {
       restartNav.harnessArrivalNotice.value === null,
   );
   check(
-    '重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，Harness 页是"会自动消失的轻提示"',
+    '重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，到达提示走顶栏那格已有的信息位（方案 A）',
     ['pending', 'failed', 'unready', 'external', 'escaped', 'ready'].every((state) =>
       new RegExp(`case '${state}':`).test(mergedPluginSource),
     ) &&
       /id="plugin-restart-line"/.test(mergedPluginSource) &&
       /id="btn-plugin-restart"/.test(mergedPluginSource) &&
       /:disabled="navPending"/.test(mergedPluginSource) &&
-      // 到达提示长在 Harness 页里（不是 index.html）。**它是轻提示，不是常驻横条**
-      // （用户裁定："给个轻提示就可以了，不用给这种常驻提示"）：没有按钮、自己会消失，
-      // 而且浮在内嵌界面里、不拦点击。
-      /id="ui-arrival"/.test(uiPaneSource) &&
-      /class="toast"/.test(uiPaneSource) &&
+      // 到达提示 = 工具栏右端那条**已有**的状态槽亮一下（方案 A，见 docs/harness-arrival-design.html）：
+      // 用户先否了"可关闭的常驻横条"（"给个轻提示就可以了"），又否了"浮在正文上的胶囊"
+      // （"不好看，你学一下UI设计呗"）—— 所以既不新增表面、也不遮内容、也没有按钮。
+      // 那一格是**顶栏**右侧的上下文信息（`#topbar-note`）——它窗口模式与全屏模式都在，
+      // 而 Harness 页工具条右端那格在应用内全屏时整条被藏起来。
+      /id="topbar-note"/.test(topBarSource) &&
+      /harnessArrivalNotice\.value \|\| contextNote\.value/.test(topBarSource) &&
+      /:class="\{ lit: harnessArrivalNotice \}"/.test(topBarSource) &&
+      /import \{ harnessArrivalNotice \} from '\.\.\/lib\/restart-nav\.js';/.test(topBarSource) &&
+      !/harnessArrivalNotice/.test(uiPaneSource) &&
+      !/id="ui-arrival"/.test(uiPaneSource) &&
+      !/class="toast"/.test(uiPaneSource) &&
       !/btn-ui-arrival-dismiss/.test(uiPaneSource) &&
       !/dismissHarnessArrival/.test(uiPaneSource) &&
-      /ARRIVAL_TOAST_MS = 4500/.test(restartNavCode) &&
+      /ARRIVAL_TOAST_MS = 4000/.test(restartNavCode) &&
       /arrivalTimer = setTimeout\(/.test(restartNavCode) &&
       /harnessArrivalNotice\.value = null;\n {2}\}, ARRIVAL_TOAST_MS\);/.test(restartNavCode) &&
-      // 样式：浮在 .webview-wrap 里、绝不拦内嵌页的点击、不给阴影（阴影全局只用一处）
-      /\.toast \{[\s\S]*?position: absolute;[\s\S]*?pointer-events: none;[\s\S]*?\}/.test(
+      // 文案要短（那一格宽度有限）；长解释留在插件页那条黄条里
+      /plugin: '✓ 装配层改动已加载'/.test(restartNavCode) &&
+      // 样式：只给状态槽加一层绿色底；浮层/胶囊那套已经删掉
+      /\.topbar-note\.lit \{[\s\S]*?color: var\(--run\);[\s\S]*?background: var\(--run-soft\);[\s\S]*?\}/.test(
         stylesCode,
       ) &&
+      /\.toast \{/.test(stylesCode) === false &&
       /\.banner\.arrival/.test(stylesCode) === false,
   );
 
