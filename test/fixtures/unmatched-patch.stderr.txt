@@ -1,1 +1,1 @@
-dsh: [/Users/lichengming/Desktop/dsh/dsh-console/.build-home/design/dsh-home/profiles/web/cordis.patch.yml] patch: entry "这个条目不存在" not found
+dsh: [/Users/someone/Desktop/dsh/dsh-console/.build-home/design/dsh-home/profiles/web/cordis.patch.yml] patch: entry "这个条目不存在" not found
