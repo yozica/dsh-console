@@ -15,7 +15,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { phaseText } from '../lib/phase-text.js';
 import { formatDurationMs, formatUptime } from '../lib/format.js';
-import { forceStopFlow, openUiExternally, restartFlow, stopFlow } from '../lib/dsh-actions.js';
+import { forceStopFlow, openUiExternally, stopFlow } from '../lib/dsh-actions.js';
+import { restartThenOpenHarness } from '../lib/restart-flow.js';
 import { requestEnvFocus } from '../lib/env-anchor.js';
 import { envReport } from '../lib/env-doctor.js';
 import { openEnvDetail } from '../lib/env-layer.js';
@@ -144,7 +145,9 @@ const start = () =>
     if (!result.ok) alert(`启动失败：${result.error}`);
   });
 const stop = () => run('stop', () => stopFlow(api, () => dsh.value));
-const restart = () => run('restart', () => restartFlow(api, () => dsh.value));
+// 重启之后自动进 Harness（t46）：控制台这一处与插件页、环境自检共用同一条流程
+const restart = () =>
+  run('restart', () => restartThenOpenHarness(api, () => dsh.value, 'dashboard'));
 const forceStop = () => run('force', () => forceStopFlow(api));
 const sendCtrlC = () => api.dshInput('\u0003');
 const openInBrowser = () => openUiExternally(api, () => dsh.value);

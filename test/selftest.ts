@@ -28,6 +28,7 @@ import * as envDoctor from '../src/main/env-doctor';
 // 渲染层的纯逻辑（`lib/**` 与 selftest 同属「契约与编排」那一层，见 AGENTS §2 的模块边界）
 import * as envDetail from '../src/renderer/lib/env-detail';
 import * as wizardView from '../src/renderer/lib/wizard-view';
+import * as restartNav from '../src/renderer/lib/restart-nav';
 import * as nodeInstaller from '../src/main/node-installer';
 import { Settings, DEFAULTS } from '../src/main/settings';
 import { RELEASES_URL, UPDATE_MAC_FEED_URL } from '../src/shared/ipc';
@@ -915,18 +916,226 @@ async function main(): Promise<void> {
   const gateAutoStartBody =
     bootLockCode.match(/function wireGateAutoStart\(\): void \{[\s\S]*?\n\}/)?.[0] ?? '';
   const idleWrites = (bootLockCode.match(/bootLockState = 'idle';/g) || []).length;
+  // t46 起"开回合"这件事收进了一个 `armEpisode()`：第二回合（向导之后）与第三回合（重启之后）
+  // 都只委托给它，不许各自复制一遍体。5 秒窗口、"没有等待就不上锁"、不自己调 setBootLock
+  // 这三条仍然逐字成立 —— 只是从 armAfterGate 挪到了 armEpisode。
+  const armEpisodeBody = bootLockCode.match(/function armEpisode\([\s\S]*?\n\}/)?.[0] ?? '';
+  const armAfterRestartBody =
+    bootLockCode.match(/function armAfterRestart\(\): void \{[\s\S]*?\n\}/)?.[0] ?? '';
   check(
-    '启动锁：向导结束后的自动启动是"显式开的一个回合"（入口唯一、带 5 秒窗口、自己不调 setBootLock）',
-    armAfterGateBody.length > 200 &&
-      /bootLockEpisode = 'afterGate';/.test(armAfterGateBody) &&
-      /bootLockState = 'idle';/.test(armAfterGateBody) &&
-      /GATE_ARM_WINDOW_MS/.test(armAfterGateBody) &&
-      /if \(bootLockState === 'idle'\) bootLockState = 'done';/.test(armAfterGateBody) &&
-      // 写 idle 的地方只有两处：声明那一行 + 这个回合入口。上锁本身仍然只有一处（idle → waiting）
+    '启动锁：向导之后的自动启动是"显式开的一个回合"（只委托给 armEpisode、带 5 秒窗口、自己不调 setBootLock）',
+    armEpisodeBody.length > 200 &&
+      armAfterGateBody.length > 60 &&
+      /armEpisode\('afterGate'\);/.test(armAfterGateBody) &&
+      /bootLockEpisode = episode;/.test(armEpisodeBody) &&
+      /bootLockState = 'idle';/.test(armEpisodeBody) &&
+      /GATE_ARM_WINDOW_MS/.test(armEpisodeBody) &&
+      /if \(bootLockState === 'idle'\) bootLockState = 'done';/.test(armEpisodeBody) &&
+      // 写 idle 的地方只有两处：声明那一行 + armEpisode。上锁本身仍然只有一处（idle → waiting）
       idleWrites === 1 &&
       /let bootLockState: BootLockState = 'idle';/.test(bootLockCode) &&
+      !/setBootLock\(/.test(armEpisodeBody) &&
       !/setBootLock\(/.test(armAfterGateBody),
     `${idleWrites} 处 bootLockState = 'idle';`,
+  );
+  // t46：第三个回合（点了「重启 dsh」之后）。同样只委托给 armEpisode；锁文案按回合分开 ——
+  // 重启那一轮不抢屏（规格 §1 的 4A），所以它的 note 不许提全屏。
+  const lockCopyBody = bootLockCode.match(/const LOCK_COPY[\s\S]*?\n\};/)?.[0] ?? '';
+  check(
+    '启动锁：重启 dsh 之后是第三个回合（afterRestart），锁文案按回合分开、重启那轮不提全屏',
+    armAfterRestartBody.length > 40 &&
+      /armEpisode\('afterRestart', RESTART_ARM_WINDOW_MS\);/.test(armAfterRestartBody) &&
+      // 重启要先把旧实例停掉、等端口释放（最长 10 秒），所以窗口比 R-32 那个长
+      /const RESTART_ARM_WINDOW_MS = 20000;/.test(bootLockCode) &&
+      // 中间相位（stopping / stopped）不许把这一回合收掉 —— 它的过期只由窗口定时器管
+      /if \(bootLockEpisode !== 'afterRestart'\) bootLockState = 'done';/.test(bootLockCode) &&
+      // 与第二回合不同：重启可能来第二次，所以**不带**幂等守卫
+      !/bootLockEpisode === 'afterRestart'\) return/.test(armAfterRestartBody) &&
+      ['startup', 'afterGate', 'afterRestart'].every((key) =>
+        new RegExp(`${key}: \\{`).test(lockCopyBody),
+      ) &&
+      /afterRestart: \{[^}]*noteTail: '就绪后自动打开 DeepSeek Harness'/.test(lockCopyBody) &&
+      !/afterRestart: \{[^}]*全屏/.test(lockCopyBody) &&
+      (lockCopyBody.match(/并进入全屏/g) || []).length === 2,
+  );
+  // t46：就绪判据是**纯函数**，直接喂相位试 —— 只看 running 会切到"还没捕获到令牌"那一屏
+  check(
+    '重启后进 Harness：就绪判据 = 看见旧实例停过 + running + 已拿到带令牌地址（只看 running 会切到 401，立意图当场就判成到了）',
+    restartNav.isRestartReady('running', 'http://127.0.0.1:3080/?token=abc') &&
+      !restartNav.isRestartReady('running', null) &&
+      !restartNav.isRestartReady('running', undefined) &&
+      !restartNav.isRestartReady('starting', 'http://127.0.0.1:3080/?token=abc') &&
+      // 真机踩到的那条：点下去那一刻旧实例还是 running + 带着旧令牌，**不许**当场判成"到了"
+      !restartNav.restartArrived(
+        {
+          reason: 'plugin',
+          outcome: 'pending',
+          startedAt: 0,
+          error: null,
+          leftRunning: false,
+          sawStarting: false,
+          uiUrlAtBegin: 'http://127.0.0.1:3080/?token=old',
+        },
+        'running',
+        'http://127.0.0.1:3080/?token=old',
+      ) &&
+      // 看见它停过之后（leftRunning）才算到
+      restartNav.restartArrived(
+        {
+          reason: 'plugin',
+          outcome: 'pending',
+          startedAt: 0,
+          error: null,
+          leftRunning: true,
+          sawStarting: true,
+          uiUrlAtBegin: 'http://127.0.0.1:3080/?token=old',
+        },
+        'running',
+        'http://127.0.0.1:3080/?token=new',
+      ) &&
+      // 万一没看见中间相位（快得不给观察机会）：令牌换了也算到（令牌是每进程随机的）
+      restartNav.restartArrived(
+        {
+          reason: 'plugin',
+          outcome: 'pending',
+          startedAt: 0,
+          error: null,
+          leftRunning: false,
+          sawStarting: false,
+          uiUrlAtBegin: 'http://127.0.0.1:3080/?token=old',
+        },
+        'running',
+        'http://127.0.0.1:3080/?token=new',
+      ) &&
+      // "起不来"也要先看见它 starting 过：重启必然经过 stopped，那一段不是失败（真机踩到过）
+      !restartNav.restartStalled(
+        {
+          reason: 'plugin',
+          outcome: 'pending',
+          startedAt: 0,
+          error: null,
+          leftRunning: true,
+          sawStarting: false,
+          uiUrlAtBegin: null,
+        },
+        'stopped',
+      ) &&
+      restartNav.restartStalled(
+        {
+          reason: 'plugin',
+          outcome: 'pending',
+          startedAt: 0,
+          error: null,
+          leftRunning: true,
+          sawStarting: true,
+          uiUrlAtBegin: null,
+        },
+        'stopped',
+      ) &&
+      // "起不来"的三个终态：stopping / starting 还在路上，不算
+      restartNav.isRestartStalled('stopped') &&
+      restartNav.isRestartStalled('degraded') &&
+      restartNav.isRestartStalled('conflict') &&
+      !restartNav.isRestartStalled('starting') &&
+      !restartNav.isRestartStalled('stopping') &&
+      !restartNav.isRestartStalled('running') &&
+      // 四个入口的文案各自不同（状态栏那句与到达提示都要能对上）
+      new Set(
+        (['plugin', 'dashboard', 'env', 'ui'] as const).map((reason) =>
+          restartNav.readyMessage(reason),
+        ),
+      ).size === 4,
+  );
+  // t46：意图必须在调 restart 之前立 —— `start()` 一 spawn 就返回，晚立就错过那 5 秒上锁窗口
+  const restartFlowSource = fs.readFileSync(
+    path.join(rendererDir, 'lib', 'restart-flow.ts'),
+    'utf8',
+  );
+  const restartFlowBody =
+    restartFlowSource
+      .replace(/\/\/[^\n]*/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .match(/export async function restartThenOpenHarness\([\s\S]*?\n\}/)?.[0] ?? '';
+  check(
+    '重启后进 Harness：意图在调用重启之前立（start 一 spawn 就返回，晚立就错过上锁窗口）',
+    restartFlowBody.length > 200 &&
+      // 立意图时把"当时的带令牌地址"一起带上（用来判断令牌到底换没换）
+      /beginRestartNav\(reason, getDsh\(\)\?\.uiUrl \?\? null\)/.test(restartFlowBody) &&
+      restartFlowBody.indexOf('beginRestartNav(reason') > 0 &&
+      restartFlowBody.indexOf('beginRestartNav(reason') <
+        restartFlowBody.indexOf("mode === 'start'") &&
+      // 失败与"用户取消"分开处理：取消不该在界面上说成"重启失败"
+      /if \(result\.cancelled\) clearRestartNav\(\)/.test(restartFlowBody) &&
+      /else if \(!result\.ok\) settleRestartNav\('failed'/.test(restartFlowBody) &&
+      // 编排这一层不许自己 setBootLock / 不许自己切页 —— 那是 app.ts 的事
+      !/setBootLock\(|currentTab\.value =/.test(restartFlowBody),
+  );
+  // t46：四个入口共用同一条流程（规格 §1 的 3B + "顺带的第四处"）
+  const entryFiles = ['PluginPane', 'DashboardPane', 'EnvPane', 'UiPane'];
+  const entryMissing = entryFiles.filter(
+    (name) =>
+      !new RegExp(
+        `restartThenOpenHarness\\(api, \\(\\) => dsh\\.value, '(plugin|dashboard|env|ui)'`,
+      ).test(fs.readFileSync(path.join(rendererDir, 'panes', `${name}.vue`), 'utf8')),
+  );
+  check(
+    '重启后进 Harness：四个入口都走同一条流程（插件页 / 控制台 / 环境自检 / 重启为受管实例）',
+    entryMissing.length === 0 &&
+      // 页面里不许再有人自己调 restartFlow —— 那条路已经收进编排层 lib/restart-flow.ts
+      // （编排层自己当然要用它，所以这里只查四个页面，不查 rendererCode 合集）
+      !entryFiles.some((name) =>
+        /restartFlow\(/.test(
+          fs.readFileSync(path.join(rendererDir, 'panes', `${name}.vue`), 'utf8'),
+        ),
+      ) &&
+      /restartThenOpenHarness/.test(rendererCode),
+    entryMissing.length ? `缺：${entryMissing.join(', ')}` : `${entryFiles.length} 个入口`,
+  );
+  // t46：这两份源码要用在下面几条钉子里（黄条四态、到达提示）。`uiPaneSource` 后面第 12 节
+  // 还要再用一次，所以在这儿声明一次就够（放在它们之前，别在下面重复声明）。
+  const mergedPluginSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'PluginPane.vue'),
+    'utf8',
+  );
+  const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
+  // t46：黄条的四态 + Harness 页那条到达提示（可关闭）
+  check(
+    '重启后进 Harness：新一轮开始时收掉上一条到达提示（它说的是"上一轮已生效"）',
+    /harnessArrivalNotice\.value = null;/.test(
+      fs.readFileSync(path.join(rendererDir, 'lib', 'restart-nav.ts'), 'utf8'),
+    ) &&
+      restartNav.beginRestartNav('plugin') === undefined &&
+      restartNav.restartNav.value.outcome === 'pending' &&
+      restartNav.harnessArrivalNotice.value === null,
+  );
+  check(
+    '重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，Harness 页有可关闭的到达提示',
+    ['pending', 'failed', 'unready', 'external', 'escaped', 'ready'].every((state) =>
+      new RegExp(`case '${state}':`).test(mergedPluginSource),
+    ) &&
+      /id="plugin-restart-line"/.test(mergedPluginSource) &&
+      /id="btn-plugin-restart"/.test(mergedPluginSource) &&
+      /:disabled="navPending"/.test(mergedPluginSource) &&
+      // 到达提示长在 Harness 页里（不是 index.html），而且关得掉 —— 它是"确认一下"，不是常驻警告
+      /id="ui-arrival"/.test(uiPaneSource) &&
+      /id="btn-ui-arrival-dismiss"/.test(uiPaneSource) &&
+      /@click="dismissHarnessArrival"/.test(uiPaneSource),
+  );
+
+  // t46：用户在锁上按「不等了」/ Esc 要**取消**这次跳转（唯一会取消的路径，规格 §2.4）
+  const userSkipBody =
+    bootLockCode.match(/function userSkipBootLock\(\): void \{[\s\S]*?\n\}/)?.[0] ?? '';
+  const wireBootLockBody =
+    bootLockCode.match(/function wireBootLock\(\): void \{[\s\S]*?\n\}/)?.[0] ?? '';
+  check(
+    '启动锁：锁上的「不等了」/ Esc 取消这一轮跳转（唯一会取消的路径）',
+    userSkipBody.length > 80 &&
+      /restartNav\.value\.outcome === 'pending'/.test(userSkipBody) &&
+      /settleRestartNav\('escaped'\)/.test(userSkipBody) &&
+      /releaseBootLock\(\);/.test(userSkipBody) &&
+      /userSkipBootLock\(\)/.test(wireBootLockBody) &&
+      // Esc 那条路也走它（两处都是"用户说别等了"）
+      (bootLockCode.match(/userSkipBootLock\(\)/g) || []).length >= 3,
   );
   check(
     '启动锁：只有放行页那条路开第二回合（逃生口不上锁），且整个运行只试一次',
@@ -1284,7 +1493,6 @@ async function main(): Promise<void> {
   // ---------------------------------------------------------- 12. 自动全屏的前提
   //    应用内全屏是"为内嵌 DSH 界面让出整屏"。外部实例拿不到令牌时这一页只有一段说明，
   //    为它收起左栏与底栏没有意义 —— 用户点开 Harness 页莫名全屏就是这个问题。
-  const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
   const storeSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
   const codeOf = (text: string): string =>
     text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '');

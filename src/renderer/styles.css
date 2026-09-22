@@ -1512,6 +1512,20 @@ body[data-immersive='true'] .webview-wrap {
   flex: 0 0 auto;
 }
 
+/* 黄条的两个变体（t46）：`rose` 是"重启失败"这种硬失败，`arrival` 是"已经生效"的确认。
+   两者都只换底色 —— 形状、间距、内边距沿用 .banner，免得又长出一套新表面。 */
+.banner.rose {
+  background: var(--rose-soft);
+}
+
+.banner.arrival {
+  background: var(--accent-soft);
+}
+
+.banner.arrival .i {
+  color: var(--accent);
+}
+
 .banner.hidden {
   display: none;
 }

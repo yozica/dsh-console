@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>插件装完之后怎么"看得见生效"（DSH Console）</title>
+    <!--
+      这份文件回答一件事：插件页装/卸/升级之后那条黄条上的「立即重启 dsh」，
+      点下去现在只有一句状态栏提示（"正在重启 dsh…"），**没有后续**，用户会觉得没生效。
+
+      目标（你提的）：点完之后，等 dsh 重启就绪，**自动进入 DeepSeek Harness 页**。
+
+      但"等就绪的那几秒"和"到了那边之后"还有几种说得通的摆法，规格里没写死，
+      所以这里按既有尺寸（左栏 --rail-w 188px、顶栏 36px、状态栏、启动锁卡片）与既有
+      设计变量把它们都摆出来。零脚本、双击就能开；每一屏都是真实尺寸，可量可标注。
+
+      怎么用：在最后一节那张表里写「1A 2A 3B 4A」这种就行。
+    -->
+    <style>
+      :root {
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --t-lg: 15.5px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --rail-w: 188px;
+        --bar-h: 36px;
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --rail: #e6ebf2;
+        --well: #f2f5f9;
+        --hairline: rgba(16, 24, 40, 0.12);
+        --hairline-strong: rgba(16, 24, 40, 0.2);
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+        --accent: #0e7490;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(8, 145, 178, 0.16);
+        --run: #047857;
+        --rose: #be123c;
+        --rose-soft: rgba(190, 18, 60, 0.1);
+        --amber: #92400e;
+        --amber-soft: rgba(217, 119, 6, 0.13);
+        --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 24px 80px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          'Segoe UI',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+      h1 {
+        font-size: 21px;
+        margin: 0 0 6px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 42px 0 4px;
+      }
+      h2 .tag {
+        font-size: var(--t-xs);
+        font-weight: 500;
+        color: var(--ink-faint);
+        margin-left: 8px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 0 0 6px;
+      }
+      p.lead,
+      p.caption {
+        color: var(--ink-dim);
+        margin: 0 0 12px;
+        max-width: 1060px;
+      }
+      p.caption {
+        font-size: var(--t-md);
+      }
+      code {
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: var(--t-sm);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      ul.plain {
+        margin: 6px 0 12px;
+        padding-left: 22px;
+        color: var(--ink-dim);
+      }
+      ul.plain li {
+        margin: 2px 0;
+      }
+
+      /* ---- 一屏窗口：顶栏 36 + 左栏 188 + 内容 + 状态栏 ---- */
+      .screen {
+        position: relative;
+        width: 1220px;
+        max-width: 100%;
+        margin: 10px 0 6px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        overflow: hidden;
+        box-shadow: var(--shadow-focus);
+      }
+      .topbar {
+        height: var(--bar-h);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px 0 calc(var(--rail-w) + 12px);
+        background: var(--surface);
+        border-bottom: 1px solid var(--hairline);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .topbar .grow {
+        margin-left: auto;
+      }
+      .body {
+        display: grid;
+        grid-template-columns: var(--rail-w) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) auto;
+        background: var(--bg);
+      }
+      .rail {
+        grid-row: 1 / span 2;
+        background: var(--rail);
+        border-right: 1px solid var(--hairline);
+        padding: 12px 8px;
+      }
+      .rail-brand {
+        font-weight: 600;
+        font-size: var(--t-md);
+        padding: 4px 8px 10px;
+      }
+      .rail-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 6px 8px;
+        border-radius: var(--r-control);
+        color: var(--ink-dim);
+        font-size: var(--t-md);
+      }
+      .rail-item.on {
+        background: var(--surface);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .rail-item .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        border: 1.5px solid currentColor;
+        opacity: 0.75;
+        flex: 0 0 auto;
+      }
+      .main {
+        min-width: 0;
+        padding: 16px 20px;
+      }
+      .statusbar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 6px 20px;
+        background: var(--rail);
+        border-top: 1px solid var(--hairline);
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .statusbar .grow {
+        margin-left: auto;
+      }
+
+      /* ---- 页面里的公共件 ---- */
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .bar .grow {
+        margin-left: auto;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 30px;
+        padding: 0 13px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        background: var(--surface-2);
+        color: var(--ink);
+        font-size: var(--t-sm);
+        white-space: nowrap;
+      }
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      .btn.ghost {
+        background: transparent;
+        border-color: transparent;
+        color: var(--ink-dim);
+      }
+      .btn.tiny {
+        height: 23px;
+        padding: 0 9px;
+        font-size: var(--t-xs);
+      }
+      .btn.off {
+        background: var(--surface-2);
+        border-color: var(--hairline-strong);
+        color: var(--ink-faint);
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        overflow: hidden;
+        background: var(--surface);
+      }
+      .seg > span {
+        padding: 4px 12px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+      }
+      .seg > span.on {
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        padding: 12px 14px;
+        margin-bottom: 12px;
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 6px;
+      }
+      .panel-head h3 {
+        margin: 0;
+        font-size: var(--t-md);
+      }
+      .fact {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+      }
+      .fact .tail {
+        margin-left: auto;
+      }
+      .ok {
+        color: var(--run);
+        font-weight: 600;
+      }
+      .warn {
+        color: var(--amber);
+        font-weight: 600;
+      }
+      .bad {
+        color: var(--rose);
+        font-weight: 600;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 190px minmax(0, 1fr);
+        gap: 12px;
+      }
+      .list {
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: var(--surface);
+        overflow: hidden;
+      }
+      .list .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+        border-bottom: 1px solid var(--hairline);
+      }
+      .list .row:last-child {
+        border-bottom: 0;
+      }
+      .list .row.on {
+        background: var(--accent-soft);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .list .row .mono {
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+        margin-left: auto;
+      }
+
+      /* ---- 黄条（插件页那条"重启 dsh 后生效"）---- */
+      .banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 0 0 12px;
+        padding: 11px 14px;
+        background: var(--amber-soft);
+        border-radius: var(--r-panel);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        line-height: 1.7;
+      }
+      .banner.rose {
+        background: var(--rose-soft);
+      }
+      .banner .ic {
+        flex: 0 0 auto;
+        width: 15px;
+        height: 15px;
+        margin-top: 3px;
+        border-radius: 4px;
+        border: 1.5px solid var(--amber);
+      }
+      .banner.rose .ic {
+        border-color: var(--rose);
+      }
+      .banner .grow {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+      .banner .dead {
+        opacity: 0.55;
+      }
+
+      /* ---- 启动锁（复用 #boot-lock 的真实样式：整屏 + 居中卡片）---- */
+      .lock {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: color-mix(in srgb, var(--bg) 92%, transparent);
+      }
+      .lock-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        max-width: 460px;
+        padding: 28px 32px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        background: var(--surface);
+        box-shadow: var(--shadow-focus);
+        text-align: center;
+      }
+      .spinner {
+        width: 26px;
+        height: 26px;
+        border: 2px solid var(--hairline-strong);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+      }
+      .lock-title {
+        margin: 0;
+        font-size: var(--t-lg);
+        font-weight: 600;
+      }
+      .lock-desc,
+      .lock-note {
+        margin: 0;
+        font-size: var(--t-sm);
+      }
+      .lock-desc {
+        color: var(--ink-dim);
+      }
+      .lock-note {
+        color: var(--ink-faint);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---- Harness 页的内嵌区 ---- */
+      .embedded {
+        height: 300px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: var(--surface);
+        display: grid;
+        place-items: center;
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+        text-align: center;
+        padding: 20px;
+      }
+      .embedded .big {
+        font-size: var(--t-md);
+        color: var(--ink-dim);
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+
+      /* ---- 选项卡片 ---- */
+      .opt {
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        background: var(--surface);
+        padding: 14px 16px 4px;
+        margin: 12px 0 0;
+      }
+      .opt.sel {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      .opt header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .opt header b {
+        font-size: var(--t-md);
+      }
+      .opt .why {
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        max-width: 1000px;
+      }
+      .pick {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+      }
+      table.pick-table {
+        border-collapse: collapse;
+        margin: 10px 0 0;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        overflow: hidden;
+        font-size: var(--t-sm);
+      }
+      table.pick-table th,
+      table.pick-table td {
+        text-align: left;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--hairline);
+        vertical-align: top;
+      }
+      table.pick-table th {
+        background: var(--surface-2);
+        font-weight: 600;
+      }
+      table.pick-table tr:last-child td {
+        border-bottom: 0;
+      }
+      .legend {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+        margin: 4px 0 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>插件装完之后怎么"看得见生效"</h1>
+    <p class="lead">
+      现在：插件页装 / 卸 / 升级任何东西，改的都是 <code>package.json</code> 与
+      <code>node_modules</code>，所以黄条会写「已改到装配层，重启 dsh 后生效」，旁边两个按钮
+      「稍后」与「立即重启 dsh」。点「立即重启 dsh」之后，**只有状态栏上一句「正在重启 dsh…」**，
+      界面不切、不改样、也没有结束语 —— 用户自然觉得"点了没用"。
+    </p>
+    <p class="lead">
+      你要的行为：<b>点完之后等 dsh 重启就绪，自动进入 DeepSeek Harness 页</b>。
+      下面是这条流程的几个待定项，各自把能看的摆法摆出来 —— 每一屏都是真实尺寸 （左栏
+      <code>--rail-w</code> 188px、顶栏 <code>36px</code>、启动锁卡片同 <code>#boot-lock</code>），
+      用的也是应用里那套 CSS 变量。
+    </p>
+
+    <!-- ============================================================ 0 -->
+    <h2>0. 现状<span class="tag">点完就没了</span></h2>
+    <p class="caption">
+      点「立即重启 dsh」后：<code>api.restart()</code>（停 → 等端口释放 → 再拉起，最长 10 秒）→
+      <code>pendingRestart = false</code>（黄条消失）→ 状态栏一句「正在重启
+      dsh…」。窗口不上锁、不切页。
+    </p>
+    <div class="screen">
+      <div class="topbar"><span>插件</span><span class="grow">127.0.0.1:3080，受管实例</span></div>
+      <div class="body">
+        <div class="rail">
+          <div class="rail-brand">DSH Console</div>
+          <div class="rail-item"><span class="dot"></span>控制台</div>
+          <div class="rail-item"><span class="dot"></span>终端</div>
+          <div class="rail-item"><span class="dot"></span>DeepSeek Harness</div>
+          <div class="rail-item"><span class="dot"></span>DeepSeek 用量</div>
+          <div class="rail-item"><span class="dot"></span>归档会话</div>
+          <div class="rail-item on"><span class="dot"></span>插件</div>
+          <div class="rail-item"><span class="dot"></span>设置</div>
+        </div>
+        <div class="main">
+          <div class="bar">
+            <div class="seg"><span class="on">配置</span><span>基线（救援）</span></div>
+            <span class="btn tiny">刷新</span>
+            <span class="btn tiny primary">安装插件</span>
+          </div>
+          <div class="split">
+            <div class="list">
+              <div class="row on">@deepseek-ai/dsh-web<span class="mono">0.24.1</span></div>
+              <div class="row">dsh-hello-plugin<span class="mono">0.1.0</span></div>
+              <div class="row">profile: web<span class="mono">patch</span></div>
+            </div>
+            <div>
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>dsh-hello-plugin</h3>
+                  <span class="ok">已生效</span>
+                </div>
+                <div class="fact"><span>来源</span><span class="tail">npm</span></div>
+                <div class="fact"><span>层序</span><span class="tail">第 2 层（后盖前）</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span>运行中，受管实例</span>
+          <span class="grow">正在重启 dsh…</span>
+          <span>⌘+1~7 切换页面</span>
+        </div>
+      </div>
+    </div>
+    <p class="caption">
+      问题就在最后那条状态栏 —— 它在最底下、字号最小，而且 10 秒后连它也会被别的消息顶掉。
+    </p>
+
+    <!-- ============================================================ 1 -->
+    <h2>1. 从点到就绪的那几秒<span class="tag">选一个</span></h2>
+    <p class="caption">
+      就绪的判据我建议是 <b>dsh 进入 <code>running</code> 且已经捕获到带令牌的地址</b> （<code
+        >dsh.uiUrl</code
+      >
+      有了）—— 只看 <code>running</code> 就切过去的话，Harness 页可能还停在
+      「还没捕获到带令牌的地址」那一屏，等于白切。
+    </p>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 停在插件页 + 启动锁（推荐）</b>
+        <span class="why"
+          >复用现有那一层启动锁（向导结束后的自动启动就是它）：窗口盖住、卡片上写"正在重新启动 dsh /
+          已等待 N 秒 · 就绪后自动打开 DeepSeek Harness"，另给一个「不等了，先进入界面」。
+          好处：用户已经见过这套，一眼就知道"在等，而且等完会自己过去"；坏处：那几秒不能点别的。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar">
+          <span>插件</span><span class="grow">127.0.0.1:3080，受管实例</span>
+        </div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item"><span class="dot"></span>控制台</div>
+            <div class="rail-item"><span class="dot"></span>终端</div>
+            <div class="rail-item"><span class="dot"></span>DeepSeek Harness</div>
+            <div class="rail-item"><span class="dot"></span>DeepSeek 用量</div>
+            <div class="rail-item"><span class="dot"></span>归档会话</div>
+            <div class="rail-item on"><span class="dot"></span>插件</div>
+            <div class="rail-item"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="seg"><span class="on">配置</span><span>基线（救援）</span></div>
+              <span class="btn tiny">刷新</span>
+              <span class="btn tiny primary">安装插件</span>
+            </div>
+            <div class="split">
+              <div class="list">
+                <div class="row on">@deepseek-ai/dsh-web<span class="mono">0.24.1</span></div>
+                <div class="row">dsh-hello-plugin<span class="mono">0.1.0</span></div>
+              </div>
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>dsh-hello-plugin</h3>
+                  <span class="ok">已生效</span>
+                </div>
+                <div class="fact"><span>来源</span><span class="tail">npm</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="statusbar">
+            <span>运行中，受管实例</span>
+            <span class="grow">正在重启 dsh…</span>
+            <span>⌘+1~7 切换页面</span>
+          </div>
+        </div>
+        <div class="lock">
+          <div class="lock-card">
+            <span class="spinner" aria-hidden="true"></span>
+            <h2 class="lock-title" style="margin: 0">正在重新启动 dsh</h2>
+            <p class="lock-desc">正在拉起进程并等待健康检查</p>
+            <p class="lock-note">已等待 3 秒 · 就绪后自动打开 DeepSeek Harness</p>
+            <span class="btn tiny ghost" style="margin-top: 4px">不等了，先进入界面</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 立刻切到 Harness 页，页里显示"正在重连"</b>
+        <span class="why"
+          >点下去就切过去，Harness 页中间给一张卡片「dsh 正在重启，就绪后本页自动载入」，
+          就绪后卡片消失、界面自己出现。好处：反馈最直接（"已经带你到了目的地"）； 坏处：要动
+          Harness 页的空状态 —— 现在它在 dsh 没跑时会显示"回控制台启动"，
+          重启期间必须换掉，否则看起来像重启把 dsh 弄挂了。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar">
+          <span>DeepSeek Harness</span><span class="grow">127.0.0.1:3080，受管实例</span>
+        </div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item"><span class="dot"></span>控制台</div>
+            <div class="rail-item"><span class="dot"></span>终端</div>
+            <div class="rail-item on"><span class="dot"></span>DeepSeek Harness</div>
+            <div class="rail-item"><span class="dot"></span>DeepSeek 用量</div>
+            <div class="rail-item"><span class="dot"></span>归档会话</div>
+            <div class="rail-item"><span class="dot"></span>插件</div>
+            <div class="rail-item"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <span class="btn tiny off">载入</span>
+              <span class="btn tiny">全屏</span>
+              <span class="btn tiny">重新载入</span>
+            </div>
+            <div class="embedded">
+              <div>
+                <div class="big">dsh 正在重启</div>
+                <div>就绪后这一页会自己载入，不用管它。</div>
+                <div style="margin-top: 6px; color: var(--ink-faint)">已等待 3 秒…</div>
+              </div>
+            </div>
+          </div>
+          <div class="statusbar">
+            <span>运行中，受管实例</span>
+            <span class="grow">正在重启 dsh…</span>
+            <span>⌘+1~7 切换页面</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>C. 不遮不切，只把黄条变成进度</b>
+        <span class="why"
+          >黄条留在原地，文案换成「正在重启 dsh…（已 3 秒）」，按钮禁用，就绪后自动切页。
+          好处：什么都不新增；坏处：那几秒界面看着还是"没锁也没动"，而且用户可以点左栏走开，
+          走到一半被切去 Harness 会有点突兀。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar">
+          <span>插件</span><span class="grow">127.0.0.1:3080，受管实例</span>
+        </div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item"><span class="dot"></span>控制台</div>
+            <div class="rail-item"><span class="dot"></span>终端</div>
+            <div class="rail-item"><span class="dot"></span>DeepSeek Harness</div>
+            <div class="rail-item"><span class="dot"></span>DeepSeek 用量</div>
+            <div class="rail-item"><span class="dot"></span>归档会话</div>
+            <div class="rail-item on"><span class="dot"></span>插件</div>
+            <div class="rail-item"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="seg"><span class="on">配置</span><span>基线（救援）</span></div>
+              <span class="btn tiny">刷新</span>
+              <span class="btn tiny primary">安装插件</span>
+            </div>
+            <div class="banner">
+              <span class="ic"></span>
+              <span>
+                <b>正在重启 dsh…</b>
+                bundle 列表是启动时读的，起来之后这一页会自动切到 DeepSeek Harness。
+              </span>
+              <span class="grow">
+                <span class="btn tiny off dead">稍后</span>
+                <span class="btn tiny off dead">立即重启 dsh</span>
+              </span>
+            </div>
+            <div class="split">
+              <div class="list">
+                <div class="row on">@deepseek-ai/dsh-web<span class="mono">0.24.1</span></div>
+                <div class="row">dsh-hello-plugin<span class="mono">0.1.0</span></div>
+              </div>
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>dsh-hello-plugin</h3>
+                  <span class="warn">待重启</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="statusbar">
+            <span>运行中，受管实例</span>
+            <span class="grow">正在重启 dsh…（已 3 秒）</span>
+            <span>⌘+1~7 切换页面</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ 2 -->
+    <h2>2. 到了 Harness 页之后给什么反馈<span class="tag">选一个</span></h2>
+    <p class="caption">
+      "自动切过去"本身已经是反馈了；这一条是问要不要再说一句"你刚才那个插件已经加载进来了"。
+    </p>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 状态栏一句 + 页顶一条可关闭的提示（推荐）</b>
+        <span class="why"
+          >状态栏：「插件已生效，已打开 DeepSeek Harness」；Harness 页顶一条浅色提示 「刚刚重启过
+          dsh，装配层的改动已加载」+ 一个「知道了」。理由：用户刚做完一件
+          "有后果"的事（装了别人的代码），让他明确看到"它现在真的在里面"。</span
+        >
+      </header>
+      <div class="screen">
+        <div class="topbar">
+          <span>DeepSeek Harness</span><span class="grow">127.0.0.1:3080，受管实例</span>
+        </div>
+        <div class="body">
+          <div class="rail">
+            <div class="rail-brand">DSH Console</div>
+            <div class="rail-item"><span class="dot"></span>控制台</div>
+            <div class="rail-item on"><span class="dot"></span>DeepSeek Harness</div>
+            <div class="rail-item"><span class="dot"></span>插件</div>
+            <div class="rail-item"><span class="dot"></span>设置</div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <span class="btn tiny">重新载入</span>
+              <span class="btn tiny">全屏</span>
+              <span class="grow"></span>
+              <span class="btn tiny ghost">← 返回</span>
+            </div>
+            <div class="banner" style="background: var(--accent-soft)">
+              <span class="ic" style="border-color: var(--accent)"></span>
+              <span>
+                <b>刚刚重启过 dsh，装配层的改动已经加载。</b>
+                以后改你自己的 <code>cordis.patch.yml</code> 不用重启。
+              </span>
+              <span class="grow"><span class="btn tiny ghost">知道了</span></span>
+            </div>
+            <div class="embedded">
+              <div>
+                <div class="big">DeepSeek Harness</div>
+                <div>（内嵌界面，带令牌地址已自动载入）</div>
+              </div>
+            </div>
+          </div>
+          <div class="statusbar">
+            <span>运行中，受管实例</span>
+            <span class="grow">插件已生效，已打开 DeepSeek Harness</span>
+            <span>⌘+1~7 切换页面</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 只状态栏一句</b>
+        <span class="why"
+          >不加常驻提示，只在状态栏写「插件已生效，已打开 DeepSeek Harness」， 与现有那些「已保存 /
+          已复制」的消息同一套。更安静，但那条消息在底栏、字号最小。</span
+        >
+      </header>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>C. 什么都不加</b>
+        <span class="why"
+          >切过去、界面能用了，本身就是结果。最省事，也最容易让人不确定"到底生效没有"。</span
+        >
+      </header>
+    </div>
+
+    <!-- ============================================================ 3 -->
+    <h2>3. 这套流程给谁用<span class="tag">选一个</span></h2>
+    <p class="caption">
+      现在"重启 dsh"有三个入口，各自写完就完了：插件页「立即重启
+      dsh」（<code>api.restart()</code>）、 控制台页「重启」（走
+      <code>restartFlow</code>，外部实例会先问一次）、 环境自检详情页「重新启动 dsh」（更新 Node
+      之后，走 <code>api.start()</code>）。
+    </p>
+
+    <div class="opt">
+      <header>
+        <b>A. 只改插件页那颗按钮</b>
+        <span class="why">范围最小、只解决你提的这一处；另外两处保持现状（各自那句话照旧）。</span>
+      </header>
+    </div>
+
+    <div class="opt sel">
+      <header>
+        <b>B. 三处共用同一条流程（推荐）</b>
+        <span class="why"
+          >把"重启 → 等就绪 → 自动进 Harness → 说一句"抽成一个共享动作（放
+          <code>lib/dsh-actions.ts</code> 或新开一个小模块），三处都调它。理由：三处是同一件事
+          （"dsh 要重启才生效"），只给一处加，用户在下一次（更新 Node 之后）还会碰到同样的空档。
+          差别只在文案：插件页说"装配层改动已加载"，环境自检说"Node 更新已生效"，控制台说"dsh
+          已重启"。</span
+        >
+      </header>
+    </div>
+
+    <!-- ============================================================ 4 -->
+    <h2>4. 自动进 Harness 时要不要顺带进全屏<span class="tag">选一个</span></h2>
+    <p class="caption">
+      应用启动时那条老路（设置项 <code>openUiOnStart</code> + <code>uiFullscreenOnStart</code>）会
+      "就绪后切到 Harness 并进全屏"。这条新流程要不要跟它一致？
+    </p>
+
+    <div class="opt sel">
+      <header>
+        <b>A. 不主动全屏（推荐）</b>
+        <span class="why"
+          >只切页。全屏是一件抢屏的事（左栏、状态栏、页面工具条都会被藏起来），用户刚才只是在
+          插件页点了个"重启"，多半还想接着看插件列表 / 装下一个；此时把界面变成全屏会让人找不着北。
+          启动锁那句提示也要跟着改成「就绪后自动打开 DeepSeek
+          Harness」（现在写的是"并进入全屏"）。</span
+        >
+      </header>
+    </div>
+
+    <div class="opt">
+      <header>
+        <b>B. 跟设置走：<code>uiFullscreenOnStart</code> 开着就顺带全屏</b>
+        <span class="why"
+          >与"启动时自动打开"完全一致，喜欢全屏工作的人少点一次。但这与设置项的语义有偏差 ——
+          它的名字是"启动时"（on start），这里不是启动。</span
+        >
+      </header>
+    </div>
+
+    <!-- ============================================================ 5 -->
+    <h2>5. 没成功的时候<span class="tag">我按默认做，你可以改</span></h2>
+    <p class="caption">
+      这几条不摆选项了（都是"别骗用户"的默认做法），只是先告诉你我会怎么写 —— 有意见直接说。
+    </p>
+    <ul class="plain">
+      <li>
+        <b>重启调用失败</b>（<code>api.restart()</code> 报错）：不上锁、不切页，黄条变红
+        「重启失败：&lt;原因&gt;」，按钮还能再点一次。
+      </li>
+      <li>
+        <b>等了 90 秒还没就绪</b>（与启动锁同一个上限）：解锁、不切页，黄条写「dsh 还没起来
+        （当前状态：…）」，并把「立即重启 dsh」换回可点状态。
+      </li>
+      <li>
+        <b>期间 dsh 被外部实例接管</b>（<code>phase === 'external'</code>）：解锁、不切页 ——
+        外部实例拿不到令牌，切过去只会看到"401 / 需要重启为受管实例"那一屏，等于更糊涂。
+      </li>
+      <li>
+        <b>用户自己按了 <code>Esc</code></b
+        >（锁上的"不等了，先进入界面"）：解锁、留在插件页， 黄条保留一句「dsh 已就绪，可以自己去
+        Harness 页」。
+      </li>
+    </ul>
+
+    <!-- ============================================================ 6 -->
+    <h2>6. 你只要回一句</h2>
+    <p class="caption">
+      按 <code>插件重启-1A 2A 3B 4A</code> 这种写法回就行；也可以只说"都按你推荐的"。
+    </p>
+    <table class="pick-table">
+      <tr>
+        <th>待定项</th>
+        <th>A</th>
+        <th>B</th>
+        <th>C</th>
+      </tr>
+      <tr>
+        <td><b>1. 等待那几秒</b></td>
+        <td class="ok">停在插件页 + 启动锁 ✔ 推荐</td>
+        <td>立刻切到 Harness 页 + 页内"正在重连"</td>
+        <td>不遮不切，黄条变进度</td>
+      </tr>
+      <tr>
+        <td><b>2. 到了之后的反馈</b></td>
+        <td class="ok">状态栏一句 + 页顶可关闭提示 ✔ 推荐</td>
+        <td>只状态栏一句</td>
+        <td>什么都不加</td>
+      </tr>
+      <tr>
+        <td><b>3. 给谁用</b></td>
+        <td>只插件页</td>
+        <td class="ok">三处共用（插件 / 控制台 / 环境自检）✔ 推荐</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><b>4. 顺带全屏</b></td>
+        <td class="ok">不主动全屏 ✔ 推荐</td>
+        <td>跟 <code>uiFullscreenOnStart</code> 走</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><b>5. 失败 / 超时 / 被接管 / Esc</b></td>
+        <td colspan="3">不摆选项：一律"不切页 + 黄条说实话 + 按钮可再点"，你有意见直接说。</td>
+      </tr>
+    </table>
+    <p class="caption" style="margin-top: 14px">
+      你定完之后我做的事：先把这套写进规格（<code>docs/</code> 里那份交互文档 +
+      <code>AGENTS.md</code>）， 再动代码，并在真机上把"装个插件 → 点重启 → 自动进
+      Harness"整条走一遍（含失败与 Esc 两条岔路）。
+    </p>
+  </body>
+</html>

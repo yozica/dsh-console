@@ -13,7 +13,8 @@
  * `classList.add('hidden')` 和 `setText` 表达；现在是模板里的 v-if 与 computed。
  */
 import { computed, onMounted, ref, watch } from 'vue';
-import { restartFlow } from '../lib/dsh-actions.js';
+import { restartThenOpenHarness } from '../lib/restart-flow.js';
+import { dismissHarnessArrival, harnessArrivalNotice } from '../lib/restart-nav.js';
 import {
   currentTab,
   dsh,
@@ -168,7 +169,7 @@ async function restartManaged() {
   if (busy.value) return;
   busy.value = true;
   try {
-    await restartFlow(api, () => dsh.value);
+    await restartThenOpenHarness(api, () => dsh.value, 'ui');
   } finally {
     busy.value = false;
   }
@@ -307,6 +308,17 @@ onMounted(() => {
   <div v-if="tokenWarning" id="ui-token-warning" class="banner">
     <svg class="i"><use href="#i-warn" /></svg>
     <span id="ui-token-warning-text">{{ tokenWarning }}</span>
+  </div>
+
+  <!-- 刚刚重启过 dsh：装配层的改动已经加载（t46 / docs/plugin-restart.md §3）。
+       可关闭 —— 它是"确认一下"，不是常驻警告。 -->
+  <div v-if="harnessArrivalNotice" id="ui-arrival" class="banner arrival">
+    <svg class="i"><use href="#i-restart" /></svg>
+    <span id="ui-arrival-text">{{ harnessArrivalNotice }}</span>
+    <span class="spacer"></span>
+    <button id="btn-ui-arrival-dismiss" class="btn ghost small" @click="dismissHarnessArrival">
+      知道了
+    </button>
   </div>
 
   <div class="ui-paste">

@@ -25,6 +25,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { envFocus } from '../lib/env-anchor.js';
 import { detailSegments } from '../lib/env-detail.js';
 import { closeEnvDetail } from '../lib/env-layer.js';
+import { restartThenOpenHarness } from '../lib/restart-flow.js';
 import {
   cancelEnvFix,
   clearEnvFixOutput,
@@ -680,11 +681,14 @@ function formatBytes(bytes: number): string {
   return `${Math.max(0, Math.round(bytes / 1024))} KB`;
 }
 
-/** 更新 Node 之后把本应用启动的 dsh 重新拉起来（停它的是更新前置，不是我们偷偷停的） */
+/**
+ * 更新 Node 之后把本应用启动的 dsh 重新拉起来（停它的是更新前置，不是我们偷偷停的）。
+ * 走共享流程（t46）：锁上那几秒 + 就绪后自动进 Harness —— 这里用 `mode: 'start'`，
+ * 因为 dsh 已经被前置步骤停掉了，不必再走一遍"停 → 等端口释放"。
+ */
 async function restartDsh(): Promise<void> {
   restartDismissed.value = true;
-  const result = await api.start();
-  if (!result.ok) say(`启动失败：${result.error}`);
+  await restartThenOpenHarness(api, () => dsh.value, 'env', 'start');
 }
 
 function dismissRestart(): void {

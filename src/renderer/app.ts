@@ -7,6 +7,8 @@
  *   2. 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住界面，就绪后解锁
  *   3. 自动打开：dsh 就绪后按设置切到 Harness 页并进全屏
  *   4. 键盘快捷键：Ctrl+R / ⌘R 重载、Ctrl+1~7 / ⌘1~7 切页、Esc 退出全屏/跳过启动锁
+ *   5. 重启之后自动进 Harness：四个入口（插件页 / 控制台 / 环境自检 / 重启为受管实例）
+ *      点了重启之后，等 dsh 就绪再切到 Harness 页 —— 见 `lib/restart-nav.ts` 与 docs/plugin-restart.md
  *
  * 它们都在"状态之上"而不是"界面之上"，所以不需要组件外壳；等启动锁也做成组件后，
  * 这里会只剩守卫与快捷键。
@@ -17,6 +19,16 @@ import { computed, watch } from 'vue';
 import { phaseText } from './lib/phase-text.js';
 import { isAppModifier } from './lib/platform.js';
 import { setBootLockVisible } from './lib/boot-lock.js';
+import {
+  arriveAtHarness,
+  markRestartStarting,
+  markRestartTeardown,
+  readyMessage,
+  restartArrived,
+  restartNav,
+  restartStalled,
+  settleRestartNav,
+} from './lib/restart-nav.js';
 import { escapeGate, gateVisible, gatePhase, loadWizard, wireEnvWizard } from './lib/env-wizard.js';
 import {
   currentTab,
@@ -57,6 +69,7 @@ async function main(): Promise<void> {
   void loadWizard();
   wireBootLock();
   wireAutoOpen();
+  wireRestartNav();
   wireImmersive();
   wirePaneVisibility();
   wireShortcuts();
@@ -137,9 +150,19 @@ const BOOT_LOCK_MAX_MS = 90000;
  * 启动失败），回合收掉、锁不出现 —— 也绝不会把用户以后自己点的「启动」算进这一轮。
  */
 const GATE_ARM_WINDOW_MS = 5000;
+/**
+ * 「重启 dsh」那一回合的窗口（t46）。比 R-32 那个长：重启要**先把旧实例停掉、等端口真正释放**
+ * （`dshManager.restart()` 里最长等 10 秒）才轮到 `starting` —— 5 秒窗口会在"等端口"那一段过期，
+ * 于是重启永远不上锁（真机实测踩到过：锁迟迟不出现）。**过期只由这个定时器管**，不看中间相位。
+ */
+const RESTART_ARM_WINDOW_MS = 20000;
 type BootLockState = 'idle' | 'waiting' | 'done';
-/** 启动锁的"回合"：应用启动那一次 / 向导结束后自动启动那一次（R-32） */
-type BootLockEpisode = 'startup' | 'afterGate';
+/**
+ * 启动锁的"回合"：应用启动那一次 / 向导结束后自动启动那一次（R-32）/
+ * 点了「重启 dsh」之后那一次（t46，docs/plugin-restart.md）。
+ * 三个回合共用同一台单向状态机 —— 每一步都只是"显式开一个新回合"，不许改成可重入。
+ */
+type BootLockEpisode = 'startup' | 'afterGate' | 'afterRestart';
 let bootLockState: BootLockState = 'idle';
 let bootLockEpisode: BootLockEpisode = 'startup';
 let bootLockDeadline = 0;
@@ -159,6 +182,10 @@ function setBootLock(on: boolean): void {
 function releaseBootLock(): void {
   bootLockState = 'done';
   setBootLock(false);
+  // 把标题/说明还原成"启动"那一套：锁已经藏起来，但 DOM 里不该留着"正在重新启动"
+  // （下一次上锁会按回合重新写一遍，还原只是不让静态文案与语义漂开）
+  bootLockEpisode = 'startup';
+  applyLockCopy();
 }
 
 /**
@@ -173,16 +200,59 @@ function releaseBootLock(): void {
  * 这里只是把回合位重置成 `idle` 并挂一个窗口定时器：窗口内没等到 `starting` 就把回合收成
  * `done`（没有等待就不上锁），于是"用户以后自己点启动"永远落不进这一轮。
  */
-function armAfterGate(): void {
-  if (bootLockEpisode === 'afterGate') return;
-  bootLockEpisode = 'afterGate';
+function armEpisode(episode: BootLockEpisode, windowMs: number = GATE_ARM_WINDOW_MS): void {
+  bootLockEpisode = episode;
   bootLockState = 'idle';
   bootLockDeadline = 0;
   if (gateArmTimer !== null) clearTimeout(gateArmTimer);
   gateArmTimer = setTimeout(() => {
     gateArmTimer = null;
     if (bootLockState === 'idle') bootLockState = 'done';
-  }, GATE_ARM_WINDOW_MS);
+  }, windowMs);
+}
+
+function armAfterGate(): void {
+  if (bootLockEpisode === 'afterGate') return;
+  armEpisode('afterGate');
+}
+
+/**
+ * 第三回合：点了「重启 dsh」之后那一次（t46 / `docs/plugin-restart.md`）。
+ *
+ * 与第二回合逐字同构（同样的 5 秒窗口、"没有等待就不上锁"），只有两处不同：
+ *   · 锁上的说明换成「就绪后自动打开 DeepSeek Harness」（那一轮不抢屏，见规格 §1 的 4A）；
+ *   · 用户在锁上按「不等了 / Esc」时**取消这次跳转**（第二回合本来就没有跳转可取消）。
+ * 与 `armAfterGate` 的区别：这里**每次都重新开**（用户可能重启第二次），所以不带幂等守卫。
+ */
+function armAfterRestart(): void {
+  armEpisode('afterRestart', RESTART_ARM_WINDOW_MS);
+}
+
+/** 三个回合的锁文案（`index.html` 里那两句静态文案是"启动"语境的，重启要换掉） */
+const LOCK_COPY: Record<BootLockEpisode, { title: string; desc: string; noteTail: string }> = {
+  startup: {
+    title: '正在启动 dsh 服务',
+    desc: '正在拉起进程并等待健康检查',
+    noteTail: '就绪后自动打开 DeepSeek Harness 并进入全屏',
+  },
+  afterGate: {
+    title: '正在启动 dsh 服务',
+    desc: '正在拉起进程并等待健康检查',
+    noteTail: '就绪后自动打开 DeepSeek Harness 并进入全屏',
+  },
+  afterRestart: {
+    title: '正在重新启动 dsh',
+    desc: '正在拉起进程并等待健康检查',
+    noteTail: '就绪后自动打开 DeepSeek Harness',
+  },
+};
+
+function applyLockCopy(): void {
+  const copy = LOCK_COPY[bootLockEpisode];
+  const title = document.getElementById('boot-title');
+  const desc = document.getElementById('boot-desc');
+  if (title) title.textContent = copy.title;
+  if (desc) desc.textContent = copy.desc;
 }
 
 /** 锁上的那几秒给个时间感：已等待几秒 + 接下来会自动发生什么 */
@@ -190,7 +260,7 @@ function updateBootLockNote(): void {
   if (bootLockState !== 'waiting') return;
   const waited = Math.max(1, Math.round((Date.now() - bootLockStartedAt) / 1000));
   const note = document.getElementById('boot-note');
-  if (note) note.textContent = `已等待 ${waited} 秒 · 就绪后自动打开 DeepSeek Harness 并进入全屏`;
+  if (note) note.textContent = `已等待 ${waited} 秒 · ${LOCK_COPY[bootLockEpisode].noteTail}`;
 }
 
 function updateBootLock(phase: DshPhase): void {
@@ -201,7 +271,10 @@ function updateBootLock(phase: DshPhase): void {
     // （`armAfterGate()` 开的第二回合，R-32）。用户自己点「启动」不加锁（那时他要看日志）——
     // 第二回合的窗口已经把这种情形挡在外面了。
     if (phase !== 'starting') {
-      bootLockState = 'done';
+      // 别的回合：没等到 `starting` 就说明"没有等待可等"（dsh 已经在跑 / 只是接管外部实例），
+      // 回合收掉。**但 afterRestart 例外**：它的相位序列必然先经过 `stopping` / `stopped`
+      // （停旧实例、等端口释放），那不是"没有等待"—— 这一回合的过期只由窗口定时器管。
+      if (bootLockEpisode !== 'afterRestart') bootLockState = 'done';
       return;
     }
     if (gateArmTimer !== null) {
@@ -211,6 +284,7 @@ function updateBootLock(phase: DshPhase): void {
     bootLockState = 'waiting';
     bootLockStartedAt = Date.now();
     bootLockDeadline = Date.now() + BOOT_LOCK_MAX_MS;
+    applyLockCopy();
     setBootLock(true);
     updateBootLockNote();
   }
@@ -230,8 +304,18 @@ function updateBootLock(phase: DshPhase): void {
   if (desc) desc.textContent = phaseText(phase).desc || '正在拉起进程并等待健康检查';
 }
 
+/**
+ * 用户在锁上说了「不等了」/ 按了 Esc：这是**唯一会取消跳转**的路径 ——
+ * 他表达的是"别替我做主"，那就只解除等待，不再抢页面（规格 §2.4）。
+ * 其它回合（启动 / 向导之后）没有跳转可取消，这里是个空操作。
+ */
+function userSkipBootLock(): void {
+  if (restartNav.value.outcome === 'pending') settleRestartNav('escaped');
+  releaseBootLock();
+}
+
 function wireBootLock(): void {
-  document.getElementById('btn-boot-skip')?.addEventListener('click', () => releaseBootLock());
+  document.getElementById('btn-boot-skip')?.addEventListener('click', () => userSkipBootLock());
   setInterval(() => {
     updateBootLockNote();
     // 锁着的时候超时判定也得跑，否则状态不再变化就永远不解锁
@@ -271,6 +355,69 @@ function wireAutoOpen(): void {
         immersiveAutoEntered.value = true;
         immersive.value = true;
       }
+    },
+  );
+}
+
+// ------------------------------------------------------------ 重启之后自动进 Harness（t46）
+
+/**
+ * 「点了重启 → 等就绪 → 自动进 Harness」这一段的**唯一**执行者（规格 `docs/plugin-restart.md`）。
+ *
+ * 四个入口只负责两件事：先 `beginRestartNav(reason)` 立意图，再调重启流程。这里负责其余全部：
+ *   1. 立意图那一刻**显式开第三个锁回合**（`afterRestart`）—— 锁只在相位变 `starting` 的那
+ *      5 秒窗口内才会上锁，"没有等待就不上锁"这条老规矩照旧；
+ *   2. 就绪（`running` 且拿到带令牌地址）→ 切到 Harness 页 + 留下到达提示 + 状态栏说一句；
+ *   3. 起不来 / 被外部接管 / 超过 90 秒 → 不再等（锁那边由它自己的异常分支解锁）。
+ *
+ * 为什么"就绪判据"里必须有带令牌地址、为什么超时用 `BOOT_LOCK_MAX_MS`：见规格 §2.3 / §2.4。
+ */
+function wireRestartNav(): void {
+  watch(
+    () => [restartNav.value.outcome, dsh.value?.phase, dsh.value?.uiUrl] as const,
+    () => {
+      const nav = restartNav.value;
+      if (nav.outcome !== 'pending') return;
+      const now = dsh.value;
+      if (!now) return;
+
+      // 相位离开 running = 旧实例真的在停。**必须先记这一笔**，否则"点下去那一刻旧实例还是
+      // running + 带着旧令牌"就会被判成已就绪，页面立刻切走、锁根本不出现（真机实测踩到过）。
+      if (now.phase !== 'running') markRestartTeardown();
+      if (now.phase === 'starting') markRestartStarting();
+
+      if (restartArrived(restartNav.value, now.phase, now.uiUrl)) {
+        if (currentTab.value !== 'ui') currentTab.value = 'ui';
+        // 到达提示 + 收尾在 restart-nav（纯状态），状态栏那句由这里发 —— 它是 DOM 那一边的事
+        arriveAtHarness(nav.reason);
+        window.dispatchEvent(
+          new CustomEvent('dsh:status-message', { detail: readyMessage(nav.reason) }),
+        );
+        return;
+      }
+      if (now.phase === 'external') {
+        settleRestartNav('external');
+        return;
+      }
+      // 注意是 `restartStalled`（要见过 starting）而不是 `isRestartStalled` ——
+      // 重启必然经过 stopped，那一段不是"起不来"（见 lib/restart-nav.ts）
+      if (restartStalled(restartNav.value, now.phase)) settleRestartNav('unready');
+    },
+    { immediate: true },
+  );
+
+  // 90 秒上限：与启动锁同一个数。锁自己会在超时那一刻解锁，这里只是"不再等"。
+  setInterval(() => {
+    const nav = restartNav.value;
+    if (nav.outcome !== 'pending') return;
+    if (Date.now() - nav.startedAt > BOOT_LOCK_MAX_MS) settleRestartNav('unready');
+  }, 1000);
+
+  // 意图一立就开回合。注意**不能**等到 `phase === 'starting'` 才开 —— 那正是锁要等的信号。
+  watch(
+    () => restartNav.value.outcome,
+    (outcome) => {
+      if (outcome === 'pending') armAfterRestart();
     },
   );
 }
@@ -325,7 +472,7 @@ function wireShortcuts(): void {
     // 启动锁期间键盘捷径也一并挡住 —— 锁的意义就是"别乱动"
     if (bootLockState === 'waiting') {
       if (event.key === 'Escape') {
-        releaseBootLock();
+        userSkipBootLock();
         event.preventDefault();
       }
       return;
