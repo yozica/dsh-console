@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>「刚刚重启过 dsh」那条提示怎么摆（DSH Console）</title>
+    <!--
+      这条提示（Harness 页顶上的 #ui-arrival）现在长这样：整屏宽的一条浅蓝底，
+      文字贴最左、「知道了」贴最右，中间空着 972px；而且量出来图标/文字比按钮偏上 3~4px。
+
+      三种改法都摆在这里，真实尺寸（窗口内容 1220px、banner 左右各 20px 外边距 → 1180px、
+      内边距 11px 14px、字号 12.5px / 行高 21.25px、图标 15px、按钮 57×27）。
+      零脚本、双击就能开。
+    -->
+    <style>
+      :root {
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --hairline: rgba(16, 24, 40, 0.12);
+        --hairline-strong: rgba(16, 24, 40, 0.2);
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+        --accent: #0e7490;
+        --accent-soft: rgba(8, 145, 178, 0.16);
+        --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 28px 24px 72px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          'Segoe UI',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+      h1 {
+        font-size: 21px;
+        margin: 0 0 6px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 34px 0 4px;
+      }
+      h2 .tag {
+        font-size: var(--t-xs);
+        font-weight: 500;
+        color: var(--ink-faint);
+        margin-left: 8px;
+      }
+      p.lead,
+      p.caption {
+        color: var(--ink-dim);
+        margin: 0 0 10px;
+        max-width: 1060px;
+      }
+      p.caption {
+        font-size: var(--t-md);
+      }
+      code {
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        font-size: var(--t-sm);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      b.rec {
+        color: var(--accent);
+      }
+
+      /* ---- 真机尺寸的那一屏 ---- */
+      .screen {
+        width: 1220px;
+        max-width: 100%;
+        border: 1px solid var(--hairline);
+        border-radius: 12px;
+        background: var(--surface);
+        padding: 1px 0 14px;
+        box-shadow: var(--shadow-focus);
+        overflow: hidden;
+      }
+      .screen .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+      .pill {
+        height: 27px;
+        padding: 0 12px;
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        display: inline-flex;
+        align-items: center;
+        font-size: var(--t-sm);
+        color: var(--ink);
+        background: var(--surface-2);
+      }
+      .pill.ghost {
+        background: transparent;
+        border-color: transparent;
+        color: var(--ink-dim);
+      }
+      .viewport {
+        height: 150px;
+        margin: 0 20px;
+        border: 1px dashed var(--hairline-strong);
+        border-radius: var(--r-panel);
+        background: repeating-linear-gradient(45deg, #f7f9fc 0 10px, #f2f5f9 10px 20px);
+      }
+
+      /* ---- 这条提示本身（三段都用真样式） ---- */
+      .banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 0 20px 12px;
+        padding: 11px 14px;
+        background: var(--accent-soft);
+        border-radius: var(--r-panel);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        line-height: 1.7;
+      }
+      .banner .ic {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+        margin-top: 2px;
+        color: var(--accent);
+      }
+      .banner .act {
+        height: 27px;
+        padding: 0 10px;
+        display: inline-flex;
+        align-items: center;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+        flex: 0 0 auto;
+      }
+      .spacer {
+        flex: 1 1 auto;
+      }
+
+      /* A：全宽底色，内容作为一组水平居中（并把垂直对齐修好） */
+      .banner.a {
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      .banner.a .ic {
+        margin-top: 0;
+      }
+
+      /* B：窄条卡片，整块水平居中（宽度跟内容走） */
+      .long {
+        position: relative;
+      }
+      .narrow {
+        width: max-content;
+        max-width: calc(100% - 40px);
+        margin: 0 auto 12px;
+        align-items: center;
+        box-shadow: var(--shadow-focus);
+      }
+      .narrow .ic {
+        margin-top: 0;
+      }
+      .narrow .act {
+        padding-right: 0;
+      }
+
+      /* C：保持左文右按钮，只修垂直对齐（最小改动） */
+      .banner.c {
+        align-items: center;
+      }
+      .banner.c .ic {
+        margin-top: 0;
+      }
+
+      table.pick {
+        border-collapse: collapse;
+        margin: 12px 0 0;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        overflow: hidden;
+        font-size: var(--t-sm);
+      }
+      table.pick th,
+      table.pick td {
+        text-align: left;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--hairline);
+        vertical-align: top;
+      }
+      table.pick th {
+        background: var(--surface-2);
+        font-weight: 600;
+      }
+      table.pick tr:last-child td {
+        border-bottom: 0;
+      }
+      .note {
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+        margin: 6px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>「刚刚重启过 dsh」那条提示怎么摆</h1>
+    <p class="lead">
+      现在（真机量出来的）：整屏宽的一条浅蓝底，图标 + 文字贴最左，「知道了」贴最右，
+      <b>中间空着 972px</b>；而且图标/文字比按钮<b>偏上 3~4px</b>（<code>.banner</code> 的
+      <code>align-items: flex-start</code> + 图标 <code>margin-top: 2px</code> 那套是给多行 banner
+      用的）。
+    </p>
+    <p class="lead">
+      三种改法都按真机尺寸摆在这里（窗口内容 1220px、banner 1180px、内边距 11/14、字号 12.5 / 行高
+      21.25、 图标 15、按钮 57×27）。<b>三种都会顺手把上面那 3~4px 对齐修掉</b
+      >，区别只在"内容怎么排"。
+    </p>
+
+    <h2>0. 现状<span class="tag">你截图里的样子</span></h2>
+    <div class="screen">
+      <div class="toolbar">
+        <span class="pill">载入</span><span class="pill">全屏</span
+        ><span class="pill">重启为受管实例</span>
+        <span class="pill ghost">重新载入</span>
+      </div>
+      <div class="banner">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 4v5h-5" />
+        </svg>
+        <span
+          >刚刚重启过 dsh，装配层的改动已经加载。以后改你自己的 cordis.patch.yml 不用重启。</span
+        >
+        <span class="spacer"></span>
+        <span class="act">知道了</span>
+      </div>
+      <div class="viewport"></div>
+      <p class="note" style="margin: 8px 20px 0">
+        文字右缘到按钮左缘：<b>972px</b>（实测）｜图标中心比容器中心高 <b>4px</b>、文字高
+        <b>2.9px</b>
+      </p>
+    </div>
+
+    <h2>A. 全宽底色，内容当一组水平居中<span class="tag">改动最小的一版"居中"</span></h2>
+    <p class="caption">
+      底色照旧铺满整行（它表示"这一页顶上有一条状态"），但图标 + 文字 + 「知道了」作为一组挤在中间。
+      代价：文字不再与页面左边距对齐（左栏收起时，视线会去找那个对齐线）。
+    </p>
+    <div class="screen">
+      <div class="toolbar">
+        <span class="pill">载入</span><span class="pill">全屏</span
+        ><span class="pill">重启为受管实例</span>
+        <span class="pill ghost">重新载入</span>
+      </div>
+      <div class="banner a">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 4v5h-5" />
+        </svg>
+        <span
+          >刚刚重启过 dsh，装配层的改动已经加载。以后改你自己的 cordis.patch.yml 不用重启。</span
+        >
+        <span class="act">知道了</span>
+      </div>
+      <div class="viewport"></div>
+    </div>
+
+    <h2>B. 窄条卡片，整块居中<span class="tag">像 toast</span></h2>
+    <p class="caption">
+      宽度跟着内容走（长的句子就宽一点），整块水平居中，加一层阴影表示"浮在页面上"。
+      代价：阴影在整套界面里"全局只用一处"（AGENTS
+      §7.12），给它加了就等于多一处；而且它飘在内容上方， 会挡住一点点页面顶部。
+    </p>
+    <div class="screen">
+      <div class="toolbar">
+        <span class="pill">载入</span><span class="pill">全屏</span
+        ><span class="pill">重启为受管实例</span>
+        <span class="pill ghost">重新载入</span>
+      </div>
+      <div class="banner narrow">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 4v5h-5" />
+        </svg>
+        <span>刚刚重启过 dsh，装配层的改动已经加载。</span>
+        <span class="act">知道了</span>
+      </div>
+      <div class="viewport"></div>
+    </div>
+
+    <h2>C. 不动排版，只修对齐<span class="tag">如果"没居中"指的是那几个像素</span></h2>
+    <p class="caption">
+      还是左文右按钮（与插件页那条黄条同一套排法），只把图标/文字与按钮在垂直方向对齐。 好处：与其它
+      banner 完全一致、改动最小；坏处：中间那 972px 还是空的。
+    </p>
+    <div class="screen">
+      <div class="toolbar">
+        <span class="pill">载入</span><span class="pill">全屏</span
+        ><span class="pill">重启为受管实例</span>
+        <span class="pill ghost">重新载入</span>
+      </div>
+      <div class="banner c">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 4v5h-5" />
+        </svg>
+        <span
+          >刚刚重启过 dsh，装配层的改动已经加载。以后改你自己的 cordis.patch.yml 不用重启。</span
+        >
+        <span class="spacer"></span>
+        <span class="act">知道了</span>
+      </div>
+      <div class="viewport"></div>
+    </div>
+
+    <h2>D. 不带按钮，整句居中（顺带提一句）</h2>
+    <p class="caption">
+      如果觉得"确认一下"不需要按钮：把句子居中、去掉「知道了」，改为几秒后自己消失（或点任意处消失）。
+      你如果想走这条，我按这条做。
+    </p>
+
+    <table class="pick">
+      <tr>
+        <th>选项</th>
+        <th>一句话</th>
+        <th>代价</th>
+      </tr>
+      <tr>
+        <td><b>A 全宽 + 内容居中</b></td>
+        <td>底色仍铺满，图标+文字+按钮挤在正中</td>
+        <td>文字不再与页面左边距对齐</td>
+      </tr>
+      <tr>
+        <td><b>B 窄条居中卡片</b></td>
+        <td>宽度跟内容走、整块居中、带阴影</td>
+        <td>多一处阴影；浮起来会盖住页面顶部一点</td>
+      </tr>
+      <tr>
+        <td><b>C 只修垂直对齐</b></td>
+        <td>排法不变，图标/文字与按钮对齐</td>
+        <td>中间那 972px 还是空的</td>
+      </tr>
+      <tr>
+        <td><b>D 不带按钮、整句居中</b></td>
+        <td>最安静；几秒后自动消失</td>
+        <td>少了"我知道了"的确认动作（有人会等它消失）</td>
+      </tr>
+    </table>
+    <p class="note">回一句「A」「B」「C」或「D」就行；也可以说「A 但保留左对齐」这种组合。</p>
+  </body>
+</html>

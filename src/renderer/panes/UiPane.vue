@@ -14,7 +14,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { restartThenOpenHarness } from '../lib/restart-flow.js';
-import { dismissHarnessArrival, harnessArrivalNotice } from '../lib/restart-nav.js';
+import { harnessArrivalNotice } from '../lib/restart-nav.js';
 import {
   currentTab,
   dsh,
@@ -310,17 +310,6 @@ onMounted(() => {
     <span id="ui-token-warning-text">{{ tokenWarning }}</span>
   </div>
 
-  <!-- 刚刚重启过 dsh：装配层的改动已经加载（t46 / docs/plugin-restart.md §3）。
-       可关闭 —— 它是"确认一下"，不是常驻警告。 -->
-  <div v-if="harnessArrivalNotice" id="ui-arrival" class="banner arrival">
-    <svg class="i"><use href="#i-restart" /></svg>
-    <span id="ui-arrival-text">{{ harnessArrivalNotice }}</span>
-    <span class="spacer"></span>
-    <button id="btn-ui-arrival-dismiss" class="btn ghost small" @click="dismissHarnessArrival">
-      知道了
-    </button>
-  </div>
-
   <div class="ui-paste">
     <input
       id="ui-url-input"
@@ -336,6 +325,13 @@ onMounted(() => {
   </div>
 
   <div class="webview-wrap">
+    <!-- 刚刚重启过 dsh：装配层的改动已经加载（t46 / docs/plugin-restart.md §3）。
+         **轻提示**：浮在内嵌界面顶部、几秒后自己消失 —— 没有按钮，不会常驻（用户裁定）。
+         放在 .webview-wrap 里是为了不压住上面那排工具；pointer-events: none 保证不挡内嵌页的点击。 -->
+    <div v-if="harnessArrivalNotice" id="ui-arrival" class="toast" role="status">
+      <svg class="i"><use href="#i-restart" /></svg>
+      <span id="ui-arrival-text">{{ harnessArrivalNotice }}</span>
+    </div>
     <webview
       class="embedded-view"
       id="ui-view"

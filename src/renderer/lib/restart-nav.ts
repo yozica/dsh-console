@@ -83,6 +83,19 @@ export const restartNav: Ref<RestartNavState> = ref({
 export const harnessArrivalNotice: Ref<string | null> = ref(null);
 
 /**
+ * 「轻提示」自己待多久（t46 修正）。
+ *
+ * 用户裁定：**不要常驻提示**（原来那条带「知道了」的横条太吵），"确认一下"就够了 ——
+ * 所以它是一条自己会消失的小胶囊，没有按钮、也不需要人去关。
+ */
+export const ARRIVAL_TOAST_MS = 4500;
+let arrivalTimer: ReturnType<typeof setTimeout> | null = null;
+function clearArrivalTimer(): void {
+  if (arrivalTimer !== null) clearTimeout(arrivalTimer);
+  arrivalTimer = null;
+}
+
+/**
  * 就绪判据（纯函数，自检直接钉）。
  *
  * **必须带 `uiUrl`**：只看 `running` 就切过去，Harness 页会停在「还没捕获到带令牌的地址」
@@ -151,6 +164,7 @@ export function readyMessage(reason: RestartReason): string {
 export function beginRestartNav(reason: RestartReason, uiUrlAtBegin: string | null = null): void {
   // 新一轮开始时把上一条到达提示收掉：它说的是"上一轮已经生效"，而这一刻 dsh 正在重启，
   // 挂在那儿就是过期信息（用户可能正开着 Harness 页看着它）。
+  clearArrivalTimer();
   harnessArrivalNotice.value = null;
   restartNav.value = {
     reason,
@@ -186,7 +200,9 @@ export function clearRestartNav(): void {
 }
 
 /** 关掉 Harness 页上那条到达提示 */
+/** 手动收掉（目前只有"新一轮重启开始"这条内部路径用得到；界面上没有关闭按钮） */
 export function dismissHarnessArrival(): void {
+  clearArrivalTimer();
   harnessArrivalNotice.value = null;
 }
 
@@ -195,6 +211,12 @@ export function dismissHarnessArrival(): void {
  * `readyMessage()`）。这里**不碰 DOM**，见文件头的分层说明。
  */
 export function arriveAtHarness(reason: RestartReason): void {
+  // 轻提示：亮一下、自己消失 —— 不需要用户做任何事（见 ARRIVAL_TOAST_MS）
+  clearArrivalTimer();
   harnessArrivalNotice.value = arrivalNotice(reason);
+  arrivalTimer = setTimeout(() => {
+    arrivalTimer = null;
+    harnessArrivalNotice.value = null;
+  }, ARRIVAL_TOAST_MS);
   settleRestartNav('ready');
 }

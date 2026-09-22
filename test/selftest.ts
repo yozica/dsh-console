@@ -1098,6 +1098,8 @@ async function main(): Promise<void> {
     'utf8',
   );
   const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
+  const restartNavCode = fs.readFileSync(path.join(rendererDir, 'lib', 'restart-nav.ts'), 'utf8');
+  const stylesCode = fs.readFileSync(path.join(rendererDir, 'styles.css'), 'utf8');
   // t46：黄条的四态 + Harness 页那条到达提示（可关闭）
   check(
     '重启后进 Harness：新一轮开始时收掉上一条到达提示（它说的是"上一轮已生效"）',
@@ -1109,17 +1111,28 @@ async function main(): Promise<void> {
       restartNav.harnessArrivalNotice.value === null,
   );
   check(
-    '重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，Harness 页有可关闭的到达提示',
+    '重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，Harness 页是"会自动消失的轻提示"',
     ['pending', 'failed', 'unready', 'external', 'escaped', 'ready'].every((state) =>
       new RegExp(`case '${state}':`).test(mergedPluginSource),
     ) &&
       /id="plugin-restart-line"/.test(mergedPluginSource) &&
       /id="btn-plugin-restart"/.test(mergedPluginSource) &&
       /:disabled="navPending"/.test(mergedPluginSource) &&
-      // 到达提示长在 Harness 页里（不是 index.html），而且关得掉 —— 它是"确认一下"，不是常驻警告
+      // 到达提示长在 Harness 页里（不是 index.html）。**它是轻提示，不是常驻横条**
+      // （用户裁定："给个轻提示就可以了，不用给这种常驻提示"）：没有按钮、自己会消失，
+      // 而且浮在内嵌界面里、不拦点击。
       /id="ui-arrival"/.test(uiPaneSource) &&
-      /id="btn-ui-arrival-dismiss"/.test(uiPaneSource) &&
-      /@click="dismissHarnessArrival"/.test(uiPaneSource),
+      /class="toast"/.test(uiPaneSource) &&
+      !/btn-ui-arrival-dismiss/.test(uiPaneSource) &&
+      !/dismissHarnessArrival/.test(uiPaneSource) &&
+      /ARRIVAL_TOAST_MS = 4500/.test(restartNavCode) &&
+      /arrivalTimer = setTimeout\(/.test(restartNavCode) &&
+      /harnessArrivalNotice\.value = null;\n {2}\}, ARRIVAL_TOAST_MS\);/.test(restartNavCode) &&
+      // 样式：浮在 .webview-wrap 里、绝不拦内嵌页的点击、不给阴影（阴影全局只用一处）
+      /\.toast \{[\s\S]*?position: absolute;[\s\S]*?pointer-events: none;[\s\S]*?\}/.test(
+        stylesCode,
+      ) &&
+      /\.banner\.arrival/.test(stylesCode) === false,
   );
 
   // t46：用户在锁上按「不等了」/ Esc 要**取消**这次跳转（唯一会取消的路径，规格 §2.4）

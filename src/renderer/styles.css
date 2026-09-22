@@ -1518,11 +1518,35 @@ body[data-immersive='true'] .webview-wrap {
   background: var(--rose-soft);
 }
 
-.banner.arrival {
+/* Harness 页顶上的「轻提示」（t46 修正）：只确认一下"改动已加载"，几秒后自己消失。
+   为什么不做成常驻横条：用户裁定"给个轻提示就可以了，不用给这种常驻提示"。
+   它浮在内嵌界面顶部（.webview-wrap 里），胶囊形状 + 不透明度稍低，像一句旁白；
+   `pointer-events: none` 保证它绝不拦内嵌页的点击（它只活几秒，也不该拦）。 */
+.toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 7px 14px;
+  border-radius: 999px;
   background: var(--accent-soft);
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  /* 不给阴影：这套界面的"浮起来"只由 --shadow-focus 一处表达（AGENTS §7.12），
+     轻提示靠底色（--accent-soft）区分就够了 —— 它只活几秒，不该看起来像一张浮层卡片。 */
+  pointer-events: none;
 }
 
-.banner.arrival .i {
+.toast .i {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
   color: var(--accent);
 }
 
