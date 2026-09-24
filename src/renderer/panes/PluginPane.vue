@@ -18,7 +18,9 @@ import { computed, ref, watch } from 'vue';
 import { requestEnvFocus } from '../lib/env-anchor.js';
 import { envFix, wireEnvDoctor } from '../lib/env-doctor.js';
 import { openEnvDetail } from '../lib/env-layer.js';
-import { currentTab, snapshot } from '../lib/store.js';
+import { restartThenOpenHarness } from '../lib/restart-flow.js';
+import { clearRestartNav, restartNav } from '../lib/restart-nav.js';
+import { currentTab, dsh, phaseInfo, snapshot } from '../lib/store.js';
 import type {
   PluginEntry,
   PluginLayerEditAction,
@@ -105,6 +107,49 @@ const opSummary = ref('');
 const opNeedsEnable = ref<{ id: string; name: string } | null>(null);
 const pendingRestart = ref(false);
 
+/**
+ * 「重启 dsh 后生效」那条黄条（t46）：它同时是这一轮重启的**进度与结局** ——
+ * 规格 `docs/plugin-restart.md` §3。四态：进行中 / 失败或未就绪 / 已生效 / 原来的"装配层改了"。
+ */
+const navOutcome = computed(() => restartNav.value.outcome);
+const navPending = computed(() => navOutcome.value === 'pending');
+const navLine = computed<string | null>(() => {
+  switch (navOutcome.value) {
+    case 'pending':
+      return '正在重启 dsh…';
+    case 'failed':
+      return `重启失败：${restartNav.value.error ?? '未知错误'}`;
+    case 'unready':
+      return `dsh 还没起来（当前状态：${phaseInfo.value.title}）`;
+    case 'external':
+      return '端口上的 dsh 变成了外部实例，拿不到它的令牌。';
+    case 'escaped':
+      return 'dsh 已就绪，可以自己去 Harness 页。';
+    case 'ready':
+      return 'dsh 已重启，装配层的改动已加载。';
+    default:
+      return null;
+  }
+});
+/** 黄条在不在：装配层改过（原来的条件）、或这一轮重启还没被关掉 */
+const bannerVisible = computed(() => pendingRestart.value || navLine.value !== null);
+/** 还需要那颗「立即重启 dsh」吗（进行中禁用；已生效之后就不再给了） */
+const canRestartAgain = computed(() => !navPending.value && navOutcome.value !== 'ready');
+
+/**
+ * 新一轮"装配层改了"开始时把上一轮重启的结局清掉 —— 否则黄条会拿旧结局
+ * （比如上一轮的「dsh 已重启…」）盖住这一轮真正要说的话。
+ */
+function markPendingRestart(): void {
+  pendingRestart.value = true;
+  clearRestartNav();
+}
+
+function dismissRestartBanner(): void {
+  pendingRestart.value = false;
+  clearRestartNav();
+}
+
 const opStateLabel = computed(() => {
   if (opStatus.value === 'running') return '进行中…';
   if (opStatus.value === 'ok') return '完成';
@@ -157,7 +202,7 @@ async function startOp(action: PluginOpAction, spec: string): Promise<void> {
   opNeedsEnable.value = result.needsEnable ?? null;
 
   if (result.ok) {
-    pendingRestart.value = true;
+    markPendingRestart();
     installOpen.value = false;
     installSpec.value = '';
     await load();
@@ -396,7 +441,7 @@ async function editBundle(action: 'suspend' | 'restore', name: string, index = -
 
   if (suspending && result.changed) {
     suspended.value = { name, index: result.index ?? -1 };
-    pendingRestart.value = true;
+    markPendingRestart();
   }
   if (!suspending) suspended.value = null;
   await load();
@@ -467,9 +512,14 @@ async function cancelOp(): Promise<void> {
   await api.pluginCancel();
 }
 
+/**
+ * 「立即重启 dsh」：走共享流程（t46）—— 先立意图（锁只有在重启开始后才上得上，见
+ * `lib/restart-nav.ts` 的说明）→ 重启 → 失败当场说实话；成功则由 app.ts 等就绪后
+ * 自动切到 Harness 页。这里的黄条不再自己消失，它变成这一轮的进度与结局。
+ */
 async function restartDsh(): Promise<void> {
-  await api.restart();
   pendingRestart.value = false;
+  await restartThenOpenHarness(api, () => dsh.value, 'plugin');
   say('正在重启 dsh…');
 }
 
@@ -777,16 +827,28 @@ function clearFilters(): void {
       </button>
     </div>
 
-    <!-- 装/卸/升级改的是 package.json 与 node_modules → 必须重启 dsh -->
-    <div v-if="pendingRestart" class="banner">
+    <!-- 装/卸/升级改的是 package.json 与 node_modules → 必须重启 dsh。
+         这条同时是这一轮重启的进度与结局（t46）：进行中 / 失败或未就绪 / 已生效 / 还没重启。 -->
+    <div v-if="bannerVisible" class="banner" :class="{ rose: navOutcome === 'failed' }">
       <svg class="i"><use href="#i-warn" /></svg>
-      <span>
+      <span v-if="navLine" id="plugin-restart-line">{{ navLine }}</span>
+      <span v-else id="plugin-restart-line">
         <b>已改到装配层，重启 dsh 后生效。</b>
         bundle 列表是启动时读的；改你自己的 <code>cordis.patch.yml</code> 才是即时生效。
       </span>
       <span class="spacer"></span>
-      <button class="btn ghost small" @click="pendingRestart = false">稍后</button>
-      <button class="btn small" @click="restartDsh">立即重启 dsh</button>
+      <button class="btn ghost small" :disabled="navPending" @click="dismissRestartBanner">
+        {{ canRestartAgain ? '稍后' : '知道了' }}
+      </button>
+      <button
+        v-if="canRestartAgain"
+        id="btn-plugin-restart"
+        class="btn small"
+        :disabled="navPending"
+        @click="restartDsh"
+      >
+        {{ navPending ? '正在重启…' : '立即重启 dsh' }}
+      </button>
     </div>
 
     <!-- 救援：dsh 起不来 / 配置被改坏时，先把出路摆出来。

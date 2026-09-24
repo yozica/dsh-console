@@ -42,6 +42,7 @@ import {
   dshLaunchSpec,
   envWithKnownBins,
   findPnpm,
+  findPnpmForProfile,
   homeDir,
   resolveDshLauncher,
   type LaunchSpec,
@@ -654,10 +655,27 @@ export function parsePluginSpec(raw: string): PluginSpec | null {
  * `requested` 是用户填的 spec（只对 npm 包有意义）：pnpm 404 时缺的常常**不是**用户
  * 写的那个包，而是它某个依赖 —— 不点破这一层，用户会一直去怀疑自己的包名。
  */
-export function summarizePluginFailure(output: string, requested?: string): string | null {
+export function summarizePluginFailure(
+  output: string,
+  requested?: string,
+  /** 这一轮用的是哪份 pnpm、profile 期望哪一档（`findPnpmForProfile()` 的结果） */
+  pnpm?: { used: string | null; expectedMajor: string | null },
+): string | null {
   const text = output.slice(-OP_TAIL_CHARS);
   if (/pnpm not found on PATH/i.test(text)) {
     return '没找到 pnpm —— `dsh plugin` 通过它管理插件。装一个 pnpm，或在设置里确认 PATH。';
+  }
+  // store 布局按 pnpm 大版本走（9 → store/v3、10 → store/v10）。拿另一个大版本去动这份
+  // node_modules，pnpm 会拒绝动手并打一段用户看不懂的话 —— 这里把它翻成人话 + 出路。
+  // （真机踩过：PATH 里先命中 nvm 里的 corepack shim = pnpm 9，而 profile 是 pnpm 10 装的。）
+  if (
+    /currently linked from the store at|wants to use the store at|different major version of pnpm/i.test(
+      text,
+    )
+  ) {
+    const expected = pnpm?.expectedMajor ? ` pnpm ${pnpm.expectedMajor}` : '另一个大版本的 pnpm';
+    const used = pnpm?.used ? `pnpm ${pnpm.used}` : '这次用的那份 pnpm';
+    return `这份 profile 的依赖是用${expected}装的，而这次用的是${used} —— 两个大版本的 store 布局不一样（v3 / v10），pnpm 会拒绝动手。换成与 profile 一致的那一档 pnpm 再装（或按 pnpm 的提示把这份依赖重装一次）。`;
   }
   if (/ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED|Ignored build scripts|approve-builds/i.test(text)) {
     return '它需要在安装时构建（等于执行它的代码），pnpm 默认拦住了。按上面打印的键写进 profile 的 pnpm-workspace.yaml（allowBuilds）再重试。';
@@ -837,6 +855,17 @@ class PluginRunner {
         ],
         process.platform,
       );
+    // 用哪份 pnpm：**要和这份 profile 记的那个大版本一致**（`.modules.yaml` 里的 packageManager）。
+    // `envWithKnownBins` 补的是 `findPnpm()` 找到的那份（PATH 优先），而 PATH 里第一份未必是当初
+    // 装这份 node_modules 的那一档 —— store 布局按大版本走，拿错版本只会得到一段用户看不懂的报错。
+    const pick = findPnpmForProfile(pluginProfileDir());
+    if (!pick.matched && pick.expectedMajor) {
+      onOutput(
+        `（提示：这份 profile 的依赖是 pnpm ${pick.expectedMajor} 装的，而这台机器上找到的` +
+          `${pick.version ? `是 pnpm ${pick.version}` : ' pnpm 读不出版本'} —— 两个大版本的 store ` +
+          `布局不一样，装之前先把 pnpm 换成一致的那一档。）\n`,
+      );
+    }
     // 安装源：设置里填了才覆盖，且只覆盖这一个子进程（见 pluginRegistryEnv）
     const registryOverride = pluginRegistryEnv(this.settings.all().pluginRegistry);
     const env: NodeJS.ProcessEnv = {
@@ -844,6 +873,18 @@ class PluginRunner {
       ...envWithKnownBins(process.env),
       ...registryOverride,
     };
+    if (pick.file) {
+      // 把选中的那份 pnpm 的目录顶到最前：dsh 在 profile 目录里裸 `spawnSync('pnpm')`，只认 PATH
+      const key = Object.keys(env).find((name) => name.toLowerCase() === 'path') ?? 'PATH';
+      const dir = path.dirname(pick.file);
+      env[key] = [
+        dir,
+        ...String(env[key] || '')
+          .split(path.delimiter)
+          .filter((item) => item && item !== dir),
+      ].join(path.delimiter);
+    }
+    const pnpmContext = { used: pick.version, expectedMajor: pick.expectedMajor };
     const registry = registryOverride.npm_config_registry;
     if (registry) onOutput(`（本次操作使用 registry：${registry}）\n`);
 
@@ -859,7 +900,7 @@ class PluginRunner {
       return {
         ok: false,
         code: retry.code,
-        summary: summarizePluginFailure(retry.tail, requested),
+        summary: summarizePluginFailure(retry.tail, requested, pnpmContext),
       };
     }
     return { ok: false, code: first.code, summary: summarizePluginFailure(first.tail, requested) };
