@@ -6,7 +6,7 @@
  * 除这两组系统命令外不需要任何额外组件。
  */
 
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -443,6 +443,14 @@ export function findPnpm(): string | null {
   if (isWindows) return findPnpmWindows(hasVcRuntime());
   const fromPath = whichSync('pnpm');
   if (fromPath) return fromPath;
+  for (const candidate of knownPnpmPaths()) {
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** `findPnpm()` 扫的那几个已知安装位置（PATH 里没有 pnpm 时的兜底，顺序即优先级） */
+function knownPnpmPaths(): string[] {
   const home = homeDir();
   const candidates = [
     // pnpm 官方安装脚本在这台机器上就装在这儿（PATH 里没有）
@@ -453,10 +461,122 @@ export function findPnpm(): string | null {
     path.join(home, '.npm-global', 'bin', 'pnpm'),
   ];
   for (const install of versionManagerInstalls()) candidates.push(path.join(install.bin, 'pnpm'));
-  for (const candidate of candidates) {
-    if (isExecutableFile(candidate)) return candidate;
+  return candidates;
+}
+
+/**
+ * 从 profile 的 `node_modules/.modules.yaml` 原文里读出**这份依赖是哪个大版本的 pnpm 装的**。
+ *
+ * pnpm 把这条记在 `.modules.yaml` 的 `packageManager: pnpm@10.15.0` 里；store 布局按大版本走
+ * （9 → `store/v3`、10 → `store/v10`），所以"装插件用哪份 pnpm"必须和这一条对上，否则 pnpm 会
+ * 直接拒绝动手（真机踩过：PATH 里先命中 nvm 里的 corepack shim = pnpm 9，而 profile 是 10 装的，
+ * 报错是 `… currently linked from the store at … store/v10 … pnpm now wants … store/v3`）。
+ *
+ * 纯函数（不读盘），自检直接喂文本。
+ */
+export function parseProfilePnpmMajor(text: string): string | null {
+  const version = /^packageManager:\s*pnpm@(\d+)(?:\.\d+)*/m.exec(text)?.[1];
+  return version ?? null;
+}
+
+/** 读一份 profile 记的 pnpm 大版本（文件不在 / 没这一行 → null） */
+export function readProfilePnpmMajor(profileDir: string): string | null {
+  try {
+    const text = fs.readFileSync(path.join(profileDir, 'node_modules', '.modules.yaml'), 'utf8');
+    return parseProfilePnpmMajor(text);
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/** 实测一份 pnpm 的版本号（进程内缓存；拿不到就 null —— 版本不认的候选不参与"对得上"的判定） */
+const pnpmVersionCache = new Map<string, string | null>();
+export function pnpmVersionOf(file: string): string | null {
+  if (pnpmVersionCache.has(file)) return pnpmVersionCache.get(file) ?? null;
+  let version: string | null = null;
+  try {
+    const spec = launchSpec(file, ['-v'], process.platform);
+    // 用 spawnSync 而不是 execFileSync：Windows 上 shim 分支要带 `windowsVerbatimArguments`
+    // （那是 spawn 系才有的选项），而且"跑不起来"我们要的是 null 而不是抛异常。
+    const result = spawnSync(spec.file, spec.args, {
+      timeout: 8000,
+      encoding: 'utf8',
+      windowsHide: true,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
+    });
+    version = /(\d+)\.\d+\.\d+/.exec(`${result.stdout || ''}${result.stderr || ''}`)?.[0] ?? null;
+  } catch {
+    /* 跑不起来：这个候选不参与"对得上"的判定，记成 null 就行 */
+  }
+  pnpmVersionCache.set(file, version);
+  return version;
+}
+
+/** `findPnpmForProfile()` 的结果：选中的那份 + 期望的大版本 + 有没有对上 */
+export interface PnpmPick {
+  file: string | null;
+  version: string | null;
+  /** profile 记的期望大版本（读不到 → null，这时只能沿用老规矩：PATH 优先那份） */
+  expectedMajor: string | null;
+  /** 选中的这份是不是对上了（expectedMajor 为 null 时视为"没有依据，按老规矩"= true） */
+  matched: boolean;
+}
+
+/** 参与"按大版本挑"的候选：PATH 里那份 + 各已知安装位置（POSIX / Windows 各一条线） */
+function pnpmPickCandidates(): string[] {
+  const list: string[] = [];
+  const push = (file: string | null) => {
+    if (file && !list.includes(file)) list.push(file);
+  };
+  push(findPnpm());
+  if (isWindows) {
+    const vcRuntime = hasVcRuntime();
+    for (const dir of windowsBinCandidates(process.env, homeDir())) {
+      for (const name of pnpmExeNames(vcRuntime)) {
+        const full = path.win32.join(dir, name);
+        if (isExecutableFile(full)) push(full);
+      }
+    }
+    return list;
+  }
+  for (const candidate of knownPnpmPaths()) {
+    if (isExecutableFile(candidate)) push(candidate);
+  }
+  return list;
+}
+
+/**
+ * 给某份 profile 挑 pnpm：**大版本与它 `node_modules` 里记的一致者优先**。
+ *
+ * 为什么要有这一条：装插件走的是 `dsh plugin …`，dsh 在 profile 目录里裸 `spawnSync('pnpm')`
+ * —— 它只认 PATH。PATH 里第一份 pnpm 未必是当初装这份 profile 的那一档，而 store 布局按大版本走，
+ * 拿错版本去动别人的 `node_modules` 只会得到一段用户看不懂的 pnpm 报错（真机踩过）。
+ * 挑不到对得上的，就把最靠前的那份交出去并 `matched: false`，让调用方**说清楚**再试。
+ */
+export function findPnpmForProfile(profileDir: string): PnpmPick {
+  const expectedMajor = readProfilePnpmMajor(profileDir);
+  const candidates = pnpmPickCandidates();
+  const first = candidates[0] ?? null;
+  if (!expectedMajor) {
+    return {
+      file: first,
+      version: first ? pnpmVersionOf(first) : null,
+      expectedMajor: null,
+      matched: true,
+    };
+  }
+  for (const file of candidates) {
+    const version = pnpmVersionOf(file);
+    if (version && version.split('.')[0] === expectedMajor) {
+      return { file, version, expectedMajor, matched: true };
+    }
+  }
+  return {
+    file: first,
+    version: first ? pnpmVersionOf(first) : null,
+    expectedMajor,
+    matched: false,
+  };
 }
 
 /**
