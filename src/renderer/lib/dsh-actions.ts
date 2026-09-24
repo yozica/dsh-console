@@ -45,10 +45,22 @@ export async function forceStopFlow(api: DshConsoleApi): Promise<void> {
 }
 
 /**
+ * 重启的结果。调用方（`lib/restart-nav.ts` 的编排）要拿它决定"要不要谈生效"：
+ * 用户在确认框里点了取消，与"重启失败了"是两件不同的事，界面上的说法也不一样。
+ */
+export interface RestartResult {
+  ok: boolean;
+  /** 失败原因（`ok: false` 且不是 cancelled 时才有） */
+  error?: string;
+  /** 用户在"重启外部实例"那个确认框里点了取消 —— 什么都没做 */
+  cancelled?: boolean;
+}
+
+/**
  * 重启。受管实例直接重启；外部实例要先征求同意再结束，然后由本应用拉起
  * —— 顺带把新的访问令牌捕获回来，内嵌界面才可用。
  */
-export async function restartFlow(api: DshConsoleApi, getDsh: GetDsh): Promise<void> {
+export async function restartFlow(api: DshConsoleApi, getDsh: GetDsh): Promise<RestartResult> {
   const dsh = getDsh();
   if (!dsh?.owned && dsh?.externalPid) {
     const ok = await api.confirm({
@@ -57,14 +69,21 @@ export async function restartFlow(api: DshConsoleApi, getDsh: GetDsh): Promise<v
       message: `PID ${dsh.externalPid} 是外部启动的，重启需要先结束它。`,
       detail: '结束后本应用会立刻用自己的方式重新拉起 dsh，并捕获新的访问令牌，内嵌界面随即可用。',
     });
-    if (!ok) return;
+    if (!ok) return { ok: false, cancelled: true };
     await api.stop({ killExternal: true, force: true });
     const started = await api.start();
-    if (!started.ok) alert(`启动失败：${started.error}`);
-    return;
+    if (!started.ok) {
+      alert(`启动失败：${started.error}`);
+      return { ok: false, error: started.error };
+    }
+    return { ok: true };
   }
   const result = await api.restart();
-  if (!result.ok) alert(`重启失败：${result.error}`);
+  if (!result.ok) {
+    alert(`重启失败：${result.error}`);
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
 }
 
 /**

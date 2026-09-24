@@ -60,7 +60,7 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
-test/selftest.ts        299 项自检（`npm test`），不需要 Electron
+test/selftest.ts        306 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -102,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（299 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（306 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -359,6 +359,15 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 锁不该只是闪一下）；窗口之外用户自己点的「启动」永远不算这一轮。别把它改成「每次状态变化重新判定」——
 那正是这一节开头那个 bug（解锁之后条件又变回不满足，锁又扣上来）。
 
+**第三个回合：点了「重启 dsh」之后也上锁**（t46 / [`docs/plugin-restart.md`](plugin-restart.md)）。
+同一台单向状态机、同样**显式开回合**：`armEpisode('afterRestart')` 由 `wireRestartNav()` 在
+"有人立了跳转意图"那一刻调用，带**同样的 5 秒窗口**（没有等待就不上锁 —— 例如重启调用当场失败）。
+开回合这件事现在只收在 `armEpisode()` 一处，第二/第三回合都只委托给它（自检盯着三条不变式：
+`idle` 只写一次、`armEpisode` 里不自己 `setBootLock`、窗口超时把回合收成 `done`）。
+两处不同，都写在规格里：① 锁文案按回合分开 —— 重启那一轮是「正在重新启动 dsh」+
+「就绪后自动打开 DeepSeek Harness」（**不提全屏**，那一轮不抢屏）；② 用户在锁上按「不等了 / Esc」
+会**取消这一轮跳转**（`userSkipBootLock()` → `settleRestartNav('escaped')`；第二回合本来就没有跳转可取消）。
+
 ### 7.30 左栏只有七项：终端合并、环境自检在设置里
 
 **现象 / 决定**（t45，用户裁定；摆法示例 `docs/rail-simplify-choices.html`、改判记在 `docs/env-doctor.md` 的 t45 段）：
@@ -418,6 +427,48 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 门禁分支仍然只认 `gateVisible`）
 「设置页：「运行环境」卡是简化展示 + 「查看详情」打开详情层」、以及改了措辞的那条
 「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」。
+
+### 7.31 重启 dsh 之后自动进 Harness（t46）
+
+**现象**：插件页装 / 卸 / 升级之后，黄条写「已改到装配层，重启 dsh 后生效」，点「立即重启 dsh」
+**只有状态栏一句「正在重启 dsh…」** —— 窗口不切、不上锁、没有结束语。用户在底栏最不起眼的位置
+看到一句一闪而过的消息，自然会觉得"点了没用"（用户原话：「点击之后没有后续操作，会让用户感觉没有生效」）。
+
+**现在的做法**（裁定 1A / 2A / 3B / 4A，逐字文案与状态机见 [`docs/plugin-restart.md`](plugin-restart.md)）：
+
+- **先立意图，再动手**：四个入口都调 `lib/restart-flow.ts` 的 `restartThenOpenHarness(api, getDsh, reason)`
+  —— 它先 `beginRestartNav(reason)` **再**调重启。顺序不能反：`dshManager.start()` 一 spawn 完就返回，
+  相位很快 `running → stopping → stopped → starting`，等 IPC 回来再立意图就错过了 5 秒上锁窗口。
+- **上锁**：`app.ts` 的 `wireRestartNav()` 在意图出现时开第三个回合（见 §7.9），锁上写
+  「正在重新启动 dsh / 就绪后自动打开 DeepSeek Harness」。
+- **就绪判据是纯函数**（`restartArrived`）：`running` **且**已经拿到带令牌地址，**且**先看见旧实例
+  被停过（`leftRunning`）或令牌地址确实换了。只看 `running` 就切过去会切到「还没捕获到带令牌地址」
+  那一屏；而少了"先看见停过"这一条，**立意图那一刻**旧实例还是 `running` 带旧令牌，就绪当场成立
+  —— 页面瞬间切走、锁根本不出现（真机实测：点完 600ms 已经在 Harness 页上了，重启还在后头跑）。
+- **"起不来"也一样要"先看见"**（`restartStalled` = 见过 `starting` + 落到 `stopped`/`degraded`/`conflict`）：
+  重启的相位序列必然经过 `stopped` 那一段，不加这道闸会在"停旧实例"那一刻就判失败（真机实测：
+  dsh 明明起来了，界面写「dsh 还没起来（当前状态：运行中）」）。
+- **收尾六态**：`ready`（切页 + 到达提示 + 状态栏一句）/ `failed`（重启调用本身失败，黄条变红说实话）/
+  `unready`（相位落到 `stopped`/`degraded`/`conflict`，或超过 90 秒 = `BOOT_LOCK_MAX_MS`）/
+  `external`（拿不到令牌，不切页）/ `escaped`（用户在锁上说了"不等了"→ **取消**跳转）/ `idle`。
+- **到达时给的是"轻提示"，而且落在顶栏右侧那格已有的信息位上**（`#topbar-note`，平时写着
+  「<地址>，PID …」）：重启就绪后的 4 秒里它变成绿色小胶囊「✓ 装配层改动已加载」，然后自己换回。
+  没有按钮、没有新表面、不遮内嵌界面的任何内容。
+  - 为什么不用浮层：先做过"可关闭的常驻横条"（用户：「给个轻提示就可以了，不用给这种常驻提示」），
+    又做过"浮在正文上的胶囊"（用户：「不好看，你学一下UI设计呗」——半透明底压着别人的正文、
+    又没有层级，两行字还被圆角切碎）。四个方案与取舍见 [`docs/harness-arrival-design.html`](docs/harness-arrival-design.html)。
+  - 为什么是**顶栏**那格而不是 Harness 页工具条右端那格：应用内全屏时
+    `body[data-immersive='true'] #pane-ui .bar` 会把整条工具条藏掉，顶栏则两种模式下都在
+    （真机上量出来的，别改成工具条那格）。
+- **分层**：`lib/restart-nav.ts` 只有状态与纯判据（**不许有 DOM** —— 自检直接 import 它来钉就绪判据，
+  而自检的编译图 `tsconfig.node.json` 没有 DOM 类型）；`lib/restart-flow.ts` 是编排（有 `alert`，谁也别
+  import 它）；`app.ts` 负责等就绪 / 超时 / 切页 / 发状态栏消息。
+
+**哪条自检守着**：「启动锁：重启 dsh 之后是第三个回合（afterRestart），锁文案按回合分开、重启那轮不提全屏」
+「启动锁：锁上的「不等了」/ Esc 取消这一轮跳转（唯一会取消的路径）」
+「重启后进 Harness：就绪判据是 running + 已拿到带令牌地址」
+「重启后进 Harness：意图在调用重启之前立」「重启后进 Harness：四个入口都走同一条流程」
+「重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，到达提示走顶栏那格已有的信息位（方案 A）」。
 
 ### 7.10 本地 Shell 有意**不持久化**
 

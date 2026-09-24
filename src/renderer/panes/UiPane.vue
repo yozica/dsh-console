@@ -13,7 +13,7 @@
  * `classList.add('hidden')` 和 `setText` 表达；现在是模板里的 v-if 与 computed。
  */
 import { computed, onMounted, ref, watch } from 'vue';
-import { restartFlow } from '../lib/dsh-actions.js';
+import { restartThenOpenHarness } from '../lib/restart-flow.js';
 import {
   currentTab,
   dsh,
@@ -168,7 +168,7 @@ async function restartManaged() {
   if (busy.value) return;
   busy.value = true;
   try {
-    await restartFlow(api, () => dsh.value);
+    await restartThenOpenHarness(api, () => dsh.value, 'ui');
   } finally {
     busy.value = false;
   }

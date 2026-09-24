@@ -14,6 +14,7 @@ import { computed } from 'vue';
 
 import { gateVisible } from '../lib/env-wizard.js';
 import { envDetailOpen } from '../lib/env-layer.js';
+import { harnessArrivalNotice } from '../lib/restart-nav.js';
 import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../lib/store.js';
 
 const PAGE_TITLES = {
@@ -51,7 +52,7 @@ const lampTitle = computed(
  * 右侧上下文信息：控制台页自己有一整块事实区，这里就不重复了。
  * 去掉 http:// 前缀（本机地址，协议没有信息量），给标题栏省地方。
  */
-const note = computed(() => {
+const contextNote = computed(() => {
   const d = dsh.value;
   if (!d || currentTab.value === 'dashboard') return '';
   const pid = owned.value
@@ -63,6 +64,15 @@ const note = computed(() => {
       : '未运行';
   return `${String(d.origin || '').replace(/^https?:\/\//, '')}，${pid}`;
 });
+
+/**
+ * 这一格显示的正文：重启就绪之后的 4 秒里让位给那句轻提示（t46）。
+ *
+ * 为什么是**顶栏这一格**（而不是 Harness 页工具条右端那格 `#ui-note`）：应用内全屏时
+ * Harness 页的整条工具条会被藏起来（`body[data-immersive='true'] #pane-ui .bar`），
+ * 而顶栏两种模式下都在。轻提示的摆法与取舍见 docs/harness-arrival-design.html。
+ */
+const note = computed(() => harnessArrivalNotice.value || contextNote.value);
 </script>
 
 <template>
@@ -76,7 +86,13 @@ const note = computed(() => {
     <h1 class="page-title" id="page-title">{{ title }}</h1>
     <div class="spacer"></div>
     <!-- 与页面相关的控件：门禁层显示期间整条收起（v-if，不留空槽、不加过渡） -->
-    <span v-if="!gateVisible" class="topbar-note" id="topbar-note">{{ note }}</span>
+    <span
+      v-if="!gateVisible"
+      class="topbar-note"
+      id="topbar-note"
+      :class="{ lit: harnessArrivalNotice }"
+      >{{ note }}</span
+    >
     <button
       v-if="!gateVisible"
       id="btn-exit-immersive"

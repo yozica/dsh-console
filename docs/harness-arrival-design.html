@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>「装配层改动已加载」这句提示怎么做（重新设计）</title>
+    <!--
+      上一版的问题（用户："不好看，你学一下UI设计呗"）：
+        1. 34 个字的句子塞进胶囊 → 折成两行，圆角把文字切得很碎；
+        2. 半透明底色压在人家的正文上 → 后面的字透出来，看着"脏"；
+        3. 浮在内容上却没有层级（无边框、无阴影）→ 像贴纸掉在上面；
+        4. 位置正好压住 Harness 页的第一行内容（把标题那行盖掉一半）；
+        5. "轻提示"却写了最长的一句文案 —— 定位和行为自相矛盾。
+
+      这一版按这个产品自己的材料语言重做：四级表面 + 半透明发丝线、阴影全局只用一处、
+      强调色只用在"状态"上、文案短到一眼看完。四个方案都是真尺寸（窗口 1216×655，
+      左栏 188px，工作区 ≈1028px），零脚本。
+    -->
+    <style>
+      :root {
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --t-lg: 15px;
+        --r-control: 8px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --surface-3: #eceff5;
+        --rail: #e9edf3;
+        --hairline: rgba(16, 24, 40, 0.11);
+        --hairline-soft: rgba(16, 24, 40, 0.06);
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+        --accent: #0e7490;
+        --accent-soft: rgba(8, 145, 178, 0.14);
+        --accent-line: rgba(8, 145, 178, 0.34);
+        --run: #047857;
+        --run-soft: rgba(4, 120, 87, 0.15);
+        --shadow-float: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+        --term: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 26px 22px 80px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          'PingFang SC',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 8px;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 30px 0 4px;
+      }
+      h2 .tag {
+        font-size: var(--t-xs);
+        font-weight: 500;
+        color: var(--ink-faint);
+        margin-left: 8px;
+      }
+      h2 .rec {
+        font-size: var(--t-xs);
+        font-weight: 600;
+        color: var(--accent);
+        border: 1px solid var(--accent-line);
+        background: var(--accent-soft);
+        border-radius: 999px;
+        padding: 1px 8px;
+        margin-left: 8px;
+      }
+      p.lead,
+      ul.why,
+      p.caption {
+        color: var(--ink-dim);
+        max-width: 900px;
+      }
+      ul.why {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+      ul.why li {
+        margin: 2px 0;
+      }
+      p.caption {
+        margin: 6px 0 12px;
+        font-size: var(--t-md);
+      }
+      code {
+        font-family: var(--term);
+        font-size: var(--t-sm);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      .verdict {
+        display: inline-block;
+        font-size: var(--t-sm);
+        border-radius: 999px;
+        padding: 3px 10px;
+        margin-top: 6px;
+      }
+      .verdict.bad {
+        background: rgba(190, 18, 60, 0.1);
+        color: #9f1239;
+      }
+
+      /* ================= 真机尺寸的窗口 ================= */
+      .win {
+        width: 1216px;
+        height: 655px;
+        max-width: 100%;
+        display: grid;
+        grid-template-columns: 188px 1fr;
+        background: var(--bg);
+        border: 1px solid var(--hairline);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: var(--shadow-float);
+        position: relative;
+      }
+      .rail {
+        background: var(--rail);
+        border-right: 1px solid var(--hairline-soft);
+        padding: 44px 12px 12px;
+      }
+      .rail .brand {
+        font-size: var(--t-sm);
+        color: var(--ink-faint);
+        letter-spacing: 0.04em;
+        padding: 0 8px 14px;
+      }
+      .rail .item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+        padding: 0 10px;
+        border-radius: var(--r-control);
+        color: var(--ink-dim);
+        font-size: var(--t-md);
+      }
+      .rail .item.on {
+        background: var(--surface);
+        color: var(--ink);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+      }
+      .rail .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--run);
+      }
+      .rail .state {
+        margin: 0 8px 14px;
+        font-size: var(--t-sm);
+        color: var(--ink-dim);
+      }
+      .rail .state b {
+        color: var(--run);
+        font-weight: 600;
+      }
+
+      .workspace {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .topbar {
+        height: 36px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        background: var(--bg);
+        border-bottom: 1px solid var(--hairline-soft);
+        font-size: var(--t-md);
+      }
+      .topbar .name {
+        font-weight: 600;
+      }
+      .topbar .meta {
+        margin-left: auto;
+        color: var(--ink-faint);
+        font-family: var(--term);
+        font-size: var(--t-xs);
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--hairline-soft);
+      }
+      .pill {
+        height: 26px;
+        padding: 0 10px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-control);
+        background: var(--surface);
+        color: var(--ink-dim);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: var(--t-sm);
+      }
+      .pill.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .toolbar .note {
+        margin-left: auto;
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+        font-family: var(--term);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        transition: none;
+      }
+      .toolbar .note.lit {
+        background: var(--run-soft);
+        color: var(--run);
+        font-family: inherit;
+      }
+
+      /* 内嵌的 Harness 页面（模拟） */
+      .guest {
+        flex: 1 1 auto;
+        overflow: hidden;
+        background: var(--surface);
+        position: relative;
+      }
+      .guest .pad {
+        padding: 26px 34px 0;
+      }
+      .guest .head {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .guest .avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--surface-3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        color: var(--ink-faint);
+        flex: 0 0 auto;
+      }
+      .guest h3 {
+        margin: 0;
+        font-size: var(--t-lg);
+      }
+      .guest .sub {
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+      }
+      .guest .modes {
+        display: flex;
+        gap: 18px;
+        margin: 16px 0 10px;
+        color: var(--ink-faint);
+        font-size: var(--t-md);
+      }
+      .guest .modes .on {
+        color: var(--ink);
+        font-weight: 600;
+        box-shadow: inset 0 -2px 0 var(--ink);
+        padding-bottom: 3px;
+      }
+      .guest p.body {
+        margin: 0 0 12px;
+        color: var(--ink-dim);
+        font-size: var(--t-md);
+        max-width: 720px;
+      }
+      .guest .files {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 6px 0 0;
+      }
+      .guest .file {
+        width: 300px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-control);
+        padding: 8px 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .guest .file .ic {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+      .guest .file .t {
+        font-size: var(--t-sm);
+      }
+      .guest .file .d {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+      }
+      .composer {
+        position: absolute;
+        left: 34px;
+        right: 34px;
+        bottom: 34px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        background: var(--surface);
+        box-shadow: var(--shadow-float);
+        padding: 14px 14px 10px;
+      }
+      .composer .ph {
+        color: var(--ink-faint);
+        font-size: var(--t-md);
+      }
+      .composer .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 14px;
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+      }
+      .composer .send {
+        margin-left: auto;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--surface-3);
+        color: var(--ink-faint);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .statusbar {
+        height: 26px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 14px;
+        border-top: 1px solid var(--hairline-soft);
+        color: var(--ink-faint);
+        font-size: var(--t-sm);
+      }
+      .statusbar .msg {
+        color: var(--ink-dim);
+      }
+      .statusbar .msg.lit {
+        color: var(--run);
+      }
+      .statusbar .right {
+        margin-left: auto;
+        font-family: var(--term);
+        font-size: var(--t-xs);
+      }
+
+      /* ================= 四种"提示" ================= */
+      /* ✗ 上一版：压住正文的半透明胶囊 */
+      .old-pill {
+        position: absolute;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 640px;
+        padding: 8px 16px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+      }
+
+      /* A：借用工具栏右端**已有的**状态槽（#ui-note） */
+      .mark-a {
+        position: absolute;
+        top: 44px;
+        right: 14px;
+        border: 1px dashed var(--accent-line);
+        border-radius: 999px;
+        padding: 1px 6px;
+        font-size: var(--t-xs);
+        color: var(--accent);
+        background: var(--surface);
+      }
+
+      /* B：右下角轻卡片 */
+      /* 为什么不是右下角：这个页面的右下角被输入框占着（它自身还带阴影），卡片放那儿
+         要么被压在下面、要么浮在输入框上显得错位 —— 所以放工具条右下方。 */
+      .card-toast {
+        position: absolute;
+        right: 14px;
+        top: 44px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: var(--r-panel);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        box-shadow: var(--shadow-float);
+      }
+      .card-toast .tick {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--run-soft);
+        color: var(--run);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+      .card-toast .t {
+        font-size: var(--t-md);
+      }
+      .card-toast .d {
+        font-size: var(--t-xs);
+        color: var(--ink-faint);
+      }
+
+      /* C：工具栏下面一条细条（占位、不遮挡） */
+      .inline-strip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 30px;
+        padding: 0 14px;
+        background: var(--run-soft);
+        border-bottom: 1px solid var(--hairline-soft);
+        color: var(--run);
+        font-size: var(--t-sm);
+      }
+      .inline-strip .back {
+        margin-left: auto;
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .badge {
+        font-size: var(--t-xs);
+        color: var(--accent);
+        background: var(--accent-soft);
+        border: 1px solid var(--accent-line);
+        border-radius: 999px;
+        padding: 0 7px;
+      }
+      table.pick {
+        border-collapse: collapse;
+        margin: 14px 0 0;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        overflow: hidden;
+        font-size: var(--t-sm);
+      }
+      table.pick th,
+      table.pick td {
+        text-align: left;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--hairline);
+        vertical-align: top;
+      }
+      table.pick th {
+        background: var(--surface-2);
+        font-weight: 600;
+      }
+      table.pick tr:last-child td {
+        border-bottom: 0;
+      }
+      .note {
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+        margin: 8px 0 0;
+      }
+      .copy {
+        font-family: var(--term);
+        font-size: var(--t-sm);
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 6px;
+        padding: 2px 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>「装配层改动已加载」这句提示重新设计</h1>
+    <p class="lead">上一版难看的五个原因（我先自己认下来）：</p>
+    <ul class="why">
+      <li>
+        <b>34 个字的句子塞进胶囊</b> ——
+        折成两行，圆角把文字切得很碎；"轻提示"写了最长的一句文案，定位和行为自相矛盾。
+      </li>
+      <li><b>半透明底色压在人家的正文上</b> —— 后面的字透出来，看着脏。</li>
+      <li><b>浮在内容上却没有层级</b>（无边框、无阴影）—— 像一张贴纸掉在上面。</li>
+      <li><b>位置正好压住 Harness 页的第一行内容</b> —— 把标题那行盖掉一半。</li>
+      <li><b>为了"居中"而居中</b> —— 居中不是目的，不挡东西、一眼看完才是。</li>
+    </ul>
+    <p class="lead" style="margin-top: 10px">
+      下面四个方案都用这个产品自己的材料语言（四级表面 + 半透明发丝线、阴影全局只用一处、
+      强调色只表达状态），文案压到 <span class="copy">装配层改动已加载</span> 这一句 ——
+      长解释留在插件页那条黄条里（它已经写着「dsh 已重启，装配层的改动已加载。」）。
+    </p>
+
+    <h2>✗ 现状<span class="tag">上一版，别抄</span></h2>
+    <div class="win">
+      <div class="rail">
+        <div class="brand">DSH Console</div>
+        <div class="state"><b>● 运行中</b><br />已运行 7 秒</div>
+        <div class="item">控制台</div>
+        <div class="item">终端</div>
+        <div class="item on">DeepSeek Harness</div>
+        <div class="item">DeepSeek 用量</div>
+        <div class="item">归档会话</div>
+        <div class="item">插件</div>
+        <div class="item">设置</div>
+      </div>
+      <div class="workspace">
+        <div class="topbar">
+          <span class="name">DeepSeek Harness</span>
+          <span class="meta">127.0.0.1:3080, PID 83309</span>
+        </div>
+        <div class="toolbar">
+          <span class="pill primary">载入</span><span class="pill">全屏</span
+          ><span class="pill">重启为受管实例</span><span class="pill">重新载入</span
+          ><span class="pill">后退</span>
+          <span class="note">已载入 http://127.0.0.1:3080/</span>
+        </div>
+        <div class="guest">
+          <div class="old-pill">
+            <span style="color: var(--accent)">⟳</span>
+            刚刚重启过 dsh，装配层的改动已经加载。以后改你自己的 cordis.patch.yml 不用重启。
+          </div>
+          <div class="pad">
+            <div class="head">
+              <div class="avatar">◍</div>
+              <div>
+                <h3>适配 Mac 界面</h3>
+                <div class="sub">6 个子代理 · 1 个文件改动</div>
+              </div>
+            </div>
+            <div class="modes"><span class="on">对话</span><span>轨迹</span></div>
+            <p class="body">
+              补齐了下拉菜单在 macOS
+              上的宽度，并修掉了系统全屏时左栏上面空一块的问题。自检与实机都过了。
+            </p>
+            <div class="files">
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">harness-arrival-choices.html</div>
+                  <div class="d">摆法预览</div>
+                </div>
+              </div>
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">rn-toast.png</div>
+                  <div class="d">真机截图 · 轻提示</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="ph">发消息或创建任务，调用命令，@ 文件或对话</div>
+            <div class="row">
+              <span>＋</span><span>＠</span><span>⌘ 工作区内改动 ⌄</span>
+              <span class="send">↑</span>
+            </div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span class="msg">插件已生效，已打开 DeepSeek Harness</span>
+          <span class="right">⌘+1~7 切换页面 · Electron 44.3.0, Node 24.20.0</span>
+        </div>
+      </div>
+    </div>
+    <span class="verdict bad">压住正文、两行字、没有层级</span>
+
+    <h2>A. 用工具栏右端已有的状态槽<span class="rec">我推荐</span></h2>
+    <p class="caption">
+      那个位置本来就写着「已载入 http://127.0.0.1:3080/」。重启完成后它变成
+      <span class="copy" style="color: var(--run)">✓ 装配层改动已加载</span>（绿色、带对勾）， 4
+      秒后自己换回原来的「已载入 …」。 <b>不新增任何表面、不遮挡任何内容、不需要动效</b> ——
+      它读起来就是一句状态，而不是装饰。 （上面那一屏里，工具栏右端那枚绿色胶囊就是它占的那一格
+      <code>#ui-note</code>。）
+    </p>
+    <div class="win">
+      <div class="rail">
+        <div class="brand">DSH Console</div>
+        <div class="state"><b>● 运行中</b><br />已运行 7 秒</div>
+        <div class="item">控制台</div>
+        <div class="item">终端</div>
+        <div class="item on">DeepSeek Harness</div>
+        <div class="item">DeepSeek 用量</div>
+        <div class="item">归档会话</div>
+        <div class="item">插件</div>
+        <div class="item">设置</div>
+      </div>
+      <div class="workspace">
+        <div class="topbar">
+          <span class="name">DeepSeek Harness</span>
+          <span class="meta">127.0.0.1:3080, PID 83309</span>
+        </div>
+        <div class="toolbar">
+          <span class="pill primary">载入</span><span class="pill">全屏</span
+          ><span class="pill">重启为受管实例</span><span class="pill">重新载入</span
+          ><span class="pill">后退</span>
+          <span class="note lit">✓ 装配层改动已加载</span>
+        </div>
+        <div class="guest">
+          <div class="pad">
+            <div class="head">
+              <div class="avatar">◍</div>
+              <div>
+                <h3>适配 Mac 界面</h3>
+                <div class="sub">6 个子代理 · 1 个文件改动</div>
+              </div>
+            </div>
+            <div class="modes"><span class="on">对话</span><span>轨迹</span></div>
+            <p class="body">
+              补齐了下拉菜单在 macOS
+              上的宽度，并修掉了系统全屏时左栏上面空一块的问题。自检与实机都过了。
+            </p>
+            <div class="files">
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">harness-arrival-choices.html</div>
+                  <div class="d">摆法预览</div>
+                </div>
+              </div>
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">rn-toast.png</div>
+                  <div class="d">真机截图 · 轻提示</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="ph">发消息或创建任务，调用命令，@ 文件或对话</div>
+            <div class="row">
+              <span>＋</span><span>＠</span><span>⌘ 工作区内改动 ⌄</span>
+              <span class="send">↑</span>
+            </div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span class="msg">插件已生效，已打开 DeepSeek Harness</span>
+          <span class="right">⌘+1~7 切换页面 · Electron 44.3.0, Node 24.20.0</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>B. 工具条右下方的一张轻卡片</h2>
+    <p class="caption">
+      一张真正的卡片：图标 + 一句主文案 + 一行灰注，<code>--surface</code> + 发丝线 + 那唯一的阴影
+      （浮层该有的样子），3 秒后淡出 —— 比 A 显眼。<b>位置只能放这里</b>：右下角被输入框占着
+      （放那儿要么被压住、要么浮在输入框上像错位），这也是我原本想放右下角时的第一反应错误。
+    </p>
+    <div class="win">
+      <div class="rail">
+        <div class="brand">DSH Console</div>
+        <div class="state"><b>● 运行中</b><br />已运行 7 秒</div>
+        <div class="item">控制台</div>
+        <div class="item">终端</div>
+        <div class="item on">DeepSeek Harness</div>
+        <div class="item">DeepSeek 用量</div>
+        <div class="item">归档会话</div>
+        <div class="item">插件</div>
+        <div class="item">设置</div>
+      </div>
+      <div class="workspace">
+        <div class="topbar">
+          <span class="name">DeepSeek Harness</span>
+          <span class="meta">127.0.0.1:3080, PID 83309</span>
+        </div>
+        <div class="toolbar">
+          <span class="pill primary">载入</span><span class="pill">全屏</span
+          ><span class="pill">重启为受管实例</span><span class="pill">重新载入</span
+          ><span class="pill">后退</span>
+          <span class="note">已载入 http://127.0.0.1:3080/</span>
+        </div>
+        <div class="guest">
+          <div class="pad">
+            <div class="head">
+              <div class="avatar">◍</div>
+              <div>
+                <h3>适配 Mac 界面</h3>
+                <div class="sub">6 个子代理 · 1 个文件改动</div>
+              </div>
+            </div>
+            <div class="modes"><span class="on">对话</span><span>轨迹</span></div>
+            <p class="body">
+              补齐了下拉菜单在 macOS
+              上的宽度，并修掉了系统全屏时左栏上面空一块的问题。自检与实机都过了。
+            </p>
+            <div class="files">
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">harness-arrival-choices.html</div>
+                  <div class="d">摆法预览</div>
+                </div>
+              </div>
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">rn-toast.png</div>
+                  <div class="d">真机截图 · 轻提示</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card-toast">
+            <span class="tick">✓</span>
+            <div>
+              <div class="t">装配层改动已加载</div>
+              <div class="d">以后改 cordis.patch.yml 不用重启</div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="ph">发消息或创建任务，调用命令，@ 文件或对话</div>
+            <div class="row">
+              <span>＋</span><span>＠</span><span>⌘ 工作区内改动 ⌄</span>
+              <span class="send">↑</span>
+            </div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span class="msg">插件已生效，已打开 DeepSeek Harness</span>
+          <span class="right">⌘+1~7 切换页面 · Electron 44.3.0, Node 24.20.0</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>C. 工具栏下面一条细条<span class="tag">占位，不遮挡</span></h2>
+    <p class="caption">
+      绿色发丝线细条（30px），把内嵌界面往下推一点 —— <b>内容一个字都不盖</b>，4 秒后收回。
+      代价：内嵌页会重排两次（上下各一次），对一个聊天页几乎看不出来，但它是"动了人家的布局"。
+    </p>
+    <div class="win">
+      <div class="rail">
+        <div class="brand">DSH Console</div>
+        <div class="state"><b>● 运行中</b><br />已运行 7 秒</div>
+        <div class="item">控制台</div>
+        <div class="item">终端</div>
+        <div class="item on">DeepSeek Harness</div>
+        <div class="item">DeepSeek 用量</div>
+        <div class="item">归档会话</div>
+        <div class="item">插件</div>
+        <div class="item">设置</div>
+      </div>
+      <div class="workspace">
+        <div class="topbar">
+          <span class="name">DeepSeek Harness</span>
+          <span class="meta">127.0.0.1:3080, PID 83309</span>
+        </div>
+        <div class="toolbar">
+          <span class="pill primary">载入</span><span class="pill">全屏</span
+          ><span class="pill">重启为受管实例</span><span class="pill">重新载入</span
+          ><span class="pill">后退</span>
+          <span class="note">已载入 http://127.0.0.1:3080/</span>
+        </div>
+        <div class="inline-strip">
+          <span>✓ 装配层改动已加载</span>
+          <span class="back">4 秒后自动收起</span>
+        </div>
+        <div class="guest">
+          <div class="pad">
+            <div class="head">
+              <div class="avatar">◍</div>
+              <div>
+                <h3>适配 Mac 界面</h3>
+                <div class="sub">6 个子代理 · 1 个文件改动</div>
+              </div>
+            </div>
+            <div class="modes"><span class="on">对话</span><span>轨迹</span></div>
+            <p class="body">
+              补齐了下拉菜单在 macOS
+              上的宽度，并修掉了系统全屏时左栏上面空一块的问题。自检与实机都过了。
+            </p>
+            <div class="files">
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">harness-arrival-choices.html</div>
+                  <div class="d">摆法预览</div>
+                </div>
+              </div>
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">rn-toast.png</div>
+                  <div class="d">真机截图 · 轻提示</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="ph">发消息或创建任务，调用命令，@ 文件或对话</div>
+            <div class="row">
+              <span>＋</span><span>＠</span><span>⌘ 工作区内改动 ⌄</span>
+              <span class="send">↑</span>
+            </div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span class="msg">插件已生效，已打开 DeepSeek Harness</span>
+          <span class="right">⌘+1~7 切换页面 · Electron 44.3.0, Node 24.20.0</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>D. 什么都不新增<span class="tag">最省</span></h2>
+    <p class="caption">
+      只在状态栏那句上做文章：<b>短暂高亮</b>「插件已生效，已打开 DeepSeek Harness」1.5 秒（变绿 +
+      加粗）， 然后恢复常态。零新表面、零遮挡、零动效，代价是最容易被忽略（它在最底下）。
+    </p>
+    <div class="win">
+      <div class="rail">
+        <div class="brand">DSH Console</div>
+        <div class="state"><b>● 运行中</b><br />已运行 7 秒</div>
+        <div class="item">控制台</div>
+        <div class="item">终端</div>
+        <div class="item on">DeepSeek Harness</div>
+        <div class="item">DeepSeek 用量</div>
+        <div class="item">归档会话</div>
+        <div class="item">插件</div>
+        <div class="item">设置</div>
+      </div>
+      <div class="workspace">
+        <div class="topbar">
+          <span class="name">DeepSeek Harness</span>
+          <span class="meta">127.0.0.1:3080, PID 83309</span>
+        </div>
+        <div class="toolbar">
+          <span class="pill primary">载入</span><span class="pill">全屏</span
+          ><span class="pill">重启为受管实例</span><span class="pill">重新载入</span
+          ><span class="pill">后退</span>
+          <span class="note">已载入 http://127.0.0.1:3080/</span>
+        </div>
+        <div class="guest">
+          <div class="pad">
+            <div class="head">
+              <div class="avatar">◍</div>
+              <div>
+                <h3>适配 Mac 界面</h3>
+                <div class="sub">6 个子代理 · 1 个文件改动</div>
+              </div>
+            </div>
+            <div class="modes"><span class="on">对话</span><span>轨迹</span></div>
+            <p class="body">
+              补齐了下拉菜单在 macOS
+              上的宽度，并修掉了系统全屏时左栏上面空一块的问题。自检与实机都过了。
+            </p>
+            <div class="files">
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">harness-arrival-choices.html</div>
+                  <div class="d">摆法预览</div>
+                </div>
+              </div>
+              <div class="file">
+                <span class="ic">◧</span>
+                <div>
+                  <div class="t">rn-toast.png</div>
+                  <div class="d">真机截图 · 轻提示</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="ph">发消息或创建任务，调用命令，@ 文件或对话</div>
+            <div class="row">
+              <span>＋</span><span>＠</span><span>⌘ 工作区内改动 ⌄</span>
+              <span class="send">↑</span>
+            </div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <span class="msg lit">插件已生效，已打开 DeepSeek Harness</span>
+          <span class="right">⌘+1~7 切换页面 · Electron 44.3.0, Node 24.20.0</span>
+        </div>
+      </div>
+    </div>
+
+    <table class="pick">
+      <tr>
+        <th>方案</th>
+        <th>遮不遮内容</th>
+        <th>新增表面</th>
+        <th>代价 / 风险</th>
+      </tr>
+      <tr>
+        <td><b>A 工具栏状态槽</b>（推荐）</td>
+        <td>不遮</td>
+        <td>无（用已有的 <code>#ui-note</code>）</td>
+        <td>位置偏"技术性"，不如卡片抢眼</td>
+      </tr>
+      <tr>
+        <td><b>B 工具条右下的轻卡片</b></td>
+        <td>不遮（在工具条下方留白处）</td>
+        <td>一张卡片 + 那唯一的阴影</td>
+        <td>阴影是有分量的东西，用多了界面会"浮"</td>
+      </tr>
+      <tr>
+        <td><b>C 顶部细条</b></td>
+        <td>不遮（占位）</td>
+        <td>一条 30px 的条</td>
+        <td>内嵌页要重排两次</td>
+      </tr>
+      <tr>
+        <td><b>D 只高亮状态栏</b></td>
+        <td>不遮</td>
+        <td>无</td>
+        <td>最容易看不见（它在最底下）</td>
+      </tr>
+    </table>
+    <p class="note">
+      文案（三处都用这一句）：<span class="copy">装配层改动已加载</span> ——
+      长解释留在插件页那条黄条里。回一句「A」「B」「C」或「D」就行。
+    </p>
+  </body>
+</html>
