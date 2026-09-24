@@ -21,6 +21,42 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-09-24: 重启后自动进 Harness，装插件挑对 pnpm
+
+测试夹具里不再带真实的家目录路径
+
+`test/fixtures/broken-patch.stderr.txt` 与 `unmatched-patch.stderr.txt` 是抓下来的真实 dsh 报错，
+里面带着当时那台机器的绝对路径（用户名、nvm 版本目录、`.build-home` 结构）。现在统一换成中性的
+`/Users/someone/...`：报错形状（堆栈、`YAMLException`、`cordis.patch.yml`、条目 id）一字未改，
+自检的断言照旧。
+
+内嵌页里点非 http(s) 链接（例如 DSH 自己的文件引用 `dsh-resource://…`）不再弹「DSH Console 出错了（未处理的 Promise 拒绝）」：外链统一走一个 helper，只把 http/https/mailto 交给系统程序，并接住 `shell.openExternal` 的失败（写进日志）
+
+装插件时用「和这份 profile 对得上」的那份 pnpm，不再被 PATH 里另一档 pnpm 卡住
+
+机器上装了两份不同大版本的 pnpm 时（例如 pnpm 官方脚本装的 10.x 与 nvm 里 corepack shim 的 9.x），
+装插件会在 pnpm 那里直接失败，只留下一段看不懂的话：
+
+> node_modules … currently linked from the store at …/store/v10 … pnpm now wants to use …/store/v3 …
+
+现在：装/卸/升级之前先读 profile 的 `node_modules/.modules.yaml`（`packageManager`），挑一份**大版本
+一致**的 pnpm 顶到子进程 PATH 最前；一个都对不上时先提示说清，失败时也把那段原文翻成人话 + 出路。
+
+插件装完之后点「立即重启 dsh」，会等重启完成并自动进入 DeepSeek Harness
+
+以前点完只有状态栏一句「正在重启 dsh…」：窗口不切、不上锁、没有结束语，用户会觉得"点了没生效"。
+现在四个入口（插件页「立即重启 dsh」、控制台「重启」、环境自检「重新启动 dsh」、
+Harness 页「重启为受管实例」）共用同一条流程：
+
+- 点下去先上**启动锁**（第三回合，单向上锁状态机不变）：标题「正在重新启动 dsh」，
+  下面写「已等待 N 秒 · 就绪后自动打开 DeepSeek Harness」—— 不抢全屏；
+- 就绪的判据是 **dsh 跑起来且已拿到带令牌地址**（只看"跑起来了"会切到"还没捕获到令牌"那一屏）；
+- 就绪后**自动切到 DeepSeek Harness 页**，状态栏说一句「插件已生效，已打开 DeepSeek Harness」，
+  顶栏右侧那格**轻轻亮一下**「✓ 装配层改动已加载」（平时那里写着地址与 PID，4 秒后自己换回；
+  没有按钮、没有新表面、不遮内嵌界面的内容，应用内全屏时也看得见）；
+- 插件页那条黄条变成这一轮的进度与结局：进行中 / 重启失败 / dsh 还没起来 / 已生效 —— 都是实话；
+- 用户在锁上按「不等了」或 `Esc` 会**取消这次跳转**（只解除等待，不抢页面）。
+
 ## [0.6.3] - 2026-09-21: 左栏精简：终端合并、环境自检进设置
 
 左栏从九项减到七项：终端合并成一个页面、环境自检挪进设置
