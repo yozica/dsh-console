@@ -1209,6 +1209,23 @@ async function main(): Promise<void> {
       /app\.on\('before-quit'[\s\S]{0,200}?isQuitting = true;/.test(mainCloseCode),
   );
 
+  // ---------------------------------------------------------- 10a-2. 外链
+  //   真机弹过「DSH Console 出错了（未处理的 Promise 拒绝）：Error: No application found to open URL」：
+  //   在内嵌的 DSH 界面里点一个文件引用（`dsh-resource://…`），guest 的 window open handler 把**任何**
+  //   URL 都丢给 `shell.openExternal`，而它的返回值被 `void` 丢掉 —— 一次 reject 就顶成全局未处理拒绝。
+  //   钉两件事：三处入口（主窗口、内嵌页、渲染层 IPC）共用一个 helper，不再有裸调用；
+  //   且 helper 自己既守 scheme 白名单、又接住失败。
+  check(
+    '外链：三处入口共用一个 helper（scheme 白名单 + 接住 openExternal 的失败）',
+    (mainCloseCode.match(/openExternalSafely\(/g) || []).length === 4 && // 定义 1 + 调用 3
+      !/void shell\.openExternal\(/.test(mainCloseCode) &&
+      !/await shell\.openExternal\(target\)/.test(mainCloseCode) &&
+      /const EXTERNAL_URL_SCHEMES = new Set\(\['http:', 'https:', 'mailto:'\]\)/.test(
+        mainCloseCode,
+      ) &&
+      /await shell\.openExternal\(url\);[\s\S]{0,120}?catch/.test(mainCloseCode),
+  );
+
   // ---------------------------------------------------------- 10b. 启动早期：日志与兜底
   //    §7.24 的由来：真机上"双击没反应、过一会系统报崩溃"，而日志里一行都没有 —— 分不清
   //    "进程没起来"和"起来了但没到 ready"。所以钉四件事：ready 之前就落一行启动记录、
