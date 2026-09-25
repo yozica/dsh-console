@@ -848,12 +848,10 @@ function clearFilters(): void {
     </div>
 
     <!-- 装/卸/升级改的是 package.json 与 node_modules → 必须重启 dsh。
-         这条同时是这一轮重启的进度与结局（t46）：进行中 / 失败或未就绪 / 已生效 / 还没重启。 -->
-    <div
-      v-if="bannerVisible"
-      class="banner"
-      :class="{ rose: navOutcome === 'failed', line: !!navLine }"
-    >
+         这条同时是这一轮重启的进度与结局（t46）：进行中 / 失败或未就绪 / 已生效 / 还没重启。
+         竖直居中由 `.banner` 统一负责（t48）——以前按"单行 / 两行"分两个变体，可同一条黄条在
+         宽窗口是一行、窄窗口才是两行，JS 判不出来，于是单行那态一直是偏上的。 -->
+    <div v-if="bannerVisible" class="banner" :class="{ rose: navOutcome === 'failed' }">
       <svg class="i"><use href="#i-warn" /></svg>
       <span v-if="navLine" id="plugin-restart-line">{{ navLine }}</span>
       <span v-else id="plugin-restart-line">

@@ -460,6 +460,15 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
   - 为什么是**顶栏**那格而不是 Harness 页工具条右端那格：应用内全屏时
     `body[data-immersive='true'] #pane-ui .bar` 会把整条工具条藏掉，顶栏则两种模式下都在
     （真机上量出来的，别改成工具条那格）。
+- **黄条本身：竖直居中统一由 `.banner` 负责**（`align-items: center`，图标也不再自己 `margin-top` 往下挪）。
+  **不许再按"单行 / 两行"分变体** —— 同一条黄条在宽窗口是一行、窄窗口才是两行，**行数由宽度决定，JS 判不出来**。
+  踩过两次：第一版 `.banner` 用 `flex-start` 是给「标题 + 说明」两行准备的，单行那态偏上；第二版加
+  `.banner.line` 覆盖，却挂在 `line: !!navLine` 上 —— 于是"装 / 卸 / 升级"那条默认文案（宽窗口下一行、
+  窄窗口两行）永远拿不到覆盖，还是偏上（用户第二次抓图；真机截图量出来上方留白 20px、下方 34px，偏上 7 物理 px）。
+  统一居中不会把两行那态弄坏：**两行时最高的那一项本来就是文本块**，居中与顶对齐对它的位置没有影响，
+  受影响的只有图标与按钮 —— 它们居中才是常态（常见 alert 摆法）。这条能用 headless Chrome 离线验证：
+  拿 `dist/renderer/assets/` 里构建出的真 CSS 渲染一段黄条骨架（`--force-device-scale-factor=2 --screenshot`），
+  再量"上方留白 vs 下方留白"即可 —— 改之前 +3.0 CSS px、改之后一行 +0.0 / 两行 +0.0。
 - **分层**：`lib/restart-nav.ts` 只有状态与纯判据（**不许有 DOM** —— 自检直接 import 它来钉就绪判据，
   而自检的编译图 `tsconfig.node.json` 没有 DOM 类型）；`lib/restart-flow.ts` 是编排（有 `alert`，谁也别
   import 它）；`app.ts` 负责等就绪 / 超时 / 切页 / 发状态栏消息。

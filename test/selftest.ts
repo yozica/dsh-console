@@ -1111,6 +1111,9 @@ async function main(): Promise<void> {
       restartNav.restartNav.value.outcome === 'pending' &&
       restartNav.harnessArrivalNotice.value === null,
   );
+  // 黄条那两条规则的原文（按行取整段，避免 `[\s\S]*?` 跨到别的规则里去）
+  const bannerBlock = stylesCode.match(/^\.banner \{[\s\S]*?^\}/m)?.[0] ?? '';
+  const bannerIconBlock = stylesCode.match(/^\.banner \.i \{[\s\S]*?^\}/m)?.[0] ?? '';
   check(
     '重启后进 Harness：黄条有进行中 / 失败 / 未就绪 / 已生效四态，到达提示走顶栏那格已有的信息位（方案 A）',
     ['pending', 'failed', 'unready', 'external', 'escaped', 'ready'].every((state) =>
@@ -1144,13 +1147,19 @@ async function main(): Promise<void> {
       ) &&
       /\.toast \{/.test(stylesCode) === false &&
       /\.banner\.arrival/.test(stylesCode) === false &&
-      // 单行的结局提示要竖直居中：多行那套 flex-start + 图标 margin-top 会让文字偏上
-      // （用户真机截图指出），所以单行这一态必须有 .line 覆盖，且渲染层要真的加上这个类
-      /\.banner\.line \{[\s\S]*?align-items: center;[\s\S]*?\}/.test(stylesCode) &&
-      /\.banner\.line \.i \{[\s\S]*?margin-top: 0;[\s\S]*?\}/.test(stylesCode) &&
-      /:class="\{ rose: navOutcome === 'failed', line: !!navLine \}"/.test(
-        fs.readFileSync(path.join(rendererDir, 'panes', 'PluginPane.vue'), 'utf8'),
-      ),
+      // 黄条的竖直居中**不能按"单行 / 两行"分叉**：同一条黄条在宽窗口是一行、窄窗口才是两行，
+      // JS 判不出来 —— 老写法用 `line: !!navLine` 挂变体，于是"装/卸/升级"那条默认文案
+      // （宽窗口下一行）永远拿不到覆盖，一直是偏上的（用户第二次抓图指出，真机量出来偏上 3.5px）。
+      // 现在统一居中：两行时最高的那一项本来就是文本块，居中与顶对齐对它的位置没有影响。
+      /align-items: center;/.test(bannerBlock) &&
+      /align-items: flex-start;/.test(bannerBlock) === false &&
+      bannerIconBlock.length > 0 &&
+      /margin-top/.test(bannerIconBlock) === false &&
+      /\.banner\.line/.test(stylesCode) === false &&
+      // 那条宽度依赖的类在渲染层也不许再出现（注释里留着都会诱导人加回来）
+      /banner\.line/.test(vueSource) === false &&
+      /line: !!navLine/.test(vueSource) === false &&
+      /:class="\{ rose: navOutcome === 'failed' \}"/.test(vueSource),
   );
 
   // t46：用户在锁上按「不等了」/ Esc 要**取消**这次跳转（唯一会取消的路径，规格 §2.4）
