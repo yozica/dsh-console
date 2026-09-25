@@ -658,4 +658,11 @@ onUnmounted(() => {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* 看板上的大圆点（t48 样式分层：「指示灯」一节里只有这一页用的一条） */
+
+.lamp-lg {
+  width: 11px;
+  height: 11px;
+}
 </style>

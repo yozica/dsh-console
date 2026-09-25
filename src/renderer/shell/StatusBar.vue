@@ -77,3 +77,39 @@ function openUpdateSettings(): void {
     <span id="footer-env">{{ env }}</span>
   </footer>
 </template>
+
+<style scoped>
+/* 底栏自己的样式（t48 样式分层）：`.statusbar` / `.kbd-hint` / `.update-hint`。 */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 20px;
+  background: var(--rail);
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  flex: 0 0 auto;
+}
+
+.kbd-hint {
+  color: var(--ink-faint);
+}
+
+/* 底栏的更新提示：有新版本或已下载时才出现。
+   点它会切到设置页，并把「关于」里的更新卡片滚进视野、高亮一次（见 update-anchor.ts） */
+.update-hint {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.update-hint:hover {
+  text-decoration: underline;
+}
+</style>

@@ -936,6 +936,28 @@ async function main(): Promise<void> {
       staysGlobal: ['.check', '.panel-block > .hint'],
     },
     {
+      pane: 'RailNav.vue',
+      scoped: ['.rail', '.rail-brand', '.rail-nav', '.rail-item', '.rail-service', '.theme-switch'],
+      // 跨组件布局契约（`.app` / `.workspace` / `.pane`，标记在 index.html 里）留在全局表
+      staysGlobal: ['.pane', '.spacer'],
+    },
+    {
+      pane: 'TopBar.vue',
+      scoped: ['.topbar', '.page-title', '.topbar-note'],
+      staysGlobal: ['.spacer'],
+    },
+    {
+      pane: 'StatusBar.vue',
+      scoped: ['.statusbar', '.kbd-hint', '.update-hint'],
+      staysGlobal: ['.spacer'],
+    },
+    {
+      pane: 'CloseDialog.vue',
+      scoped: ['.close-dialog', '.close-card', '.close-title', '.close-lead', '.close-impact'],
+      // `.check` 是多页共用的复选框行，留在全局表
+      staysGlobal: ['.check'],
+    },
+    {
       pane: 'EnvGate.vue',
       scoped: ['.gate', '.gate-rail', '.gate-node', '.gate-node-dot', '.gate-brand', '.gate-queue'],
       // 与环境自检详情层共用的向导零件（EnvPane 复用选项 / 选择 / 确认 / 进度行）：留在全局表
@@ -991,8 +1013,8 @@ async function main(): Promise<void> {
         '.command',
       ],
       // `.panel` / `.panel-head` / `.panel-block` / `.hint` 是卡片零件，`.block-head` /
-      // `.block-note` 插件页也在用 —— 都留在全局表
-      staysGlobal: ['.panel-head', '.block-head'],
+      // `.block-note` 插件页也在用 —— 都留在全局表；`.lamp` 是共享的指示灯基础形状
+      staysGlobal: ['.panel-head', '.block-head', '.lamp'],
     },
     {
       pane: 'ArchivePane.vue',
@@ -1011,8 +1033,12 @@ async function main(): Promise<void> {
   // 一律**行首锚定**：要查的是"这条选择器自己有没有被定义"，而不是"哪条选择器里提到了它"。
   // 反例：`.gate-rail` 在全局表里只作为 `html[…] body[…] .gate-rail { … }` 的**一部分**出现
   // （macOS 全屏要撤回门禁左轨的留白，见 §7.3）—— 用 contains 会把它误判成"私有规则没搬干净"。
+  // 要求选择器**自成一条规则**：`^选择器` 后面只能跟 `,` 或 `{`（中间可空白）。
+  // 只写行首锚定还不够 —— `.close-card .check { … }`（`.check` 是共享件，这一条留在全局表）
+  // 与 `.topbar-note.lit { … }`（顶栏那格"亮一下"的变体）都会以 `.close-card` / `.topbar-note`
+  // 开头，于是把"私有规则没搬干净"和"共享变体还在"混为一谈。
   const definedIn = (text: string, sel: string): boolean =>
-    new RegExp(`^${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'm').test(text);
+    new RegExp(`^${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:,|\\{)`, 'm').test(text);
   for (const row of styleLayers) {
     const scopedRules = readScoped(row.pane);
     for (const sel of row.scoped) {
