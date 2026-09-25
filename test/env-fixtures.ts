@@ -73,8 +73,22 @@ export function createEnvFixtures(repo: Repo): EnvFixtures {
   const envPaneCode = stripComments(
     fs.readFileSync(path.join(repo.rendererDir, 'panes', 'EnvPane.vue'), 'utf8'),
   );
+  // t52 起 node-installer.ts 是 barrel + 类，纯函数与 IO 住在 node-*.ts 里 ——
+  // "读源码文本"的断言要看整份（barrel 里一条 `export function …` 都搜不到）。
   const installerCode = stripComments(
-    fs.readFileSync(path.join(repo.srcDir, 'main', 'node-installer.ts'), 'utf8'),
+    [
+      'node-installer',
+      'node-shared',
+      'node-release',
+      'node-owner',
+      'node-failure',
+      'node-flavor',
+      'node-nvm',
+      'node-plan',
+      'node-io',
+    ]
+      .map((stem) => fs.readFileSync(path.join(repo.srcDir, 'main', `${stem}.ts`), 'utf8'))
+      .join('\n'),
   );
   const gateRaw = fs.readFileSync(path.join(repo.rendererDir, 'shell', 'EnvGate.vue'), 'utf8');
   const gateCode = stripComments(gateRaw);

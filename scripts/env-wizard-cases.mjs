@@ -718,8 +718,21 @@ check(
 );
 
 // ================================================================ F. 三条静态钉子（源码形状）
-const installerSource = fs
-  .readFileSync(path.join(repoRoot, 'src', 'main', 'node-installer.ts'), 'utf8')
+// t52 起 node-installer.ts 是 barrel + 类，纯函数与 IO 住在 node-*.ts 里；
+// 下面这些静态钉子钉的是"引擎的源码形状"，所以读**整份**（barrel 里没有 export function）。
+const installerSource = [
+  'node-shared',
+  'node-release',
+  'node-owner',
+  'node-failure',
+  'node-flavor',
+  'node-nvm',
+  'node-plan',
+  'node-io',
+  'node-installer',
+]
+  .map((stem) => fs.readFileSync(path.join(repoRoot, 'src', 'main', `${stem}.ts`), 'utf8'))
+  .join('\n')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/\/\/[^\n]*/g, '');
 const countOf = (text, needle) => text.split(needle).length - 1;
