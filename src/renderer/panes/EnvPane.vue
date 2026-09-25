@@ -1221,3 +1221,286 @@ onUnmounted(() => {
     </section>
   </div>
 </template>
+
+<style scoped>
+/* 环境自检页自己的样式（t48 样式分层）：原来在 styles.css 的「环境自检」与
+   「环境自检页：更新入口与下载来源」两节。留在全局表的是与别处共用的：
+   `.env` 外层 / `.env-actions`（设置页的「运行环境」卡）与 `.env-op*`
+   （环境向导的执行输出面板，两处同形）。 */
+
+/* 版本区间的出处：dsh 与它依赖链的要求（构建期那句是另一个区间，只judge「应用自带运行时」），
+   所以写在这一屏里，不藏在 tooltip */
+.env-scope {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  line-height: 1.8;
+}
+
+.env-scope code {
+  padding: 1px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--well);
+  color: var(--code-ink);
+  font-family: var(--mono);
+}
+
+.env-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.env-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+.env-row:first-child {
+  border-top: 0;
+}
+
+.env-row .lamp {
+  margin-top: 5px;
+}
+
+.env-row[data-status='ok'] .lamp {
+  background: var(--run);
+  box-shadow: 0 0 0 3px var(--run-soft);
+}
+
+/* 能用但有隐患：空心点表达"还没到不能用的地步" */
+.env-row[data-status='warn'] .lamp {
+  background: transparent;
+  border: 1.5px solid var(--amber);
+}
+
+.env-row[data-status='missing'] .lamp {
+  background: var(--rose);
+  box-shadow: 0 0 0 3px var(--rose-soft);
+}
+
+/* 基宽必须是 **0**，不能是 `auto`（§7.27）。
+   `.env-row` 是 `flex-wrap: wrap` 的一行（后两个 100% 宽的子块要靠它换行），而
+   `flex-basis: auto` 用的是**内容自己的宽度** —— 说明一长（node / dsh / dsh-run 那几行是两条
+   长路径），它就可能放不进这一行，于是整块被挪到下一行、圆点一个人留在上面。实测（窗口
+   1220 / 900 / 760 / 640）：`auto` 时被挤下去的行数是 0 / 4 / 5 / 7，`0` 时全是 0。
+   基宽 0 的代价是这一列不再有"内容宽度"这个参考 —— 但它本来就要 flex-grow 填满剩余空间。 */
+.env-main {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.env-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.env-title {
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.env-state {
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+}
+
+.env-row[data-status='ok'] .env-state {
+  color: var(--run);
+}
+
+.env-row[data-status='warn'] .env-state {
+  color: var(--amber);
+}
+
+.env-row[data-status='missing'] .env-state {
+  color: var(--rose);
+}
+
+.env-detail {
+  margin: 3px 0 0;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* 说明按路径分隔符切出来的片段：**片段内部不许再断**。
+   不这么写的话，`@deepseek-ai` 里那个连字符本身就是一个断点（UAX#14 的 HY），
+   于是窄窗口下又会断成 `…/@deepseek-` + `ai/dsh/lib/bin.js` —— 正是要修的那个样子
+   （实测视口 760：加这条之前断在连字符上、之后断在 `/` 上）。 */
+.env-seg {
+  white-space: nowrap;
+}
+
+.env-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.env-hint code {
+  padding: 2px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: var(--well);
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* 确认区：整行铺开（父级是 flex-wrap 的一行），把命令原文与目标目录都摆在按钮之前 */
+.env-confirm {
+  flex: 1 1 100%;
+  margin-top: 2px;
+  padding: 11px 13px;
+  border: 1px solid var(--hairline-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-panel);
+  background: var(--well);
+}
+
+.env-confirm-title {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.env-confirm-cmd {
+  display: block;
+  margin-top: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.env-confirm-line {
+  margin: 6px 0 0;
+  color: var(--ink-dim);
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.env-confirm .btn-row {
+  margin-top: 10px;
+}
+
+/* 自检页更新确认区里那组档位控件：与向导第一步的控件是**同一套样式类**（形状要一模一样，
+   交互 §4.1 第 4-b 条），这里只负责与上面那块「当前 → 目标」拉开距离 */
+.env-channel {
+  margin-top: 10px;
+}
+
+/* 归属认不出来那一行：不给「更新」，把那条诚实边界与两条出路整行铺开在这一行里
+   （需求 §7.7 第 3 条 / 交互 §10.2） */
+.env-owner-note {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--r-control);
+  background: var(--amber-soft);
+}
+
+.env-owner-note-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  color: var(--ink-dim);
+  font-size: var(--t-xs);
+  line-height: 1.7;
+} /* ============================================================ 环境自检页：更新入口与下载来源
+   这一页是既有页面，只加不改造（docs/env-wizard-visual.md §5.9）。 */
+
+.env-skip {
+  display: inline-flex;
+  align-items: center;
+  height: 23px;
+  padding: 0 9px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  color: var(--ink-dim);
+  font-size: var(--t-xs);
+}
+
+.env-source {
+  flex: 0 0 auto;
+  padding: 14px 16px;
+}
+
+.env-source-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.env-source-label {
+  color: var(--ink);
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+
+.env-source-input {
+  flex: 1 1 260px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--well);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+.env-source-input::placeholder {
+  color: var(--ink-faint);
+}
+
+.env-source-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.env-source-note {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.env-source-hint {
+  margin-top: 8px;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+}
+</style>
