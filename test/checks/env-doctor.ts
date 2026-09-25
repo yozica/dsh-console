@@ -327,7 +327,8 @@ export function runEnvDoctor(repo: Repo): void {
   check(
     '环境自检：完整探测才读安装树（快速探测不起子进程、也不解析启动命令，读不到）',
     (() => {
-      const source = fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8');
+      // t51 起要读整份（barrel + 六个叶子），`collectEnvProbe` 在 env-probe.ts 里
+      const source = envSource;
       const full = source.slice(
         source.indexOf('export async function collectEnvProbe'),
         source.indexOf('function emptyProbe('),

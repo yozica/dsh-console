@@ -48,7 +48,13 @@ src/
     settings.ts         settings.json 读写（含 v1→v2 一次性迁移）
     logger.ts           主进程日志：console 同时落盘到 <userData>/logs/console.log
     updater.ts          自动更新状态机（electron-updater）：检查 / 下载 / 安装
-    env-doctor.ts       运行环境自检：只读探测 + 纯函数判定（含门禁判定 judgeWizard / 快速探测）+ 一键修复（装 pnpm / dsh，见 7.20、7.21）
+    env-doctor.ts       **barrel + 两个有状态的类**（EnvDoctor / EnvFixRunner，见 7.35）
+    env-probe-types.ts  探测的形状与超时（EnvProbeRaw / VersionProbe / EnvRuntime / …）
+    env-node-range.ts   Node 版本区间的纯函数（解析 / 比较 / judgeNodeVersion / requirementPhrase）
+    env-fix-plan.ts     一键修复的计划、argv、注册表查找路径与人话文案（装 pnpm / dsh，见 7.20、7.21）
+    env-judge.ts        纯判定 judgeEnvironment 与"哪里不对"的整理
+    env-probe.ts        只读探测与二进制定位（含本机 dsh 安装树的 Node 要求）
+    env-wizard.ts       门禁判定：三步表 + collectBootProbe + judgeWizard
     node-installer.ts   系统级安装与更新执行：Node 的两条路（官方 MSI / nvm-windows）、下载与校验、提权、复检（见 7.21）
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
     plugin-manager.ts   插件装配层：profile 的 bundle 层栈 + `dsh web --dump-config` 的解析（含 stderr 上的"没报错的错"）
@@ -1168,6 +1174,28 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **单向依赖**：`types ← shell ← path-env / pnpm ← dsh ← launch`，`probe` / `proc` 只依赖 types。
 拆的时候按这个方向放，就不会出现循环 import。
+
+**第二个：`env-doctor.ts`（t51，2907 → 605 行 + 六个叶子）**
+
+| 文件                 | 行数 | 职责                                                        |
+| -------------------- | ---- | ----------------------------------------------------------- |
+| `env-doctor.ts`      | 605  | **barrel + 两个有状态的类**（`EnvDoctor` / `EnvFixRunner`） |
+| `env-probe-types.ts` | 148  | 探测的形状与超时（只给主进程内部用，不上线缆）              |
+| `env-node-range.ts`  | 354  | Node 版本区间纯函数                                         |
+| `env-fix-plan.ts`    | 464  | 修复计划 / argv / 注册表路径 / 人话文案                     |
+| `env-judge.ts`       | 560  | `judgeEnvironment` 与 `probeTroubleLines`（纯）             |
+| `env-probe.ts`       | 670  | 只读探测与二进制定位（含本机 dsh 安装树）                   |
+| `env-wizard.ts`      | 306  | 门禁判定（三步表 / `collectBootProbe` / `judgeWizard`）     |
+
+这一步多出来的两条经验：
+
+- **两个有状态的类留在 barrel 里不拆**：`EnvDoctor.cached` / `prefix` / `current` 这些实例字段跨好几个
+  阶段（探测 → 判定 → 修复 → 复检），拆散只是把"一个类里的顺序"换成"几个类之间的时序"，更容易坏。
+- **靠"读源码文本"的断言会连着搬**：`test/env-fixtures.ts` 的 `envSource` 从"读 env-doctor.ts"改成
+  "barrel + 六个叶子的拼接"（否则 55 条里会有十几条假红）；`scripts/env-doctor-cases.mjs` 里那条
+  "超时判在退出码之前"的断言读的仍是 `env-doctor.ts` —— 因为 `EnvFixRunner.execute` 留在那里。
+  还有一条按**全仓库唯一 owner** 找 argv 的断言（`['i', '-g', …]`），owner 从 `env-doctor.ts` 变成了
+  `env-fix-plan.ts`，跟着改的是"owner 是谁"，不变的是"只有一处"。
 
 ## 8. 调试手段
 
