@@ -904,8 +904,12 @@ async function main(): Promise<void> {
   // 查"规则在不在"要先剥注释：两张表里都有解释性注释点名这些 class（"设置页那一族（.settings…）"），
   // 拿原文去 match 会把注释当成定义 —— 这正是这类检查最容易骗过自己的地方。
   const cssRules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  // 页面组件在 `panes/`、外壳组件在 `shell/` —— 两处都找（EnvGate / CloseDialog 这类在外壳里）
   const readScoped = (file: string): string => {
-    const text = fs.readFileSync(path.join(rendererDir, 'panes', file), 'utf8');
+    const found = ['panes', 'shell']
+      .map((dir) => path.join(rendererDir, dir, file))
+      .find((candidate) => fs.existsSync(candidate));
+    const text = fs.readFileSync(found ?? path.join(rendererDir, 'panes', file), 'utf8');
     const body = text.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? '';
     return body.replace(/\/\*[\s\S]*?\*\//g, '');
   };
@@ -930,6 +934,17 @@ async function main(): Promise<void> {
       ],
       // 设置页画了、但是多页共用的：复选框行（5 处）、卡片后面那句提示（多处）
       staysGlobal: ['.check', '.panel-block > .hint'],
+    },
+    {
+      pane: 'EnvGate.vue',
+      scoped: ['.gate', '.gate-rail', '.gate-node', '.gate-node-dot', '.gate-brand', '.gate-queue'],
+      // 与环境自检详情层共用的向导零件（EnvPane 复用选项 / 选择 / 确认 / 进度行）：留在全局表
+      staysGlobal: [
+        '.gate-option',
+        '.gate-choice-group',
+        '.gate-confirm-table',
+        '.wizard-progress',
+      ],
     },
     {
       pane: 'PluginPane.vue',
@@ -993,19 +1008,21 @@ async function main(): Promise<void> {
     },
   ];
   const layerProblems: string[] = [];
+  // 一律**行首锚定**：要查的是"这条选择器自己有没有被定义"，而不是"哪条选择器里提到了它"。
+  // 反例：`.gate-rail` 在全局表里只作为 `html[…] body[…] .gate-rail { … }` 的**一部分**出现
+  // （macOS 全屏要撤回门禁左轨的留白，见 §7.3）—— 用 contains 会把它误判成"私有规则没搬干净"。
+  const definedIn = (text: string, sel: string): boolean =>
+    new RegExp(`^${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'm').test(text);
   for (const row of styleLayers) {
     const scopedRules = readScoped(row.pane);
     for (const sel of row.scoped) {
-      const pattern = new RegExp(`\\${sel}(?![\\w-])`);
-      if (pattern.test(cssRules)) layerProblems.push(`${row.pane}: ${sel} 还在全局表里`);
-      if (!pattern.test(scopedRules)) layerProblems.push(`${row.pane}: 组件里缺 ${sel}`);
+      if (definedIn(cssRules, sel)) layerProblems.push(`${row.pane}: ${sel} 还在全局表里`);
+      if (!definedIn(scopedRules, sel)) layerProblems.push(`${row.pane}: 组件里缺 ${sel}`);
     }
     for (const sel of row.staysGlobal) {
-      // 行首锚定：要查的是"这条选择器自己有没有被定义"，而不是"哪条选择器里提到了它" ——
-      // 控制台搬走的 `.log-panel .panel-head` 里头就含 `.panel-head`，用 contains 会误判成"搬走了"。
-      const defined = new RegExp(`^${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'm');
-      if (!defined.test(cssRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 没留在全局表`);
-      if (defined.test(scopedRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 被搬进组件了`);
+      if (!definedIn(cssRules, sel)) layerProblems.push(`${row.pane}: 共享件 ${sel} 没留在全局表`);
+      if (definedIn(scopedRules, sel))
+        layerProblems.push(`${row.pane}: 共享件 ${sel} 被搬进组件了`);
     }
   }
   // v-html 渲染出来的元素没有 scope 属性，`.archive-turn-body <元素>` 必须写成 `:deep(...)`。

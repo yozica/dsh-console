@@ -1503,4 +1503,21 @@ onUnmounted(() => {
   font-size: var(--t-sm);
   line-height: 1.7;
 }
+
+/* 这条原来放在「首启环境向导」一节里，但只有环境自检详情页用（向导不画它） */
+
+/* 读数态：占着同一槽位，但它是信息不是按钮 —— 不降透明度、不带主色 */
+.wizard-readout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 27px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
 </style>

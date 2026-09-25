@@ -858,7 +858,9 @@ main {
   color: var(--ink-faint);
   font-size: var(--t-sm);
   line-height: 1.7;
-} /* ============================================================ 终端类页面 */
+}
+
+/* ============================================================ 终端类页面 */
 
 .bar {
   display: flex;
@@ -1607,24 +1609,13 @@ body[data-immersive='true'] .webview-wrap {
 
 .env-op-summary[data-state='error'] {
   color: var(--rose);
-} /* ============================================================ 首启环境向导与入口门禁
-   门禁层不是弹窗，是"这台应用把中段让给了向导"（docs/env-wizard-visual.md §2）：
-   左轨（--rail，188px）+ 内容列（--bg，20px 内边距）+ 底条（--rail，左右 20px）。
-   三块的位置在任何状态下都不变，变的只是内容列里的字与左轨上的灯。
-   层号 --z-gate 低于启动锁的 60：两者互斥交接的那一帧永远是锁盖住门禁。 */
-
-.gate {
-  position: fixed;
-  top: var(--bar-h);
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: var(--z-gate);
-  display: grid;
-  grid-template-columns: var(--rail-w) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  background: var(--bg);
 }
+
+/* ============================================================ 共享的向导零件
+   `.gate-option*` / `.gate-choice*` / `.gate-confirm*` / `.wizard-*` 这批是**首启向导与
+   环境自检详情层两边都在画**的（EnvPane 复用向导的选项 / 选择 / 确认 / 进度行），
+   所以留在全局表；向导自己的 `.gate-*` 外壳与其余零件都搬进了 `shell/EnvGate.vue`
+   的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
 /* 设置页「运行环境」卡里那行按钮（t45） */
 .env-actions {
@@ -1657,17 +1648,6 @@ body[data-immersive='true'] .webview-wrap {
   display: flex;
 }
 
-/* 左轨：与既有左栏同宽、同底、同内边距 —— 门禁收起时屏幕上没有任何横向跳动 */
-.gate-rail {
-  grid-column: 1;
-  grid-row: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 16px 12px 12px;
-  background: var(--rail);
-  border-right: 1px solid var(--hairline);
-}
-
 /* VM-08 + VM-10：门禁层可见时，**应用左栏的内容整列让位**（品牌块与服务状态块都算）。
  *
  * 判据是**几何**，不是列举：
@@ -1688,451 +1668,6 @@ body[data-immersive='true'] .webview-wrap {
  * `body[data-gate-visible]` 立刻回到 'false'，整列内容当帧恢复 —— 开关由 EnvGate.vue 写。 */
 body[data-gate-visible='true'] .rail > * {
   visibility: hidden;
-}
-
-.gate-brand {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 0 6px 4px;
-}
-
-.gate-logo {
-  font-size: var(--t-lg);
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.gate-logo-sub {
-  font-size: var(--t-sm);
-  color: var(--ink-dim);
-}
-
-.gate-brand-sub {
-  margin-bottom: 14px;
-  padding: 0 6px 12px;
-  border-bottom: 1px solid var(--hairline);
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-}
-
-/* 左轨队列：三步状态一眼可见；节点不可聚焦、不可点（Tab 顺序里没有它们） */
-.gate-queue {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.gate-node {
-  position: relative;
-  display: grid;
-  grid-template-columns: var(--wizard-rail-dot) minmax(0, 1fr);
-  gap: 8px;
-  padding-bottom: 18px;
-  animation: gate-in var(--dur-screen) ease both;
-}
-
-.gate-node:nth-child(2) {
-  animation-delay: 40ms;
-}
-
-.gate-node:nth-child(3) {
-  animation-delay: 80ms;
-}
-
-.gate-node:last-child {
-  padding-bottom: 0;
-}
-
-/* 脊线：位置由 --wizard-rail-dot 的中线决定，与节点共用同一个来源 */
-.gate-node-spine {
-  position: absolute;
-  left: calc(var(--wizard-rail-dot) / 2 - 1px);
-  top: 15px;
-  bottom: 0;
-  width: 2px;
-  background: var(--hairline-strong);
-}
-
-.gate-node:last-child .gate-node-spine {
-  display: none;
-}
-
-.gate-node[data-state='done'] .gate-node-spine {
-  background: var(--run);
-}
-
-.gate-node-dot {
-  grid-column: 1;
-  width: 8px;
-  height: 8px;
-  margin: 4px auto 0;
-  border-radius: 50%;
-  background: var(--ink-faint);
-  position: relative;
-  z-index: 1;
-}
-
-/* 五态：形状是第一信号，颜色是第二信号（docs/env-wizard-visual.md §4.3）。
-   已经走完 / 当前要处理的那一步才有颜色，没轮到的待办步骤不刷红。 */
-.gate-node[data-state='done'] .gate-node-dot {
-  background: var(--run);
-  box-shadow: 0 0 0 3px var(--run-soft);
-}
-
-.gate-node[data-state='skipped'] .gate-node-dot {
-  background: transparent;
-  border: 1.5px solid var(--ink-dim);
-}
-
-.gate-node[data-state='unknown'] .gate-node-dot {
-  background: transparent;
-  border: 1.5px dashed var(--ink-faint);
-}
-
-.gate-node[data-state='todo'] .gate-node-dot {
-  background: transparent;
-  border: 1.5px solid var(--ink-faint);
-}
-
-.gate-node[data-state='current'] .gate-node-dot {
-  width: 11px;
-  height: 11px;
-  margin-top: 2px;
-  background: var(--rose);
-  box-shadow: 0 0 0 3px var(--rose-soft);
-}
-
-.gate-node[data-state='current-unknown'] .gate-node-dot {
-  width: 11px;
-  height: 11px;
-  margin-top: 2px;
-  background: transparent;
-  border: 1.5px dashed var(--ink-dim);
-}
-
-.gate-node[data-state='busy'] .gate-node-dot {
-  width: 11px;
-  height: 11px;
-  margin-top: 2px;
-  background: var(--sky);
-  box-shadow: 0 0 0 3px var(--sky-soft);
-  animation: breathe 1.2s ease-in-out infinite;
-}
-
-.gate-node-body {
-  min-width: 0;
-}
-
-/* 走过的节点是个真按钮（t43 / R-28）：平时与纯读数长得一模一样，只有悬停 / 键盘聚焦时才给一层
-   `--surface` 底和一行「↩ 回看这一步」—— 常驻不留装饰，正在看哪一步由正文里的「回看」标识说清。
-   没走到的节点没有这一层（不可点、不进 Tab 顺序，保持 R-01 ② 的原意）。 */
-.gate-node-button {
-  display: block;
-  width: 100%;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: var(--r-control);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gate-node-button:hover,
-.gate-node-button:focus-visible {
-  background: var(--surface);
-}
-
-.gate-node-back {
-  display: none;
-  margin-top: 2px;
-  color: var(--accent);
-  font-size: var(--t-xs);
-}
-
-.gate-node-button:hover .gate-node-back,
-.gate-node-button:focus-visible .gate-node-back {
-  display: block;
-}
-
-/* 只读回看卡（t43 / R-29）：一句结论 + 判定给的那几句事实 + 一个「回到当前步骤」。
-   卡里没有安装 / 跳过动作 —— 回看时屏上仍然只有一件事可做。 */
-.gate-card-done {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: var(--r-panel);
-  background: var(--run-soft);
-  color: var(--run);
-  font-size: var(--t-sm);
-}
-
-.gate-card-done[data-status='skipped'] {
-  background: var(--surface-2);
-  color: var(--ink-dim);
-}
-
-.gate-card-fact {
-  margin-top: 10px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
-/* 判定前进时的那一行提示（t43 / R-30）：它是一条"可以过去"的提示，不是错误也不是警告 ——
-   所以借强调色，不借 amber / rose。 */
-.gate-advance {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  max-width: var(--wizard-card);
-  margin-top: 12px;
-  padding: 9px 12px;
-  border-radius: var(--r-panel);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--t-sm);
-}
-
-.gate-node-step {
-  display: block;
-  color: var(--ink-dim);
-  font-size: var(--t-xs);
-}
-
-.gate-node-title {
-  display: block;
-  color: var(--ink-dim);
-  font-size: var(--t-md);
-  overflow-wrap: anywhere;
-}
-
-.gate-node[data-state='current'] .gate-node-title,
-.gate-node[data-state='current-unknown'] .gate-node-title,
-.gate-node[data-state='busy'] .gate-node-title {
-  font-weight: 600;
-  color: var(--ink);
-}
-
-/* 左轨上的文字一律不低于 --ink-dim：浅色下 --ink-faint 压在 --rail 上只有 3.83:1 */
-.gate-node-state {
-  display: block;
-  margin-top: 2px;
-  color: var(--ink-dim);
-  font-size: var(--t-xs);
-}
-
-/* 内容列：左右 20px、上 24px、下 20px，与九页内容的左边距同一条竖线 */
-.gate-body {
-  grid-column: 2;
-  grid-row: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
-.gate-col {
-  max-width: var(--wizard-card);
-  padding: 24px 20px 20px;
-}
-
-.gate-check {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.gate-title {
-  max-width: var(--wizard-read);
-  font-size: var(--t-state);
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.015em;
-}
-
-.gate-lead {
-  max-width: var(--wizard-read);
-  margin-top: 6px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
-/* 整屏唯一一张卡、唯一一处阴影：当前步骤（刚在检查的机器上要读的那一块） */
-.gate-card {
-  max-width: var(--wizard-card);
-  margin-top: 20px;
-  padding: 18px 20px 20px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-focus);
-}
-
-.gate-card-title {
-  font-size: var(--t-lg);
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-}
-
-.gate-card-why {
-  max-width: var(--wizard-read);
-  margin-top: 4px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-}
-
-.gate-card-note {
-  max-width: var(--wizard-read);
-  margin-top: 10px;
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  line-height: 1.7;
-}
-
-.gate-facts {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.gate-fact {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.gate-fact .lamp {
-  margin-top: 5px;
-}
-
-.gate-fact[data-status='ok'] .lamp {
-  background: var(--run);
-  box-shadow: 0 0 0 3px var(--run-soft);
-}
-
-.gate-fact[data-status='warn'] .lamp {
-  background: transparent;
-  border: 1.5px solid var(--amber);
-}
-
-.gate-fact[data-status='missing'] .lamp {
-  background: var(--rose);
-  box-shadow: 0 0 0 3px var(--rose-soft);
-}
-
-/* 已跳过与测不出来都不是"这台电脑的事实"：只有墨色，不借 amber / rose */
-.gate-fact[data-status='skipped'] .lamp {
-  background: transparent;
-  border: 1.5px solid var(--ink-dim);
-}
-
-.gate-fact[data-status='unknown'] .lamp {
-  background: transparent;
-  border: 1.5px dashed var(--ink-faint);
-}
-
-.gate-fact-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.gate-fact-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.gate-fact-title {
-  color: var(--ink);
-  font-size: var(--t-md);
-  font-weight: 600;
-}
-
-.gate-fact-state {
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-}
-
-.gate-fact[data-status='ok'] .gate-fact-state {
-  color: var(--run);
-}
-
-.gate-fact[data-status='warn'] .gate-fact-state {
-  color: var(--amber);
-}
-
-.gate-fact[data-status='missing'] .gate-fact-state {
-  color: var(--rose);
-}
-
-.gate-fact-detail {
-  margin-top: 3px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-.gate-fact-more {
-  margin-top: 8px;
-}
-
-/* 详情只在用户点开的地方出现：下沉井 + 等宽，技术串看起来像"细节" */
-.gate-detail {
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: var(--well);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-panel);
-}
-
-.gate-detail-row {
-  display: flex;
-  gap: 10px;
-  padding: 4px 0;
-  font-size: var(--t-xs);
-}
-
-.gate-detail-key {
-  flex: 0 0 120px;
-  color: var(--ink-faint);
-}
-
-.gate-detail-val {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--ink-dim);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-.gate-detail-cmd {
-  display: block;
-  margin-top: 4px;
-  color: var(--code-ink);
-  font-family: var(--mono);
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-/* 选择区：两张单选卡（步骤 1 的两条安装路径）。选中 = 软底 + 强调边，不加阴影、不加对勾 */
-.gate-choice {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 16px;
 }
 
 .gate-option {
@@ -2218,72 +1753,6 @@ body[data-gate-visible='true'] .rail > * {
   min-width: 0;
 }
 
-/* 归属判不出来时每条路都要带一句并存风险（需求 §7.9 第 4 条）：说清会多出一份 Node */
-.gate-option-risk {
-  display: block;
-  margin-top: 5px;
-  color: var(--amber);
-  font-size: var(--t-xs);
-  line-height: 1.7;
-}
-
-/* 方法事实行：归属判得出来时**不给单选**，只把方法说出来（交互 §4.1 的 t29 修订 4-a） */
-.gate-method-fact {
-  margin: 12px 0 0;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-}
-
-.gate-actions {
-  margin-top: 16px;
-}
-
-/* 提醒行 + 重新检测：都在卡片之下，右对齐的是那条次操作 */
-.gate-metabar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  max-width: var(--wizard-card);
-  margin-top: 12px;
-}
-
-.gate-metabar-note {
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  line-height: 1.7;
-}
-
-/* 确认区：下沉井 + 左 3px 强调条 + 两列事实表（与既有确认区同一套件） */
-.gate-confirm {
-  margin-top: 12px;
-  padding: 11px 13px;
-  background: var(--well);
-  border: 1px solid var(--hairline-strong);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--r-panel);
-}
-
-.gate-confirm-title {
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-}
-
-.gate-confirm-cmd {
-  display: block;
-  margin-top: 7px;
-  padding: 8px 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-control);
-  color: var(--code-ink);
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
 .gate-confirm-table {
   margin-top: 10px;
 }
@@ -2315,16 +1784,6 @@ body[data-gate-visible='true'] .rail > * {
   color: var(--code-ink);
 }
 
-.gate-confirm-loading {
-  margin-top: 8px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-}
-
-.gate-confirm .btn-row {
-  margin-top: 10px;
-}
-
 /* 两个跨屏复用的小砖：提醒块（软底，不许做成卡）与决策块（要用户明确选一次） */
 .wizard-notice {
   margin-top: 10px;
@@ -2354,21 +1813,6 @@ body[data-gate-visible='true'] .rail > * {
 
 .wizard-decide .btn-row {
   margin-top: 10px;
-}
-
-/* 读数态：占着同一槽位，但它是信息不是按钮 —— 不降透明度、不带主色 */
-.wizard-readout {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 27px;
-  padding: 0 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-control);
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  font-variant-numeric: tabular-nums;
 }
 
 /* 版本对照砖：全应用唯一许可的 "→"（它真的是一次前后变化） */
@@ -2475,69 +1919,6 @@ body[data-gate-visible='true'] .rail > * {
   margin-top: 12px;
 }
 
-/* 结果行：成功 / 失败 / 未确定共用同一个槽位（失败不换地方、不弹窗、不整屏红） */
-.gate-result {
-  margin-top: 12px;
-}
-
-.gate-result-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.gate-result-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  margin-top: 6px;
-  border-radius: 50%;
-  background: var(--ink-dim);
-}
-
-.gate-result-dot[data-state='ok'] {
-  background: var(--run);
-  box-shadow: 0 0 0 3px var(--run-soft);
-}
-
-.gate-result-dot[data-state='failed'] {
-  background: var(--rose);
-  box-shadow: 0 0 0 3px var(--rose-soft);
-}
-
-.gate-result-dot[data-state='warn'] {
-  background: transparent;
-  border: 1.5px solid var(--amber);
-}
-
-/* 未标定：空心环 + 墨色。我们不知道的事不给绿也不给红 */
-.gate-result-dot[data-state='unknown'] {
-  background: transparent;
-  border: 1.5px solid var(--ink-dim);
-}
-
-.gate-result-main {
-  min-width: 0;
-}
-
-.gate-result-title {
-  color: var(--ink);
-  font-size: var(--t-lg);
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-  overflow-wrap: anywhere;
-}
-
-.gate-result-note {
-  max-width: var(--wizard-read);
-  margin-top: 4px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
 .gate-result-facts {
   max-width: var(--wizard-read);
   margin-top: 8px;
@@ -2547,94 +1928,11 @@ body[data-gate-visible='true'] .rail > * {
   overflow-wrap: anywhere;
 }
 
-.gate-result .btn-row {
-  /* 10px → 12px：卡片里"块 → 按钮行"统一 12px（与 .wizard-progress > .btn-row 同一节奏） */
-  margin-top: 12px;
-}
-
 /* 输出画面板在卡片里的上边距：原来紧贴上面的按钮行 / 结果行（用户真机实测"按钮组与下方
    进度行贴死"）。环境自检页里这个面板是 .env（gap: 12px）的子元素，本来就有 12px，所以这条
    只补门禁卡片里缺的那一份，不动既有页面已经对的那一处。 */
 .gate-card .env-op {
   margin-top: 12px;
-}
-
-/* 放行页的三行成果：一张卡、**不给阴影**（阴影是"当前要你处理的那一张"的专属） */
-.gate-done-list {
-  max-width: var(--wizard-card);
-  margin-top: 20px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-card);
-  overflow: hidden;
-}
-
-.gate-done-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 16px;
-  border-top: 1px solid var(--hairline);
-}
-
-.gate-done-row:first-child {
-  border-top: 0;
-}
-
-.gate-done-title {
-  color: var(--ink);
-  font-size: var(--t-md);
-}
-
-.gate-done-state {
-  margin-left: auto;
-  color: var(--ink-dim);
-  font-size: var(--t-xs);
-}
-
-.gate-done-row[data-status='done'] .gate-done-state {
-  color: var(--run);
-}
-
-/* 底条：与状态栏同一个位置（左右 20px、--rail、上缘发丝线）。
-   逃生口是中性按钮（不是 CTA），**永远可点、永远进 Tab 顺序**。 */
-.gate-foot {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 20px;
-  background: var(--rail);
-  border-top: 1px solid var(--hairline);
-}
-
-.gate-escape {
-  white-space: nowrap;
-}
-
-/* 窗口变窄时先压缩这一行说明，绝不压按钮 */
-.gate-foot-note {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--ink-dim);
-  font-size: var(--t-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 一次编排的动效：第一份报告回来时节点按序落点（prefers-reduced-motion 下由全局规则取消） */
-@keyframes gate-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 /* 主界面常驻横幅：不可关闭，所以不长成 toast —— 不浮起、不动画、没有关闭按钮 */
@@ -2644,6 +1942,3 @@ body[data-gate-visible='true'] .rail > * {
   gap: 8px;
   margin-left: auto;
 }
-
-/* 环境自检页「更新入口与下载来源」那一节（`.env-source*` / `.env-skip`）已经整节
-   搬进 `panes/EnvPane.vue` 的 `<style scoped>` —— 见 AGENTS §7.33。 */
