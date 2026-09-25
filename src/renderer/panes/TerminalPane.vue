@@ -397,3 +397,106 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 终端页自己的样式（t48 样式分层）：会话条（`.shell-tab*`）、两路终端的定位基准
+   （`.term-body`）与本地 Shell 那一路（`.term-view*` / `.shell-pane*`）、`.chips`、
+   以及只有这一页用的 `.btn.outline`。`.term-host` 的**基础**规则留在全局表
+   —— dsh 那一路的子组件 `DshTerminal` 也在用它（见 AGENTS §7.30）。 */
+
+/* 镂空的强调按钮：透明底 + accent 描边与文字，形状和 .btn.danger 一样（那个是 rose 的）。
+   为什么要有这一档：会话条上「＋ 新建本地 Shell」原来是 `.btn.primary`（实心 accent），
+   它比**选中的那个会话标签**还抢眼 —— 一眼看过去分不清"当前在看的是哪一路"。
+   动作做成镂空，选中态才有机会成为整条上唯一实心的东西（对照 `.shell-tab.active` 的 accent-soft 底）。 */
+.btn.outline {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn.outline:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 「终端」页里会话条下面那块区域（t45）：两路终端（dsh / 各本地 Shell）都绝对定位
+   铺满它。它**必须**是两路的定位基准 —— 少了这一层，.term-view 的 inset:0 会去对
+   整个 .pane 算，dsh 那一路的状态条就盖住会话条（踩过）。
+   页面是列布局：会话条走内容高度，这块吃掉剩下的。 */
+.term-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.shell-tab {
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur) ease,
+    color var(--dur) ease,
+    border-color var(--dur) ease;
+}
+
+.shell-tab:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.shell-tab.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 重命名时的输入框：沿用标签的外观，只把光标和选中态放出来 */
+.shell-tab-editing {
+  width: 120px;
+  font: inherit;
+  font-size: var(--t-xs);
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--accent);
+  border-radius: 999px;
+  padding: 0 11px;
+  outline: none;
+}
+
+.shell-pane {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+/* dsh 那一路的容器（t45）：与 .shell-pane 同样是绝对定位、非 active 时不显示，
+   区别是它是**列**布局 —— 子组件 DshTerminal 是「一行状态条 + 终端本体」两个兄弟。 */
+.term-view {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.term-view.active {
+  display: flex;
+}
+
+.shell-pane.active {
+  display: block;
+}
+</style>

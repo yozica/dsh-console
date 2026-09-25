@@ -92,3 +92,15 @@ function openWizard(): void {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 常驻横幅自己的样式（t48 样式分层：「共享的向导零件」一节里只有它用的一条） */
+
+/* 主界面常驻横幅：不可关闭，所以不长成 toast —— 不浮起、不动画、没有关闭按钮 */
+.gate-banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+</style>

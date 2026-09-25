@@ -936,6 +936,28 @@ async function main(): Promise<void> {
       staysGlobal: ['.check', '.panel-block > .hint'],
     },
     {
+      pane: 'TerminalPane.vue',
+      scoped: ['.term-body', '.term-view', '.shell-tab', '.shell-pane', '.chips', '.btn.outline'],
+      // `.term-host` 的**基础**规则（relative + flex: 1 1 auto）两路终端共用，留在全局表（§7.30）
+      staysGlobal: ['.term-host'],
+    },
+    {
+      pane: 'DshTerminal.vue',
+      scoped: ['.bar-title'],
+      staysGlobal: ['.term-host'],
+    },
+    {
+      pane: 'UiPane.vue',
+      scoped: ['.ui-paste'],
+      // 两个内嵌页共用的 webview 盒子留在全局表
+      staysGlobal: ['.embedded-view', '.webview-wrap'],
+    },
+    {
+      pane: 'GateBanner.vue',
+      scoped: ['.gate-banner-actions'],
+      staysGlobal: ['.banner'],
+    },
+    {
       pane: 'RailNav.vue',
       scoped: ['.rail', '.rail-brand', '.rail-nav', '.rail-item', '.rail-service', '.theme-switch'],
       // 跨组件布局契约（`.app` / `.workspace` / `.pane`，标记在 index.html 里）留在全局表
@@ -943,7 +965,7 @@ async function main(): Promise<void> {
     },
     {
       pane: 'TopBar.vue',
-      scoped: ['.topbar', '.page-title', '.topbar-note'],
+      scoped: ['.topbar', '.page-title', '.topbar-note', '.immersive-only'],
       staysGlobal: ['.spacer'],
     },
     {
@@ -987,6 +1009,7 @@ async function main(): Promise<void> {
     {
       pane: 'EnvPane.vue',
       scoped: [
+        '.env',
         '.env-scope',
         '.env-list',
         '.env-row',
@@ -1063,8 +1086,12 @@ async function main(): Promise<void> {
   check(
     '样式分层：页面私有的规则搬进组件的 <style scoped>，共享件留在全局表（v-html 内容走 :deep）',
     layerProblems.length === 0 &&
-      styleLayers.every((row) => readScoped(row.pane).length > 200) &&
+      // 每行至少得有个非空的 <style scoped>（"里面真有那些规则"由上面逐条断言守着）
+      styleLayers.every((row) => readScoped(row.pane).length > 0) &&
       /\.archive-turn-body :deep\(/.test(archiveRules) &&
+      // 段落标记必须**自成一行**：段落重写脚本会把最后一条规则的 `}` 与下一节标记粘成一行
+      // （`} /* ==== 卡片 */`），那样 marker 正则就再也认不出那一节 —— 攒了几轮才一次性修掉 12 处。
+      !/\}[ \t]*\/\* ={10,}/.test(css) &&
       deepLeaks.length === 0,
     layerProblems.length || deepLeaks.length
       ? [...layerProblems, ...deepLeaks.map((l) => `漏了 :deep：${l}`)].join('；')
@@ -1328,11 +1355,13 @@ async function main(): Promise<void> {
       // 文案要短（那一格宽度有限）；长解释留在插件页那条黄条里
       /plugin: '✓ 装配层改动已加载'/.test(restartNavCode) &&
       // 样式：只给状态槽加一层绿色底；浮层/胶囊那套已经删掉
+      // `.topbar-note.lit` t48 起在 `shell/TopBar.vue` 的 <style scoped> 里
       /\.topbar-note\.lit \{[\s\S]*?color: var\(--run\);[\s\S]*?background: var\(--run-soft\);[\s\S]*?\}/.test(
-        stylesCode,
+        allCss,
       ) &&
-      /\.toast \{/.test(stylesCode) === false &&
-      /\.banner\.arrival/.test(stylesCode) === false &&
+      // 「已经删掉的那套」要两层都没有才算数
+      /\.toast \{/.test(allCss) === false &&
+      /\.banner\.arrival/.test(allCss) === false &&
       // 黄条的竖直居中**不能按"单行 / 两行"分叉**：同一条黄条在宽窗口是一行、窄窗口才是两行，
       // JS 判不出来 —— 老写法用 `line: !!navLine` 挂变体，于是"装/卸/升级"那条默认文案
       // （宽窗口下一行）永远拿不到覆盖，一直是偏上的（用户第二次抓图指出，真机量出来偏上 3.5px）。
@@ -1341,7 +1370,7 @@ async function main(): Promise<void> {
       /align-items: flex-start;/.test(bannerBlock) === false &&
       bannerIconBlock.length > 0 &&
       /margin-top/.test(bannerIconBlock) === false &&
-      /\.banner\.line/.test(stylesCode) === false &&
+      /\.banner\.line/.test(allCss) === false &&
       // 那条宽度依赖的类在渲染层也不许再出现（注释里留着都会诱导人加回来）
       /banner\.line/.test(vueSource) === false &&
       /line: !!navLine/.test(vueSource) === false &&
@@ -2226,8 +2255,11 @@ async function main(): Promise<void> {
       // 会话条上的动作是**镂空**的（.btn.outline），实心只留给"当前在看的那一路"：
       // 之前它用 .btn.primary（实心 accent），比选中的标签还抢眼，看不出选中了谁
       /id="btn-new-shell"[\s\S]{0,80}class="btn small outline"/.test(mergedTermSource) &&
-      /\.btn\.outline \{[^}]*background: transparent/.test(cssText) &&
-      /\.shell-tab\.active \{[^}]*background: var\(--accent-soft\)/.test(cssText),
+      // 这两条规则 t48 起在 `panes/TerminalPane.vue` 的 <style scoped> 里（cssBlock 读两层）
+      /\.btn\.outline \{[^}]*background: transparent/.test(cssBlock('.btn.outline')) &&
+      /\.shell-tab\.active \{[^}]*background: var\(--accent-soft\)/.test(
+        cssBlock('.shell-tab.active'),
+      ),
   );
   // 两路终端都得套在 .term-body 里：它的 inset:0 才是对"会话条下面那块区域"算的。
   // 少了这一层，dsh 那一路会去对整个 .pane 定位 —— 它的状态条（清空显示 / 显示历史 /
@@ -2248,15 +2280,21 @@ async function main(): Promise<void> {
     '渲染层：两路终端共用 .term-body（dsh 那一路的定位基准不是整个页面）',
     /class="term-view"/.test(termBodyBlock) &&
       /<div class="term-host" :class="\{ active: !dshActive \}" ref="host">/.test(termBodyBlock) &&
-      /\.term-body \{[^}]*position: relative/.test(cssText) &&
-      /\.term-host \{[^}]*position: relative/.test(cssText) &&
-      /\.term-host \{[^}]*flex: 1 1 auto/.test(cssText) &&
-      /\.term-body > \.term-host \{[^}]*position: absolute/.test(cssText) &&
+      // `.term-body` 与本地 Shell 那一路在 TerminalPane 的 scoped 块里；`.term-host` 的**基础**
+      // 规则两路共用、留在全局表 —— cssBlock 读两层，所以这几条不用改判据
+      /\.term-body \{[^}]*position: relative/.test(cssBlock('.term-body')) &&
+      /\.term-host \{[^}]*position: relative/.test(cssBlock('.term-host')) &&
+      /\.term-host \{[^}]*flex: 1 1 auto/.test(cssBlock('.term-host')) &&
+      /\.term-body > \.term-host \{[^}]*position: absolute/.test(
+        cssBlock('.term-body > .term-host'),
+      ) &&
       // 只给"不在看的那一路"写 hidden；**不许**给"在看的那一路"写 visible ——
       // visibility 是继承属性，显式 visible 会从 `.pane` 的隐藏里穿出来
       // （踩过：切到别的 tab，本地 Shell 的终端照样画在那一页上面）
-      /\.term-body > \.term-host:not\(\.active\) \{[^}]*visibility: hidden/.test(cssText) &&
-      !/\.term-body > \.term-host\.active[^{]*\{[^}]*visibility: visible/.test(cssText),
+      /\.term-body > \.term-host:not\(\.active\) \{[^}]*visibility: hidden/.test(
+        cssBlock('.term-body > .term-host:not(.active)'),
+      ) &&
+      !/\.term-body > \.term-host\.active[^{]*\{[^}]*visibility: visible/.test(allCss),
     termBodyBlock
       ? `term-body 套着 ${termBodyBlock.split('\n').length} 行`
       : 'term-body 里没套住两路',
