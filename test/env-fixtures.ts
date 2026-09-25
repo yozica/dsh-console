@@ -18,7 +18,10 @@ import type { Repo } from './repo';
 import { functionBodyOf, stripComments } from './text';
 
 export interface EnvFixtures {
-  /** `src/main/env-doctor.ts` 原文 */
+  /**
+   * `src/main/env-doctor.ts`（barrel + 两个类）+ `src/main/env-*.ts`（六个叶子模块）的全文拼接。
+   * t51 把它按主题拆开之后，"读源码文本"的断言要看整份，不能只看 barrel。
+   */
   envSource: string;
   /** 同上，剥掉注释 */
   envCode: string;
@@ -49,7 +52,19 @@ export interface EnvFixtures {
 }
 
 export function createEnvFixtures(repo: Repo): EnvFixtures {
-  const envSource = fs.readFileSync(path.join(repo.srcDir, 'main', 'env-doctor.ts'), 'utf8');
+  // t51 起 env-doctor.ts 是 barrel + 两个类，纯函数与探测住在 env-*.ts 里 ——
+  // "读源码文本"的断言要看整份（barrel 里一条 `export function …` 都搜不到）。
+  const envSource = [
+    'env-doctor',
+    'env-probe-types',
+    'env-node-range',
+    'env-fix-plan',
+    'env-judge',
+    'env-probe',
+    'env-wizard',
+  ]
+    .map((stem) => fs.readFileSync(path.join(repo.srcDir, 'main', `${stem}.ts`), 'utf8'))
+    .join('\n');
   const envCode = stripComments(envSource);
   const envJudgeBody = stripComments(functionBodyOf(envSource, 'judgeEnvironment'));
   const envMainCode = stripComments(

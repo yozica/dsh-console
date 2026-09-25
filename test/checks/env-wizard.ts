@@ -554,10 +554,11 @@ export function runEnvWizard(repo: Repo): void {
       const owners = tsFiles.filter((file) =>
         /['"]i['"],\s*['"]-g['"]/.test(fs.readFileSync(file, 'utf8')),
       );
-      const envDoctorSource = fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8');
+      // t51 起 `pnpmInstallSpec` / `npmLaunchSpec` 住在 env-fix-plan.ts（env-doctor.ts 已变成 barrel）
+      const envDoctorSource = envSource;
       return (
         owners.length === 1 &&
-        owners[0] === path.join(srcDir, 'main', 'env-doctor.ts') &&
+        path.basename(owners[0]) === 'env-fix-plan.ts' &&
         // 版本策略只有一处落点（不许在别处又拼一遍 argv）
         /['"]i['"],\s*['"]-g['"],\s*pnpmInstallSpec\(/.test(envDoctorSource) &&
         // 更新入口走的是既有的 envFix（渲染层只递 action），没有第二条路
