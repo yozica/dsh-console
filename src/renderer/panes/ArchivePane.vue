@@ -342,3 +342,428 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 归档会话页自己的样式（t48 样式分层）：原来在 styles.css 的「归档会话页」一节。
+   注意 `.archive-turn-body` 里那些 `h1 / p / code / table …` 是 **v-html 渲染出来的**
+   （见模板里的 renderMarkdown），它们没有本组件的 scope 属性，所以那些规则必须写成
+   `:deep(...)`，否则编译成 `.archive-turn-body h1[data-v-*]` 之后一条都匹配不上。 */
+
+/* ============================================================ 归档会话页 */
+
+.archive {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.archive-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 14px;
+  padding: 2px 20px 20px;
+}
+
+.archive-side {
+  width: 320px;
+  flex: 0 0 320px;
+}
+
+.archive-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.archive-detail-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 标题下的一条「档案记录」：时间 / 轮数 / 体积 / 会话 id。
+   它们都是机器数据，走等宽字体（与应用里 IBM Plex Mono 的定位一致）；
+   阅读区的表头由标题 + 这条记录组成，下面那条发丝线由它收尾。 */
+.archive-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px 10px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-meta-id {
+  overflow: hidden;
+  max-width: 42%;
+  opacity: 0.75;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--t-xs);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  margin: 0 12px 10px;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+}
+
+.archive-search .i {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+
+.archive-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+
+.archive-search-input::placeholder {
+  color: var(--ink-faint);
+}
+
+.archive-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 8px 8px;
+  list-style: none;
+}
+
+.archive-item {
+  position: relative;
+  padding: 9px 12px 9px 13px;
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  cursor: pointer;
+}
+
+/* 选中态只给一条强调色竖线 + 极浅底色：比整块填充安静，也标出了"正在读哪一条"。
+   竖线用伪元素而不是 border，这样它不会因为 hover/active 切换而让文字左右抖动。 */
+.archive-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.archive-item:hover {
+  background: var(--surface-2);
+}
+
+.archive-item.active {
+  background: var(--accent-soft);
+}
+
+.archive-item.active::before {
+  background: var(--accent);
+}
+
+.archive-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.archive-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-item-time {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-item-meta {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--ink-dim);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-item-sub {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 转录稿，不是气泡墙：左侧固定角色栏 + 右侧正文，整列限宽 860px 保证可读行长。
+   理由见 ArchivePane.vue 顶部注释 —— 一次回答会跨多个 step 拆成多条
+   assistant/message，用气泡会把一段连续的回答碎成一墙卡片。 */
+.archive-thread {
+  max-width: 820px;
+  padding: 6px 0 28px;
+}
+
+/* 转录稿的一轮：不做气泡，也不预留空的角色栏。
+   角色名只在角色切换时出现一次、贴在内容上方，正文因此拿到整幅宽度
+   —— 详情面板常常只有 600 来 px，固定 66px 的空栏会白白吃掉一成多宽度。 */
+.archive-turn {
+  padding: 12px 20px;
+}
+
+.archive-turn-role {
+  margin-bottom: 5px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  font-weight: 600;
+}
+
+/* 用户发言：整条浅底 + 一条强调色竖线，像日志里被标出的"输入"那几行 */
+.archive-turn-user {
+  padding-left: 17px;
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+}
+
+.archive-turn-user .archive-turn-role {
+  color: var(--accent);
+}
+
+/* 同角色的连续消息靠留白连成一段（角色名不重复写）；角色切换时才加一道分隔 */
+.archive-turn-assistant + .archive-turn-assistant {
+  padding-top: 2px;
+}
+
+.archive-turn-user + .archive-turn-assistant,
+.archive-turn-assistant + .archive-turn-user {
+  border-top: 1px solid var(--hairline);
+}
+
+.archive-thread-note {
+  padding: 6px 20px 0;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+/* 正文里的 Markdown 渲染结果（元素由 lib/markdown.js 生成，只出安全标签） */
+.archive-turn-body {
+  min-width: 0;
+  color: var(--ink);
+  font-size: var(--t-md);
+  line-height: 1.72;
+  word-break: break-word;
+}
+
+.archive-turn-body :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.archive-turn-body :deep(> :last-child) {
+  margin-bottom: 0;
+}
+
+.archive-turn-body :deep(h1),
+.archive-turn-body :deep(h2),
+.archive-turn-body :deep(h3),
+.archive-turn-body :deep(h4),
+.archive-turn-body :deep(h5),
+.archive-turn-body :deep(h6) {
+  margin: 1.1em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.archive-turn-body :deep(h1) {
+  font-size: var(--t-lg);
+}
+
+.archive-turn-body :deep(h2),
+.archive-turn-body :deep(h3),
+.archive-turn-body :deep(h4),
+.archive-turn-body :deep(h5),
+.archive-turn-body :deep(h6) {
+  font-size: var(--t-md);
+}
+
+.archive-turn-body :deep(p) {
+  margin: 0.5em 0;
+}
+
+.archive-turn-body :deep(ul),
+.archive-turn-body :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 22px;
+}
+
+.archive-turn-body :deep(li) {
+  margin: 0.18em 0;
+}
+
+.archive-turn-body :deep(li::marker) {
+  color: var(--ink-faint);
+}
+
+.archive-turn-body :deep(code) {
+  padding: 1px 5px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.archive-turn-body :deep(pre) {
+  margin: 0.7em 0;
+  padding: 11px 13px;
+  overflow-x: auto;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+}
+
+.archive-turn-body :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  line-height: 1.65;
+}
+
+.archive-turn-body :deep(blockquote) {
+  margin: 0.7em 0;
+  padding: 2px 13px;
+  border-left: 3px solid var(--hairline-strong);
+  color: var(--ink-dim);
+}
+
+.archive-turn-body :deep(blockquote p) {
+  margin: 0.25em 0;
+}
+
+.archive-turn-body :deep(hr) {
+  margin: 0.9em 0;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.archive-turn-body :deep(a) {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.archive-turn-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.archive-turn-body :deep(strong) {
+  font-weight: 600;
+}
+
+.archive-turn-body :deep(del) {
+  color: var(--ink-faint);
+}
+
+.archive-turn-body :deep(table) {
+  margin: 0.7em 0;
+  border-collapse: collapse;
+  font-size: var(--t-xs);
+}
+
+.archive-turn-body :deep(th),
+.archive-turn-body :deep(td) {
+  padding: 5px 10px;
+  border: 1px solid var(--hairline-strong);
+  text-align: left;
+  vertical-align: top;
+}
+
+.archive-turn-body :deep(th) {
+  background: var(--well);
+  font-weight: 600;
+}
+
+.archive-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  min-height: 120px;
+  padding: 30px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.archive-empty h2 {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.archive-empty p {
+  max-width: 460px;
+  font-size: var(--t-sm);
+  line-height: 1.8;
+}
+
+.archive-empty code {
+  padding: 1px 6px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  color: var(--code-ink);
+  font-family: var(--mono);
+}
+</style>

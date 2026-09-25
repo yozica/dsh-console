@@ -40,10 +40,19 @@
 判据、两个后果（scoped 会让特异性 +1；自检必须跨两层看）与三道验收（`选择器 → 声明` 多重集的
 机械等价、headless Chrome 逐像素比对、自检钉子）都写在 AGENTS §7.33 —— 照着做下一页即可。
 
-**下一批顺序**（风险递增，一页一个 PR）：内嵌界面（UiPane）→ 终端类页面（TerminalPane + DshTerminal）
-→ 控制台（DashboardPane）→ 归档会话页（ArchivePane）→ 环境自检（EnvPane）→ 插件页（PluginPane，730 行最大）
-→ 首启环境向导与入口门禁（EnvGate，1038 行、与 EnvPane 共用一批规则，最后动）。
-覆盖层（启动锁 / 关闭确认卡片）与共享件（`.btn` / `.empty` / 指示灯）留在全局表。
+**第二批（归档会话页，已合并）**：`.archive*` 一整节 415 行全搬进 `ArchivePane.vue`（全局表
+4329 → 3914）。这一页带来两个新的坑，都记在 AGENTS §7.33：① `v-html` 渲染出来的正文（`renderMarkdown`
+塞进 `.archive-turn-body` 的那些 `h1 / p / code / table …`）**必须写成 `:deep(...)`**，否则编译成
+`.archive-turn-body h1[data-v-*]` 一条都匹配不上；② 多行选择器列表逐行加 `:deep()` 会漏掉前几行
+（这版漏了 `h2..h5 / ul / th` 共 7 条，靠查构建产物才抓到）。
+
+**下一批顺序**按"这一页真正私有的规则条数"排（不是段落行数 —— 很多段落里大部分是共享件）：
+控制台（DashboardPane，35 条私有）→ 环境自检（EnvPane，两节共 32 条）→ 插件页（PluginPane，83 条，
+最大的一块）→ 首启环境向导与入口门禁（EnvGate，94 条、与 EnvPane 共用一批规则）→ 骨架里的 shell 私有
+（RailNav 18 / TopBar 7 / StatusBar 4，要拆到三个组件）→ 内嵌界面（UiPane 4）与终端类页面
+（TerminalPane 7 + DshTerminal 1，两个组件共用一个 `.term-body` 契约，搬之前先想清楚哪条归谁）。
+启动锁（5 条）、`.banner` / `.embedded-view` / `body[data-immersive]` 这些共享件与状态规则、
+以及 `index.html` 里那几条**留在全局表**（markup 是静态的，没有组件可挂）。
 
 **前置**：插件这边（`dsh-plugins` 的 `paths` 包）先做完 —— 用户 2026-09-25 定的顺序。**已满足**。
 
