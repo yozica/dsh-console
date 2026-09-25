@@ -61,7 +61,10 @@ export interface Repo {
   flatIpc: string;
   /** `panes/UiPane.vue` 原文（内嵌界面那一页，几处契约断言都读它） */
   uiPaneSource: string;
-  /** `src/main/plugin-manager.ts` 原文 */
+  /**
+   * `src/main/plugin-manager.ts`（barrel + 三个类）+ `src/main/plugin-*.ts`（四个叶子模块）的全文拼接。
+   * t54 把它按主题拆开之后，"读源码文本"的断言要看整份。
+   */
   pluginSource: string;
   /**
    * `src/main/process-utils.ts`（barrel）+ `src/main/process-*.ts`（八个叶子模块）的全文拼接。
@@ -128,7 +131,17 @@ export function createRepo(): Repo {
   const rendererCode = rendererAll.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
-  const pluginSource = fs.readFileSync(path.join(srcDir, 'main', 'plugin-manager.ts'), 'utf8');
+  // t54 起 plugin-manager.ts 是 barrel + 三个类，解析与子进程住在 plugin-*.ts 里 ——
+  // "读源码文本"的断言要看整份（barrel 里一条 `export function …` 都搜不到）。
+  const pluginSource = [
+    'plugin-manager',
+    'plugin-shared',
+    'plugin-parse',
+    'plugin-runner',
+    'plugin-live',
+  ]
+    .map((stem) => fs.readFileSync(path.join(srcDir, 'main', `${stem}.ts`), 'utf8'))
+    .join('\n');
   const processUtilsSource = [
     'process-utils',
     'process-types',

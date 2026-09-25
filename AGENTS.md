@@ -65,7 +65,11 @@ src/
     node-plan.ts        "装还是更新、走哪条路"的纯判定 + 提权结果分类（见 7.21）
     node-io.ts          引擎用到的 IO 底层：探测 / 注册表 / 网络 / 临时目录
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
-    plugin-manager.ts   插件装配层：profile 的 bundle 层栈 + `dsh web --dump-config` 的解析（含 stderr 上的"没报错的错"）
+    plugin-manager.ts   **barrel + 三个类**（Runner / Live / Manager；t54 拆开，见 7.35）
+    plugin-shared.ts    插件装配层共用的常量（profile 名 / 各种超时 / 输出上限）
+    plugin-parse.ts     profile manifest、`--dump-config` 解析、层归因、巡检与缺层判定（纯函数为主）
+    plugin-runner.ts    插件操作子进程（装 / 卸 / 升级）与输出归纳
+    plugin-live.ts      运行中清单：令牌换 cookie 的客户端、信封与应答解包、快照归纳
     patch-layer.ts      改你自己的补丁层（cordis.patch.yml）：插入 / 禁用 / 启用 / 移除插入 / 删掉失效条目，按行改 + 先备份 + 原子写
     profile-bundles.ts  救援用：临时停用 / 恢复一个 bundle（改 dsh.profile.bundles，记住原位置）
     safe-file.ts        写用户文件的公共件：先备份（.bak-<时间戳>）再原子写（tmp + rename）
@@ -1267,6 +1271,22 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 **还没做的**（后续 PR）：组件级拆分（`GateNodeConfirm.vue` / `GateOutput.vue`、`EnvCheckRow.vue` /
 `EnvUpdateConfirm.vue`、`PluginRescue.vue` …）与纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts` /
 `lib/plugin-view.ts`）；模板与样式一起搬的那些必须带 §7.33 的三道验收。
+
+**第四个：`plugin-manager.ts`（t54，1322 → 318 行 + 四个叶子）**
+
+| 文件                | 行数 | 职责                                                                     |
+| ------------------- | ---- | ------------------------------------------------------------------------ |
+| `plugin-manager.ts` | 318  | **barrel + 三个类**（`PluginRunner` / `LiveClient` / `PluginManager`）   |
+| `plugin-shared.ts`  | 28   | 共用的常量（profile 名 / 超时 / 输出上限）                               |
+| `plugin-parse.ts`   | 685  | profile manifest、dump 解析、层归因、巡检、spec 与失败归纳（纯函数为主） |
+| `plugin-runner.ts`  | 245  | 装 / 卸 / 升级的子进程与输出归纳                                         |
+| `plugin-live.ts`    | 149  | 运行中清单的客户端与解包                                                 |
+
+**又踩到一次"符号藏在注释同一行"**：`packageNameOf` 在原文件里写成 `/** … */ export function packageNameOf(`
+—— 我的自动接线脚本按 `^export function` 找归属，于是**它既没被接上 import、也没进 barrel**（表现是
+`plugin-runner.ts` 报 `Cannot find name`）。**教训：机械扫描导出的正则要允许前导注释**（或者干脆用
+`tsc` 的报错反推，而不是自己扫）。同一轮还学到一条省时的做法：自动接线要**限制轮数**（每轮一次 `tsc`，
+十几轮就会撞上执行器的 10 分钟上限）。
 
 ## 8. 调试手段
 
