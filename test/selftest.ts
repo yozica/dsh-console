@@ -932,6 +932,20 @@ async function main(): Promise<void> {
       staysGlobal: ['.check', '.panel-block > .hint'],
     },
     {
+      pane: 'EnvPane.vue',
+      scoped: [
+        '.env-scope',
+        '.env-list',
+        '.env-row',
+        '.env-main',
+        '.env-confirm',
+        '.env-source',
+        '.env-skip',
+      ],
+      // 与别处共用的：`.env-actions`（设置页「运行环境」卡也画）、`.env-op*`（环境向导的执行输出面板同形）
+      staysGlobal: ['.env-actions', '.env-op'],
+    },
+    {
       pane: 'DashboardPane.vue',
       scoped: [
         '.dash',
@@ -1317,8 +1331,10 @@ async function main(): Promise<void> {
 
   // 锁必须盖满窗口、且盖住顶栏：左栏是贯穿全高的整列、顶栏又在最上面，
   // 留任何一条缝都会露出"DSH Console"品牌或页面标题（两次被用户抓图指出）。
+  // 读**两层**样式表（`allCss` = 全局表 + 各组件 `<style>` 块）：t48 起页面自己的规则搬进了
+  // 组件里，只看全局表会让"这条规则还在不在"这类断言成片假红（`EnvPane` 那两条就这么红的）。
   const cssBlock = (selector: string): string =>
-    css.match(
+    allCss.match(
       new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`),
     )?.[0] || '';
   const lockZ = Number(cssBlock('.boot-lock').match(/z-index:\s*(\d+)/)?.[1] || 0);

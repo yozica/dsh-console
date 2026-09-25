@@ -52,8 +52,13 @@
 contains 会误判）；② 产物里的媒体查询被压成现代区间语法（`@media (width<=900px)`），
 按 `max-width` 去 grep 产物会以为"规则丢了"——核对产物时按属性/值 grep 更稳。
 
+**第四批（环境自检页，已合并）**：两节里 EnvPane 私有的 37 个条目 276 行搬进 `EnvPane.vue`
+（全局表 3649 → 3377）；`.env` / `.env-actions` / `.env-op*` 与别处共用，留在全局表。
+这一轮补上一条自检改造：到处在用的 `cssBlock(selector)` 助手也改成读**两层**样式表
+（只看全局表时 `.env-main` / `.env-seg` 那两条断言直接假红）。
+
 **下一批顺序**按"这一页真正私有的规则条数"排（不是段落行数 —— 很多段落里大部分是共享件）：
-环境自检（EnvPane，两节共 32 条）→ 插件页（PluginPane，83 条，
+插件页（PluginPane，83 条，
 最大的一块）→ 首启环境向导与入口门禁（EnvGate，94 条、与 EnvPane 共用一批规则）→ 骨架里的 shell 私有
 （RailNav 18 / TopBar 7 / StatusBar 4，要拆到三个组件）→ 内嵌界面（UiPane 4）与终端类页面
 （TerminalPane 7 + DshTerminal 1，两个组件共用一个 `.term-body` 契约，搬之前先想清楚哪条归谁）。
