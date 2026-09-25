@@ -55,7 +55,15 @@ src/
     env-judge.ts        纯判定 judgeEnvironment 与"哪里不对"的整理
     env-probe.ts        只读探测与二进制定位（含本机 dsh 安装树的 Node 要求）
     env-wizard.ts       门禁判定：三步表 + collectBootProbe + judgeWizard
-    node-installer.ts   系统级安装与更新执行：Node 的两条路（官方 MSI / nvm-windows）、下载与校验、提权、复检（见 7.21）
+    node-installer.ts   **barrel + NodeInstallHooks + NodeInstaller 类**（t52 拆开，见 7.35）
+    node-shared.ts      安装引擎各模块共用的常量（超时 / 下载地址 / 输出上限 / 两条常驻文案）
+    node-release.ts     官方版本清单、校验清单、nvm 发布资产（纯函数）
+    node-owner.ts       这台机器上的 Node 是谁装的（归属判定 + 注册表 PATH 合并）
+    node-failure.ts     失败分类与人话文案（退出码 / 提示词 → 类别 + 出路）
+    node-flavor.ts      安装包形态识别与静默参数
+    node-nvm.ts         nvm-windows 的输出解析、模型推导与注册表偏好
+    node-plan.ts        "装还是更新、走哪条路"的纯判定 + 提权结果分类（见 7.21）
+    node-io.ts          引擎用到的 IO 底层：探测 / 注册表 / 网络 / 临时目录
     session-archive.ts  归档会话：读写 DSH 的 workspace.json 与投影缓存
     plugin-manager.ts   插件装配层：profile 的 bundle 层栈 + `dsh web --dump-config` 的解析（含 stderr 上的"没报错的错"）
     patch-layer.ts      改你自己的补丁层（cordis.patch.yml）：插入 / 禁用 / 启用 / 移除插入 / 删掉失效条目，按行改 + 先备份 + 原子写
@@ -1196,6 +1204,31 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
   "超时判在退出码之前"的断言读的仍是 `env-doctor.ts` —— 因为 `EnvFixRunner.execute` 留在那里。
   还有一条按**全仓库唯一 owner** 找 argv 的断言（`['i', '-g', …]`），owner 从 `env-doctor.ts` 变成了
   `env-fix-plan.ts`，跟着改的是"owner 是谁"，不变的是"只有一处"。
+
+**第三个：`node-installer.ts`（t52，4169 → 2509 行 + 八个叶子）**
+
+| 文件                | 行数 | 职责                                                 |
+| ------------------- | ---- | ---------------------------------------------------- |
+| `node-installer.ts` | 2509 | **barrel + `NodeInstallHooks` + `NodeInstaller` 类** |
+| `node-shared.ts`    | 58   | 共用的常量（超时 / 下载地址 / 输出上限 / 常驻文案）  |
+| `node-release.ts`   | 230  | 版本清单、校验清单、发布资产（纯）                   |
+| `node-owner.ts`     | 180  | 归属判定 + 注册表 PATH 合并                          |
+| `node-failure.ts`   | 194  | 失败分类与人话文案                                   |
+| `node-flavor.ts`    | 36   | 安装包形态与静默参数                                 |
+| `node-nvm.ts`       | 412  | nvm 输出解析、模型推导、注册表偏好                   |
+| `node-plan.ts`      | 334  | "装还是更新、走哪条路"纯判定 + 提权分类              |
+| `node-io.ts`        | 455  | IO 底层：探测 / 注册表 / 网络 / 临时目录             |
+
+这一步多出来的三条：
+
+- **`buildPlan` 与 `transferPhase` 必须留在同一个文件里**：`scripts/env-wizard-cases.mjs` 的 F 段按这对
+  锚点切源码；所以**类不拆**（同 `env-doctor` 的理由，外加这条硬约束）。
+- **反例脚本的"源码形状"钉子也要跟着改成读整份**：`env-wizard-cases.mjs` 里 `installerSource` 原来只读
+  `node-installer.ts`，拆完之后 `INJECTED_ENV_NAMES` 跑到了 `node-shared.ts`（M8 那条 184/185 变红）。
+  改成 barrel + 八个叶子的拼接之后 185/185。
+- **同一个正则误伤过一次**：删重复声明时用的 `[\s\S]*?
+(?=…)|\Z` 会一路吃到文件尾，把 `node-io.ts`
+  从 480 行砍成 185 行。**教训：按文本块删东西，先 `git show HEAD:<file>` 留一份原文，删完立刻比行数。**
 
 ## 8. 调试手段
 
