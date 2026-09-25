@@ -2,7 +2,7 @@
 'dsh-console': patch
 ---
 
-样式分层最后一批：终端页 / 内嵌界面 / 零散几条各自归位（全局表 1651 → 1500 行）
+样式分层最后一批：终端页 / 内嵌界面 / 零散几条各自归位（全局表 1651 → 1497 行，−154）
 
 - `panes/TerminalPane.vue` 12 条（`.term-body` / `.term-view*` / `.shell-tab*` / `.shell-pane*` / `.chips` / `.btn.outline`）、`panes/DshTerminal.vue` 1 条（`.bar-title`）、`panes/UiPane.vue` 4 条（`.ui-paste*`）、`shell/TopBar.vue` 2 条（`.immersive-only` / `.topbar-note.lit`）、`shell/GateBanner.vue` 1 条、`panes/EnvPane.vue` 2 条（`.env` / `.env > .bar`）。
 - **`.term-host` 的"基础规则"（relative + flex: 1 1 auto）仍留在全局表** —— 两路终端共用它（§7.30）；只作用于本地 Shell 那一路的 `.term-body > .term-host` 跟着 `TerminalPane` 走。
