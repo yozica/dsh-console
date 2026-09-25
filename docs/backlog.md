@@ -62,9 +62,14 @@ contains 会误判）；② 产物里的媒体查询被压成现代区间语法�
 `RailNav.vue` 里的 `{ id: 'plugin' }` 字符串、别处注释里的 `.plugin-tag` 也算成了使用者 ——
 **要按标记里的 class 核**（`grep 'class="[^"]*\b类名\b'`）。
 
+**第六批（首启环境向导与入口门禁，已合并）**：98 个条目 695 行搬进 `shell/EnvGate.vue`（全局表
+2649 → 1945）；与环境自检详情层共用的 42 条（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` /
+`.wizard-*`）留在全局表。这一轮抓到一个搬运脚本的坑：**注释里的 `{` / `}` 会把朴素的花括号计数带偏**，
+切出"半条注释 + 半条规则"，机械等价立刻报账（丢 1 / 多 3）—— 改成先掩码注释再数括号。
+
 **下一批顺序**按"这一页真正私有的规则条数"排（不是段落行数 —— 很多段落里大部分是共享件）：
 插件页（PluginPane，83 条，
-最大的一块）→ 首启环境向导与入口门禁（EnvGate，94 条、与 EnvPane 共用一批规则）→ 骨架里的 shell 私有
+最大的一块）→ 骨架里的 shell 私有
 （RailNav 18 / TopBar 7 / StatusBar 4，要拆到三个组件）→ 内嵌界面（UiPane 4）与终端类页面
 （TerminalPane 7 + DshTerminal 1，两个组件共用一个 `.term-body` 契约，搬之前先想清楚哪条归谁）。
 启动锁（5 条）、`.banner` / `.embedded-view` / `body[data-immersive]` 这些共享件与状态规则、

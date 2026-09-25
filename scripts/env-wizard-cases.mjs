@@ -2043,9 +2043,31 @@ for (const [name, pass] of vmNails) check(name, pass, pass ? '满足' : '不满�
 const CSS_FILE = process.env.ENV_WIZARD_CSS_FILE
   ? path.resolve(repoRoot, process.env.ENV_WIZARD_CSS_FILE)
   : path.join(repoRoot, 'src', 'renderer', 'styles.css');
-const cssText = fs.existsSync(CSS_FILE)
-  ? fs.readFileSync(CSS_FILE, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
-  : '';
+/**
+ * 各页面组件里的 `<style scoped>` 块（t48 样式分层之后，"页面自己的规则"不再堆在全局表里）。
+ * 拼接顺序 = 全局表 + 组件块，和真实级联一致（组件块在后），`cssValueOf` 取最后一条也因此仍然对。
+ */
+function componentStyles() {
+  const dirs = [
+    path.join(repoRoot, 'src', 'renderer', 'panes'),
+    path.join(repoRoot, 'src', 'renderer', 'shell'),
+  ];
+  const out = [];
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.vue'))) {
+      const text = fs.readFileSync(path.join(dir, name), 'utf8');
+      for (const m of text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) out.push(m[1]);
+    }
+  }
+  return out.join('\n');
+}
+// `ENV_WIZARD_CSS_FILE` 是给**变异实验**用的后门：它替换的是"整份样式"，所以指定它时**只读它**
+// —— 想变异一条已经搬进组件的规则，把那一段也抄进你的副本即可（默认路径两层都读）。
+const cssText = (
+  (fs.existsSync(CSS_FILE) ? fs.readFileSync(CSS_FILE, 'utf8') : '') +
+  (process.env.ENV_WIZARD_CSS_FILE ? '' : `\n${componentStyles()}`)
+).replace(/\/\*[\s\S]*?\*\//g, '');
 function cssValueOf(selector, property) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const rules = [...cssText.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))];
