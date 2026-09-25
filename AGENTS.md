@@ -1240,6 +1240,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 | `lib/gate-copy.ts`         | 135  | 门禁与「运行环境」详情层共用的**词表与现成句子**（下载页 / 忙提示 / 三步文案 / 五项状态词 / 方法事实 / 档位 / 并存风险 / `versionWithChannel`） |
 | `lib/env-install-phase.ts` | 34   | 安装与修复的相位判据（`INSTALL_BUSY_PHASES` / `installRunning` / `installSettled` / `isFixSettled`）                                            |
 | `lib/format.ts`            | +9   | 多一个 `formatBytes`（两处各抄过一份）                                                                                                          |
+| `lib/plugin-view.ts`       | 205  | 「插件」页的纯展示判据（层名 / 归属 / 没贡献三态 / live 索引 / 巡检分档 / 能不能删·卸·放回 / 分组过滤）—— `PluginPane.vue` 2052 → 1915 行       |
 
 这一步**只搬零风险的纯逻辑**：不动 `<template>`、不动 `<style>`（判据是 `git diff` 里以 `<` 开头的行
 一个都没有），所以**免像素对比**；验收仍按老四样：`vue-tsc` / `eslint` / `npm test` 输出逐行一致 /
@@ -1254,10 +1255,14 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
    所以一个新 lib 模块如果没人 import，用了 DOM 也不会红。要么让它保持纯、要么留在组件里。
 2. **词表/判据放一份**。门禁层与详情层画的是同一套设计稿（冻结 §3.8 / 交互 §4.1），抄两份就会漂移；
    这次六处重复里就有两处已经不一样的地方（`NODE_DOWNLOAD_URL` 的注释与用途各不相同）。
-3. **搬走的部分要确认没有断言在读它的文本**。自检里有一批"读 .vue 源码文本"的钉子（`gateRaw` / `gateCode`
-   与 `TEMPLATE_OF(EnvPane.vue)`），它们钉的是**行为与形状**（比如"逃生口的处理函数里没有 `api.`"、
-   "回看卡里没有安装动作"），搬纯词表不影响；但一旦要搬**模板或样式**，就得先看 §7.33 那三道验收
-   （机械等价 / 逐像素 / 自检），并同步改 `styleLayers` 表。
+3. **搬走的部分要确认没有断言在读它的文本**，读法有讲究：
+   - 钉"行为与形状"的那批（`gateRaw` / `gateCode`，比如"逃生口的处理函数里没有 `api.`"、"回看卡里没有
+     安装动作"）搬纯词表不受影响；
+   - 但有一条钉子（「救援：「放回层里」不依赖救援条」）钉的是**判据本身**（`canRestore` 的名字、那一档
+     的说法、"两种不形成层都能卸"），判据搬进 `lib/plugin-view.ts` 之后它从 `vueSource` 改成
+     **`repo.rendererAll`**（= `app.ts` + `lib/*.ts` + 全部 `.vue`）。**判据一旦跨出 `.vue`，读文本的断言
+     就得跟着换口径** —— 这是第三次遇到（先是 `styles.css` 的两层，再是主进程两个 barrel）。
+   - 要搬**模板或样式**时先看 §7.33 那三道验收（机械等价 / 逐像素 / 自检），并同步改 `styleLayers` 表。
 
 **还没做的**（后续 PR）：组件级拆分（`GateNodeConfirm.vue` / `GateOutput.vue`、`EnvCheckRow.vue` /
 `EnvUpdateConfirm.vue`、`PluginRescue.vue` …）与纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts` /

@@ -36,6 +36,7 @@ export function runPlugin(repo: Repo): void {
   const allCss = repo.allCss;
   const flatIpc = repo.flatIpc;
   const vueSource = repo.vueSource;
+  const rendererAll = repo.rendererAll;
   const srcDir = repo.srcDir;
   const settings = repo.settings;
 
@@ -973,14 +974,15 @@ export function runPlugin(repo: Repo): void {
   // 在层栈详情里点「临时停用」的人，dsh 明明好好的，于是界面上再也找不到"放回去"。
   check(
     '救援：「放回层里」不依赖救援条 —— 巡检那行里也有，黄条上也有（停用之后回得去）',
-    /if \(kind === 'suspended-bundle'\) return '掉出了层列表'/.test(vueSource) &&
-      /function canRestore\(item: PluginProblem\): boolean/.test(vueSource) &&
+    // t53 起"哪条能放回 / 那一档叫什么"这些判据住在 lib/plugin-view.ts，所以要读整份渲染层源码
+    /if \(kind === 'suspended-bundle'\) return '掉出了层列表'/.test(rendererAll) &&
+      /function canRestore\(item: PluginProblem\): boolean/.test(rendererAll) &&
       /restoreProblem\(item\)/.test(vueSource) &&
       /放回层里/.test(vueSource) &&
       /id="btn-plugin-restore-bundle"/.test(vueSource) &&
       /editBundle\('restore', suspended\.name, suspended\.index\)/.test(vueSource) &&
       // 两种"不形成层"都能卸；只有被摘掉的那种能放回
-      /item\.kind === 'plain-dependency' \|\| item\.kind === 'suspended-bundle'/.test(vueSource),
+      /item\.kind === 'plain-dependency' \|\| item\.kind === 'suspended-bundle'/.test(rendererAll),
   );
   check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',
