@@ -553,10 +553,7 @@ export function runEnvDoctor(repo: Repo): void {
   check(
     '命令解析：PATH 上的转发器不算"找到真 node"（真 node 优先，一个都没有才退它）',
     (() => {
-      const source = fs.readFileSync(
-        path.join(repoRoot, 'src', 'main', 'process-utils.ts'),
-        'utf8',
-      );
+      const source = repo.processUtilsSource;
       return (
         /const pathShim = fromPath !== null && isNodeShim\(fromPath\) \? fromPath : null;/.test(
           source,
@@ -1179,7 +1176,7 @@ export function runEnvDoctor(repo: Repo): void {
     '插件安装：装之前按 profile 挑 pnpm，并把选中的那份顶到子进程 PATH 最前',
     (() => {
       const pluginSource = fs.readFileSync(path.join(srcDir, 'main', 'plugin-manager.ts'), 'utf8');
-      const utils = fs.readFileSync(path.join(srcDir, 'main', 'process-utils.ts'), 'utf8');
+      const utils = repo.processUtilsSource;
       const body = pluginSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
       return (
         /const pick = findPnpmForProfile\(pluginProfileDir\(\)\);/.test(body) &&
@@ -1197,7 +1194,7 @@ export function runEnvDoctor(repo: Repo): void {
   check(
     '环境自检（VM-09）：这条判据是共享的（findPnpm 与插件路径同一份偏好），且 process-utils 既有导出签名一个没改',
     (() => {
-      const utils = fs.readFileSync(path.join(srcDir, 'main', 'process-utils.ts'), 'utf8');
+      const utils = repo.processUtilsSource;
       // 既有签名（阶段一的规矩：只许新增或内部调整）
       const kept: RegExp[] = [
         /export function findNodeExe\(\): string \| null/,
