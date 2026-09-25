@@ -829,7 +829,11 @@ function clearFilters(): void {
 
     <!-- 装/卸/升级改的是 package.json 与 node_modules → 必须重启 dsh。
          这条同时是这一轮重启的进度与结局（t46）：进行中 / 失败或未就绪 / 已生效 / 还没重启。 -->
-    <div v-if="bannerVisible" class="banner" :class="{ rose: navOutcome === 'failed' }">
+    <div
+      v-if="bannerVisible"
+      class="banner"
+      :class="{ rose: navOutcome === 'failed', line: !!navLine }"
+    >
       <svg class="i"><use href="#i-warn" /></svg>
       <span v-if="navLine" id="plugin-restart-line">{{ navLine }}</span>
       <span v-else id="plugin-restart-line">

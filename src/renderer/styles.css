@@ -1546,6 +1546,17 @@ body[data-immersive='true'] .webview-wrap {
   color: var(--ink);
 }
 
+/* 单行的结局提示（「✓ 装配层改动已加载」这类）：`.banner` 的 `align-items: flex-start`
+   与图标 `margin-top: 2px` 是给「标题 + 说明」两行准备的，单行套上去文字会明显偏上
+   （用户真机截图指出）。单行这一态改用居中，图标也不再自己往下挪。 */
+.banner.line {
+  align-items: center;
+}
+
+.banner.line .i {
+  margin-top: 0;
+}
+
 /* ============================================================ 设置 */
 
 .settings {
