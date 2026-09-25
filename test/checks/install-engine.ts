@@ -816,14 +816,14 @@ export function runInstallEngine(repo: Repo): void {
         executeSlice.indexOf('await this.installNodeWithNvm(plan)'),
   );
   check(
-    't29 契约增量：EnvNodeOwner 三成员 / 报告与计划与状态的新字段 / 请求 method 可选（ipc.ts 仍然零 import）',
+    't29 契约增量：EnvNodeOwner 三成员 / 报告与计划与状态的新字段 / 请求 method 可选（契约零运行时 import）',
     (() => {
       const ownerUnion = /export type EnvNodeOwner =([\s\S]*?);/.exec(flatIpc)?.[1] ?? '';
       const members = [...ownerUnion.matchAll(/'([^']+)'/g)].map((match) => match[1]);
       return (
         members.length === 3 &&
         ['nvm', 'system', 'unknown'].every((name) => members.includes(name)) &&
-        !/^\s*import\s/m.test(ipcSource) &&
+        !/^\s*import\s+(?!type\b)/m.test(ipcSource) &&
         /nodeOwner: EnvNodeOwner;/.test(ipcSource) &&
         /nodeOwnerEvidence: string\[\];/.test(ipcSource) &&
         /export interface EnvNodePlan \{/.test(ipcSource) &&

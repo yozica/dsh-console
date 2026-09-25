@@ -121,7 +121,7 @@ export function runEnvWizard(repo: Repo): void {
 
   // 契约增量：新联合的成员、7 个新 API、两个设置项、ipc.ts 仍然零 import
   check(
-    '环境向导：契约增量都在（新联合成员 / 7 个 API / 两个设置项 / ipc.ts 仍然零 import）',
+    '环境向导：契约增量都在（新联合成员 / 7 个 API / 两个设置项 / 契约零运行时 import）',
     (() => {
       const wizardApiNames = [
         'envWizard',
@@ -140,8 +140,9 @@ export function runEnvWizard(repo: Repo): void {
       const membersOf = (union: string): string[] =>
         [...union.matchAll(/'([^']+)'/g)].map((match) => match[1]);
       return (
-        // 契约零 import：只放类型与纯常量（渲染层要读这些类型，拖进 fs/path 就会被卷进包里）
-        !/^\s*import\s/m.test(ipcSource) &&
+        // 契约零**运行时** import：只放类型与纯常量（t55 起叶子之间允许 `import type`；
+        // 渲染层要读这些类型，值 import 会把 fs/path 卷进包里）
+        !/^\s*import\s+(?!type\b)/m.test(ipcSource) &&
         membersOf(stepUnion).length === 3 &&
         ['node', 'pnpm', 'dsh'].every((id) => stepUnion.includes(`'${id}'`)) &&
         membersOf(statusUnion).length === 4 &&

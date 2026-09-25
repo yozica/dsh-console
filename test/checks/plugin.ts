@@ -37,7 +37,6 @@ export function runPlugin(repo: Repo): void {
   const flatIpc = repo.flatIpc;
   const vueSource = repo.vueSource;
   const rendererAll = repo.rendererAll;
-  const srcDir = repo.srcDir;
   const settings = repo.settings;
 
   // ---------------------------------------------------------- 16. 插件装配层（只读）
@@ -1126,7 +1125,8 @@ export function runPlugin(repo: Repo): void {
   check(
     '插件安装：契约里有 3 个 API 与操作结果类型',
     (() => {
-      const ipc = fs.readFileSync(path.join(srcDir, 'shared', 'ipc.ts'), 'utf8');
+      // t55 起契约按主题拆在 shared/ipc-*.ts 里 → 读整份
+      const ipc = repo.ipcSource;
       return (
         /pluginRun: \(request: \{ action: PluginOpAction; spec: string \}\) => Promise<PluginOpResult>/.test(
           ipc,
