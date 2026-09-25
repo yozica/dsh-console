@@ -1176,7 +1176,8 @@ export function runEnvDoctor(repo: Repo): void {
   check(
     '插件安装：装之前按 profile 挑 pnpm，并把选中的那份顶到子进程 PATH 最前',
     (() => {
-      const pluginSource = fs.readFileSync(path.join(srcDir, 'main', 'plugin-manager.ts'), 'utf8');
+      // t54 起 plugin-manager.ts 是 barrel，装插件的子进程在 plugin-runner.ts 里 → 读整份
+      const pluginSource = repo.pluginSource;
       const utils = repo.processUtilsSource;
       const body = pluginSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
       return (
