@@ -150,4 +150,25 @@ const note = computed(() => harnessArrivalNotice.value || contextNote.value);
   text-overflow: ellipsis;
   max-width: 55%;
 }
+
+/* 顶栏在内嵌界面 / 应用内全屏下的两小块（t48 样式分层）：`.immersive-only` 与
+   重启到达提示那格 `.topbar-note.lit`。`body[data-immersive]` 那几条状态规则在全局表。 */
+
+/* 只在全屏时出现的顶栏元素（退出按钮、状态灯） */
+.immersive-only {
+  display: none;
+}
+
+/* 顶栏那格"亮一下"（t46 轻提示）：`#topbar-note` 在重启就绪后的 4 秒里变成
+   绿色 + 一点点底色，然后自己换回"<地址>，PID …"。
+   选它而不是 Harness 页工具条右端那格：应用内全屏时工具条整条会被藏起来，顶栏则两种模式下都在。
+   为什么不做成浮层/胶囊：用户否了（"不好看"）—— 浮在别人页面的正文上、又没有层级，
+   而这一格本来就在，读起来就是一句状态（见 docs/harness-arrival-design.html 方案 A）。 */
+.topbar-note.lit {
+  color: var(--run);
+  background: var(--run-soft);
+  border-radius: 999px;
+  padding: 1px 9px;
+  max-width: none;
+}
 </style>

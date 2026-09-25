@@ -398,7 +398,9 @@ main {
 
 .pane.active {
   visibility: visible;
-} /* ============================================================ 指示灯（共享部分）
+}
+
+/* ============================================================ 指示灯（共享部分）
    `.lamp` 基础形状与 `#hero-dot`（看板上的大圆点）是多处在用的；按状态着色的那几条
    跟着各自的组件走（`.rail-service[…] .lamp` 在 `shell/RailNav.vue`、
    `.lamp-lg` 在 `panes/DashboardPane.vue`）。 */
@@ -444,7 +446,13 @@ main {
   50% {
     opacity: 0.3;
   }
-} /* ============================================================ 按钮 */
+}
+
+/* ============================================================ 按钮
+   `.btn` 基础与各变体是跨页面共用件；`.btn.outline`（会话条上的镂空动作按钮）
+   只有终端页用，跟着搬进 `panes/TerminalPane.vue` —— 见 AGENTS §7.33。 */
+
+/* ============================================================ 按钮 */
 
 .btn {
   display: inline-flex;
@@ -538,22 +546,6 @@ main {
   color: var(--rose);
 }
 
-/* 镂空的强调按钮：透明底 + accent 描边与文字，形状和 .btn.danger 一样（那个是 rose 的）。
-   为什么要有这一档：会话条上「＋ 新建本地 Shell」原来是 `.btn.primary`（实心 accent），
-   它比**选中的那个会话标签**还抢眼 —— 一眼看过去分不清"当前在看的是哪一路"。
-   动作做成镂空，选中态才有机会成为整条上唯一实心的东西（对照 `.shell-tab.active` 的 accent-soft 底）。 */
-.btn.outline {
-  background: transparent;
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.btn.outline:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .btn.small {
   height: 27px;
   padding: 0 10px;
@@ -633,6 +625,11 @@ main {
   line-height: 1.7;
 }
 
+/* ============================================================ 终端类页面（共享部分）
+   `.term-host` 的**基础**规则（relative + flex: 1 1 auto）两路终端都在用，留在全局表；
+   终端页自己的 `.term-body` / `.term-view` / `.shell-tab*` / `.chips` 搬进
+   `panes/TerminalPane.vue`，`.bar-title` 搬进 `panes/DshTerminal.vue`（见 §7.30 / §7.33）。 */
+
 /* ============================================================ 终端类页面 */
 
 .bar {
@@ -642,11 +639,6 @@ main {
   padding: 10px 20px;
   flex: 0 0 auto;
   flex-wrap: wrap;
-}
-
-.bar-title {
-  font-size: var(--t-md);
-  font-weight: 600;
 }
 
 .bar-note {
@@ -670,16 +662,6 @@ main {
 .bar-hint:not(:empty) {
   padding-left: 10px;
   border-left: 1px solid var(--hairline);
-}
-
-/* 「终端」页里会话条下面那块区域（t45）：两路终端（dsh / 各本地 Shell）都绝对定位
-   铺满它。它**必须**是两路的定位基准 —— 少了这一层，.term-view 的 inset:0 会去对
-   整个 .pane 算，dsh 那一路的状态条就盖住会话条（踩过）。
-   页面是列布局：会话条走内容高度，这块吃掉剩下的。 */
-.term-body {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
 }
 
 /* 终端面板：像 VS Code 的集成终端那样"与面板齐平"——
@@ -766,76 +748,6 @@ main {
   opacity: 0.5;
 }
 
-.chips {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.shell-tab {
-  height: 26px;
-  padding: 0 11px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink-dim);
-  font-size: var(--t-xs);
-  cursor: pointer;
-  transition:
-    background var(--dur) ease,
-    color var(--dur) ease,
-    border-color var(--dur) ease;
-}
-
-.shell-tab:hover {
-  color: var(--ink);
-  border-color: var(--accent);
-}
-
-.shell-tab.active {
-  background: var(--accent-soft);
-  border-color: transparent;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-/* 重命名时的输入框：沿用标签的外观，只把光标和选中态放出来 */
-.shell-tab-editing {
-  width: 120px;
-  font: inherit;
-  font-size: var(--t-xs);
-  color: var(--ink);
-  background: var(--surface);
-  border-color: var(--accent);
-  border-radius: 999px;
-  padding: 0 11px;
-  outline: none;
-}
-
-.shell-pane {
-  position: absolute;
-  inset: 0;
-  display: none;
-}
-
-/* dsh 那一路的容器（t45）：与 .shell-pane 同样是绝对定位、非 active 时不显示，
-   区别是它是**列**布局 —— 子组件 DshTerminal 是「一行状态条 + 终端本体」两个兄弟。 */
-.term-view {
-  position: absolute;
-  inset: 0;
-  display: none;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.term-view.active {
-  display: flex;
-}
-
-.shell-pane.active {
-  display: block;
-}
-
 /* ============================================================ 空状态 */
 
 .empty {
@@ -909,6 +821,11 @@ main {
   padding-left: 20px;
 }
 
+/* ============================================================ 内嵌界面（共享部分）
+   `.webview-wrap` / `.embedded-view` 两个内嵌页共用；`.ui-paste*` 与 `.immersive-only` /
+   `.topbar-note.lit` 分别搬进 `panes/UiPane.vue` 与 `shell/TopBar.vue`；
+   `body[data-immersive]` 那几条状态规则留在这一层。 */
+
 /* ============================================================ 内嵌界面 */
 
 /* 应用内全屏：藏掉左栏、状态栏和页面工具条，只留一条 34px 顶栏。
@@ -919,11 +836,6 @@ body[data-immersive='true'] .app {
 
 body[data-immersive='true'] .rail,
 body[data-immersive='true'] .statusbar {
-  display: none;
-}
-
-/* 只在全屏时出现的顶栏元素（退出按钮、状态灯） */
-.immersive-only {
   display: none;
 }
 
@@ -972,40 +884,6 @@ body[data-immersive='true'] .webview-wrap {
   border: 0;
 }
 
-.ui-paste {
-  display: flex;
-  /* 居中对齐：不写这条时弹性的默认值是 stretch，而按钮有自己的固定高（.btn.small 27px），
-     结果就是按钮贴在这一行的顶部、比输入框矮 3px（用户看截图指出来的） */
-  align-items: center;
-  gap: 8px;
-  padding: 0 20px 12px;
-  flex: 0 0 auto;
-}
-
-/* 这一行的按钮与输入框同高 —— .btn.small 的 27px 是给工具栏那种紧凑场合用的，
-   挨着一个 30px 的输入框就显得矮一截 */
-.ui-paste .btn {
-  height: 30px;
-}
-
-.ui-paste input {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 30px;
-  padding: 0 11px;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-control);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-}
-
-.ui-paste input::placeholder {
-  color: var(--ink-faint);
-  font-family: var(--sans);
-}
-
 .banner {
   display: flex;
   /* **居中，不用 flex-start**（t48，用户第二次指出同一个现象）。原来的 flex-start 是给
@@ -1029,19 +907,6 @@ body[data-immersive='true'] .webview-wrap {
    两者都只换底色 —— 形状、间距、内边距沿用 .banner，免得又长出一套新表面。 */
 .banner.rose {
   background: var(--rose-soft);
-}
-
-/* 顶栏那格"亮一下"（t46 轻提示）：`#topbar-note` 在重启就绪后的 4 秒里变成
-   绿色 + 一点点底色，然后自己换回"<地址>，PID …"。
-   选它而不是 Harness 页工具条右端那格：应用内全屏时工具条整条会被藏起来，顶栏则两种模式下都在。
-   为什么不做成浮层/胶囊：用户否了（"不好看"）—— 浮在别人页面的正文上、又没有层级，
-   而这一格本来就在，读起来就是一句状态（见 docs/harness-arrival-design.html 方案 A）。 */
-.topbar-note.lit {
-  color: var(--run);
-  background: var(--run-soft);
-  border-radius: 999px;
-  padding: 1px 9px;
-  max-width: none;
 }
 
 .banner.hidden {
@@ -1090,7 +955,9 @@ body[data-immersive='true'] .webview-wrap {
 
 .close-card .check {
   margin-top: 14px;
-} /* ============================================================ 启动错误浮层 */
+}
+
+/* ============================================================ 启动错误浮层 */
 
 #boot-error {
   position: fixed;
@@ -1201,26 +1068,9 @@ body[data-immersive='true'] .webview-wrap {
    （`.env-row*` / `.env-scope` / `.env-confirm*` / `.env-source*` …）已经搬进
    `panes/EnvPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
-/* ============================================================ 环境自检
-
-   一页回答"这台机器行不行"：八项一行的清单 + 一键修复。三种状态只靠左侧状态点的
-   形状与颜色区分（绿实心 / 黄空心 / 红实心），文字侧另给一个词（正常 / 需要注意 /
-   不可用）—— 不让用户去读 detail 那句人话判断严重程度。颜色一律走变量。 */
-
-.env {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-  /* 页面级内边距由这一页自己给（.pane 没有任何 padding，见 AGENTS 7.14） */
-  padding: 0 20px 20px;
-}
-
-/* 工具条自己有左右 20px 内边距，而根容器已经让出了这一份，别再叠一次 */
-.env > .bar {
-  padding: 10px 0;
-}
+/* ============================================================ 环境自检（共享部分）
+   这里其实只剩 `.env-*` 那批与环境向导共用的；`.env` 外层与 `.env > .bar`
+   只有环境自检页用，搬进 `panes/EnvPane.vue`。 */
 
 .env-actions {
   flex: 0 0 auto;
@@ -1317,6 +1167,10 @@ body[data-immersive='true'] .webview-wrap {
 .env-op-summary[data-state='error'] {
   color: var(--rose);
 }
+
+/* ============================================================ 共享的向导零件
+   向导与环境自检详情层共用的那批（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` /
+   `.wizard-*`）都在这里；`.gate-banner-actions` 只有常驻横幅用，搬进 `shell/GateBanner.vue`。 */
 
 /* ============================================================ 共享的向导零件
    `.gate-option*` / `.gate-choice*` / `.gate-confirm*` / `.wizard-*` 这批是**首启向导与
@@ -1640,12 +1494,4 @@ body[data-gate-visible='true'] .rail > * {
    只补门禁卡片里缺的那一份，不动既有页面已经对的那一处。 */
 .gate-card .env-op {
   margin-top: 12px;
-}
-
-/* 主界面常驻横幅：不可关闭，所以不长成 toast —— 不浮起、不动画、没有关闭按钮 */
-.gate-banner-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
-  margin-left: auto;
 }

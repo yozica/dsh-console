@@ -340,3 +340,42 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 内嵌界面页自己的样式（t48 样式分层）：粘贴地址那一行 `.ui-paste*`。
+   `.webview-wrap` / `.embedded-view` 两个内嵌页共用，留在全局表。 */
+
+.ui-paste {
+  display: flex;
+  /* 居中对齐：不写这条时弹性的默认值是 stretch，而按钮有自己的固定高（.btn.small 27px），
+     结果就是按钮贴在这一行的顶部、比输入框矮 3px（用户看截图指出来的） */
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 12px;
+  flex: 0 0 auto;
+}
+
+/* 这一行的按钮与输入框同高 —— .btn.small 的 27px 是给工具栏那种紧凑场合用的，
+   挨着一个 30px 的输入框就显得矮一截 */
+.ui-paste .btn {
+  height: 30px;
+}
+
+.ui-paste input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.ui-paste input::placeholder {
+  color: var(--ink-faint);
+  font-family: var(--sans);
+}
+</style>

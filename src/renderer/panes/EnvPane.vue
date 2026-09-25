@@ -1520,4 +1520,27 @@ onUnmounted(() => {
   font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
 }
+
+/* 环境自检页的外层（t48 样式分层）：`.env` 与它的条，只有这一页用 */
+
+/* ============================================================ 环境自检
+
+   一页回答"这台机器行不行"：八项一行的清单 + 一键修复。三种状态只靠左侧状态点的
+   形状与颜色区分（绿实心 / 黄空心 / 红实心），文字侧另给一个词（正常 / 需要注意 /
+   不可用）—— 不让用户去读 detail 那句人话判断严重程度。颜色一律走变量。 */
+
+.env {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  /* 页面级内边距由这一页自己给（.pane 没有任何 padding，见 AGENTS 7.14） */
+  padding: 0 20px 20px;
+}
+
+/* 工具条自己有左右 20px 内边距，而根容器已经让出了这一份，别再叠一次 */
+.env > .bar {
+  padding: 10px 0;
+}
 </style>

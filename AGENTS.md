@@ -548,6 +548,22 @@ EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局
 挂载点 `display: contents`）与 `html`/`body` 上的状态开关（macOS 红绿灯留白、系统全屏撤回、应用内全屏）
 —— 判据里因此要把 `html` / `body` / `:root` 开头的规则**先排除**，它们天生不属于任何组件。
 
+**最后一批（终端页 / 内嵌界面 / 零散几条）** —— `panes/TerminalPane.vue` 12 条（`.term-body` /
+`.term-view*` / `.shell-tab*` / `.shell-pane*` / `.chips` / `.btn.outline`）、`DshTerminal.vue` 1 条
+（`.bar-title`）、`UiPane.vue` 4 条（`.ui-paste*`）、`TopBar.vue` 2 条（`.immersive-only` /
+`.topbar-note.lit`）、`GateBanner.vue` 1 条、`EnvPane.vue` 2 条（`.env` / `.env > .bar`）——
+全局表 1651 → 1500。**`.term-host` 的"基础规则"仍留在全局表**（两路终端都用它，见 §7.30），
+`.term-body > .term-host` 那几条只作用于本地 Shell 那一路、跟着 TerminalPane 走。
+这一批把三处**直接读 `stylesCode`** 的自检也改成读两层（`.btn.outline` / `.shell-tab.active`、
+`.term-body` 与 `.term-host` 的四条、`.topbar-note.lit` 与三条"已经删掉的那套"），
+另外把"每行至少有个非空 `<style scoped>`"的粗门槛从 `> 200` 字符降到 `> 0`
+（`DshTerminal` / `GateBanner` 这种只搬了一两条的组件本来就很短）。
+
+**搬运脚本自己也有两个坑**（都是它替我 debug 出来的）：① 段落重写时最后一条 stay 条目的 `}`
+会与下一节标记粘成一行（`} /* ==== 卡片 */`），marker 正则就再也认不出那一节 —— 攒了几轮之后
+一次性修掉 12 处，并在自检里加了"标记必须自成一行"的钉子；② 每次搬完都要**对新写的组件跑
+Prettier**，不然 `format:check` 会红（这一轮又踩了一次）。
+
 **核对归属要用"标记里的 class"而不是"文件里出现过这个词"**：插件页那轮自动判据先报了 4 条"共享"，逐条
 `grep -n 'class="[^"]*\b<某个 class>\b'` 一看全是假阳性（`RailNav.vue` 里的 `{ id: 'plugin', … }`
 字符串、别的页面对 `.plugin-tag` 这个词的注释），实际都只有 PluginPane 在用。搬之前先按"每个段落里哪些规则只有这一页用"数一遍

@@ -225,3 +225,12 @@ watch(
     </div>
   </div>
 </template>
+
+<style scoped>
+/* dsh 终端那一路自己的样式（t48 样式分层：「终端类页面」一节里只有这里用的） */
+
+.bar-title {
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+</style>
