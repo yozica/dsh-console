@@ -51,6 +51,12 @@ export interface Repo {
   /** `rendererAll` 去掉注释（注释里常拿没实现的写法举例，当真引用去查会误报） */
   rendererCode: string;
   mountJs: string;
+  /** 仓库根的 `package.json`（只声明自检真正读到的字段） */
+  pkg: PackageJson;
+  /** `src/shared/ipc.ts` 原文 */
+  ipcSource: string;
+  /** 同上，但空白压平（类型声明会被 Prettier 折行，压平才好匹配） */
+  flatIpc: string;
   /** `panes/UiPane.vue` 原文（内嵌界面那一页，几处契约断言都读它） */
   uiPaneSource: string;
   /** 全局表 `styles.css` 原文 */
@@ -110,6 +116,9 @@ export function createRepo(): Repo {
   const rendererCode = rendererAll.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
+  const ipcSource = fs.readFileSync(path.join(srcDir, 'shared', 'ipc.ts'), 'utf8');
+  const flatIpc = ipcSource.replace(/\s+/g, ' ');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as PackageJson;
   const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
   // 全局表（变量 / 主题 / 骨架 / 共享件）与各组件自己的 `<style>` 块是两层：
   // 变量块与主题仍在全局表里（那不是页面私有的东西），所以读变量块的检查只看 `css`。
@@ -139,6 +148,9 @@ export function createRepo(): Repo {
     rendererCode,
     mountJs,
     uiPaneSource,
+    pkg,
+    ipcSource,
+    flatIpc,
     css,
     vueStyles,
     allCss,
