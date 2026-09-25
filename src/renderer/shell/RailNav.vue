@@ -127,3 +127,164 @@ const serviceMeta = computed(() => {
     </div>
   </aside>
 </template>
+
+<style scoped>
+/* 左栏自己的样式（t48 样式分层）：原来在 styles.css 的「骨架」与「指示灯」两节里。
+   跨组件的布局契约（`.app` / `.workspace` / `.pane`）与 `html`/`body` 状态开关留在全局表。 */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px 12px;
+  background: var(--rail);
+  border-right: 1px solid var(--hairline);
+}
+
+.rail-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0 6px 16px;
+}
+
+.rail-logo {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.rail-logo-sub {
+  font-size: var(--t-sm);
+  color: var(--ink-faint);
+}
+
+/* 常驻状态块：切页面也在，替代了原先顶栏那枚重复的 pill */
+.rail-service {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+}
+
+.rail-service-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rail-service-state {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-service-meta {
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-md);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.rail-item:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.rail-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rail-foot {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.theme-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+}
+
+.theme-switch button {
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur) ease,
+    color var(--dur) ease;
+}
+
+.theme-switch button:hover {
+  color: var(--ink);
+}
+
+.theme-switch button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rail-service[data-phase='running'] .lamp {
+  background: var(--run);
+  box-shadow: 0 0 0 3px var(--run-soft);
+}
+
+.rail-service[data-phase='external'] .lamp {
+  background: var(--sky);
+  box-shadow: 0 0 0 3px var(--sky-soft);
+}
+
+.rail-service[data-phase='starting'] .lamp,
+.rail-service[data-phase='stopping'] .lamp {
+  background: var(--amber);
+  animation: breathe 1.2s ease-in-out infinite;
+}
+
+.rail-service[data-phase='degraded'] .lamp,
+.rail-service[data-phase='conflict'] .lamp {
+  background: var(--rose);
+  box-shadow: 0 0 0 3px var(--rose-soft);
+}
+</style>

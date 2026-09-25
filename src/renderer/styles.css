@@ -290,6 +290,13 @@ main:focus-visible {
   outline: none;
 }
 
+/* ============================================================ 骨架（全局部分）
+   `.app` / `.workspace` / `.pane` 是**跨组件的布局契约**（两列网格、页面用 visibility 互斥、
+   挂载点 display: contents），留在全局表；左栏 / 顶栏 / 底栏自己的零件已经搬进
+   `shell/RailNav.vue` / `TopBar.vue` / `StatusBar.vue` 的 `<style scoped>`，
+   `html`/`body` 那几个状态开关（macOS 红绿灯留白、系统全屏撤回、应用内全屏）也留在这一层
+   —— 判据见 AGENTS §7.33。 */
+
 /* ============================================================ 骨架 */
 
 .app {
@@ -299,172 +306,11 @@ main:focus-visible {
   grid-template-columns: var(--rail-w) minmax(0, 1fr);
 }
 
-.rail {
-  display: flex;
-  flex-direction: column;
-  padding: 16px 12px 12px;
-  background: var(--rail);
-  border-right: 1px solid var(--hairline);
-}
-
-.rail-brand {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 0 6px 16px;
-}
-
-.rail-logo {
-  font-size: var(--t-lg);
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.rail-logo-sub {
-  font-size: var(--t-sm);
-  color: var(--ink-faint);
-}
-
-/* 常驻状态块：切页面也在，替代了原先顶栏那枚重复的 pill */
-.rail-service {
-  padding: 10px 12px;
-  margin-bottom: 14px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-panel);
-}
-
-.rail-service-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rail-service-state {
-  font-size: var(--t-sm);
-  font-weight: 600;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-service-meta {
-  margin-top: 4px;
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.rail-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 34px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--r-control);
-  background: transparent;
-  color: var(--ink-dim);
-  font-size: var(--t-md);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background var(--dur) ease,
-    color var(--dur) ease;
-}
-
-.rail-item:hover {
-  background: var(--surface);
-  color: var(--ink);
-}
-
-.rail-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.rail-foot {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--hairline);
-}
-
-.theme-switch {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-control);
-}
-
-.theme-switch button {
-  height: 24px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  cursor: pointer;
-  transition:
-    background var(--dur) ease,
-    color var(--dur) ease;
-}
-
-.theme-switch button:hover {
-  color: var(--ink);
-}
-
-.theme-switch button.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-
 .workspace {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-}
-
-/* 顶栏同时是窗口的标题栏：
-   Windows/Linux 是 titleBarStyle: 'hidden' + 右上角系统控件浮层，
-   macOS 是 hiddenInset + 左上角红绿灯（见下面的 data-platform 覆盖）。
-   整条可拖动，系统控件的位置由内边距让出来，「退出全屏」按钮落在另一侧。 */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: var(--bar-h);
-  padding: 0 12px 0 20px;
-  /* 必须用 100vw（窗口宽）而不是 100%：100% 是顶栏所在容器的宽度，非全屏时
-     那个容器已经被左栏切掉 188px，减出来是负数（踩过：顶栏右侧被挤没、
-     地址显示成 "http://127."）。100vw - 可用宽度 = 系统控件占的宽度，
-     最后 +12px 是气口 —— 否则内容右边缘会紧贴系统按钮，看着发闷。 */
-  padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 150px)) + 12px);
-  /* 注意：不要给顶栏加 z-index。启动锁（.boot-lock）要能盖住它 ——
-     否则锁期间左上角会孤零零留一个页面标题，看着就是"没遮住"。 */
-  -webkit-app-region: drag;
-  flex: 0 0 auto;
-}
-
-.topbar button,
-.topbar input,
-.topbar select {
-  -webkit-app-region: no-drag;
 }
 
 /* ---------------------------------------------------------------- macOS 标题栏
@@ -527,21 +373,6 @@ html[data-platform='darwin'] body[data-native-fullscreen='true'] .gate-rail {
   padding-top: 16px;
 }
 
-.page-title {
-  font-size: var(--t-lg);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.topbar-note {
-  color: var(--ink-faint);
-  font-size: var(--t-sm);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 55%;
-}
-
 .spacer {
   flex: 1 1 auto;
 }
@@ -567,39 +398,10 @@ main {
 
 .pane.active {
   visibility: visible;
-}
-
-.statusbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 6px 20px;
-  background: var(--rail);
-  border-top: 1px solid var(--hairline);
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  flex: 0 0 auto;
-}
-
-.kbd-hint {
-  color: var(--ink-faint);
-}
-
-/* 底栏的更新提示：有新版本或已下载时才出现。
-   点它会切到设置页，并把「关于」里的更新卡片滚进视野、高亮一次（见 update-anchor.ts） */
-.update-hint {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-family: inherit;
-  font-size: var(--t-xs);
-  cursor: pointer;
-}
-
-.update-hint:hover {
-  text-decoration: underline;
-}
+} /* ============================================================ 指示灯（共享部分）
+   `.lamp` 基础形状与 `#hero-dot`（看板上的大圆点）是多处在用的；按状态着色的那几条
+   跟着各自的组件走（`.rail-service[…] .lamp` 在 `shell/RailNav.vue`、
+   `.lamp-lg` 在 `panes/DashboardPane.vue`）。 */
 
 /* ============================================================ 指示灯 */
 
@@ -609,33 +411,6 @@ main {
   border-radius: 50%;
   background: var(--ink-faint);
   flex: 0 0 auto;
-}
-
-.lamp-lg {
-  width: 11px;
-  height: 11px;
-}
-
-.rail-service[data-phase='running'] .lamp {
-  background: var(--run);
-  box-shadow: 0 0 0 3px var(--run-soft);
-}
-
-.rail-service[data-phase='external'] .lamp {
-  background: var(--sky);
-  box-shadow: 0 0 0 3px var(--sky-soft);
-}
-
-.rail-service[data-phase='starting'] .lamp,
-.rail-service[data-phase='stopping'] .lamp {
-  background: var(--amber);
-  animation: breathe 1.2s ease-in-out infinite;
-}
-
-.rail-service[data-phase='degraded'] .lamp,
-.rail-service[data-phase='conflict'] .lamp {
-  background: var(--rose);
-  box-shadow: 0 0 0 3px var(--rose-soft);
 }
 
 #hero-dot[data-phase='running'] {
@@ -669,9 +444,7 @@ main {
   50% {
     opacity: 0.3;
   }
-}
-
-/* ============================================================ 按钮 */
+} /* ============================================================ 按钮 */
 
 .btn {
   display: inline-flex;
@@ -1312,78 +1085,12 @@ body[data-immersive='true'] .webview-wrap {
   margin-top: 12px;
 }
 
-/* ============================================================ 关闭确认卡片
-
-   关窗时问"收起还是退出"。**有意不用原生 `dialog.showMessageBox`** —— 系统弹窗的长相
-   改不了（字体、配色、间距、动画），是全应用唯一一个不像这个应用的面孔；自己画还顺带
-   能把"哪个 dsh 会被停掉、PID 是多少"写进去（见 shell/CloseDialog.vue）。
-   与上面的聚焦蒙层相反：**这层是模态的**，要挡住点击 —— 不选就不该操作后面的界面。 */
-
-.close-dialog {
-  position: fixed;
-  inset: 0;
-  z-index: 96;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: var(--scrim);
-  animation: close-dialog-in 160ms ease-out 1;
-}
-
-@keyframes close-dialog-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-.close-card {
-  width: min(440px, 100%);
-  padding: 20px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-card);
-  /* 全局唯一那处阴影（--shadow-focus）就是给这种浮起来的卡片用的 */
-  box-shadow: var(--shadow-focus);
-}
-
-.close-title {
-  font-size: var(--t-lg);
-  font-weight: 600;
-}
-
-.close-lead {
-  margin-top: 6px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-}
-
-/* "会发生什么"：左强调条 + 下沉井底色，与别处的提示块同一个写法 */
-.close-impact {
-  margin-top: 14px;
-  padding: 10px 12px;
-  background: var(--surface-2);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--r-control);
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.6;
-}
+/* 关闭确认卡片（`.close-*`）整节搬进 `shell/CloseDialog.vue` 的 `<style scoped>`
+   —— 见 AGENTS §7.33。`.close-card .check` 因为 `.check` 是多页共用件而留在全局表。 */
 
 .close-card .check {
   margin-top: 14px;
-}
-
-/* 按钮靠右：与系统弹窗的习惯一致，主操作（收起）在最左 */
-.close-card .btn-row {
-  margin-top: 18px;
-  justify-content: flex-end;
-}
-
-/* ============================================================ 启动错误浮层 */
+} /* ============================================================ 启动错误浮层 */
 
 #boot-error {
   position: fixed;

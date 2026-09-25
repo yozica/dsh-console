@@ -104,3 +104,50 @@ const note = computed(() => harnessArrivalNotice.value || contextNote.value);
     </button>
   </header>
 </template>
+
+<style scoped>
+/* 顶栏自己的样式（t48 样式分层）：`.topbar` / `.page-title` / `.topbar-note`。
+   macOS 红绿灯留白与系统全屏撤回那几条状态规则仍在全局表（它们挂在 html/body 上）。 */
+
+/* 顶栏同时是窗口的标题栏：
+   Windows/Linux 是 titleBarStyle: 'hidden' + 右上角系统控件浮层，
+   macOS 是 hiddenInset + 左上角红绿灯（见下面的 data-platform 覆盖）。
+   整条可拖动，系统控件的位置由内边距让出来，「退出全屏」按钮落在另一侧。 */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--bar-h);
+  padding: 0 12px 0 20px;
+  /* 必须用 100vw（窗口宽）而不是 100%：100% 是顶栏所在容器的宽度，非全屏时
+     那个容器已经被左栏切掉 188px，减出来是负数（踩过：顶栏右侧被挤没、
+     地址显示成 "http://127."）。100vw - 可用宽度 = 系统控件占的宽度，
+     最后 +12px 是气口 —— 否则内容右边缘会紧贴系统按钮，看着发闷。 */
+  padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 150px)) + 12px);
+  /* 注意：不要给顶栏加 z-index。启动锁（.boot-lock）要能盖住它 ——
+     否则锁期间左上角会孤零零留一个页面标题，看着就是"没遮住"。 */
+  -webkit-app-region: drag;
+  flex: 0 0 auto;
+}
+
+.topbar button,
+.topbar input,
+.topbar select {
+  -webkit-app-region: no-drag;
+}
+
+.page-title {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.topbar-note {
+  color: var(--ink-faint);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+</style>

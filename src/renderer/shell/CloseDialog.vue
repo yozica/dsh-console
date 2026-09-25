@@ -96,3 +96,74 @@ async function answer(action: CloseAnswerAction): Promise<void> {
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+/* 关闭确认卡片自己的样式（t48 样式分层）：整节从 styles.css 搬来，含进入动画的关键帧。 */
+
+/* ============================================================ 关闭确认卡片
+
+   关窗时问"收起还是退出"。**有意不用原生 `dialog.showMessageBox`** —— 系统弹窗的长相
+   改不了（字体、配色、间距、动画），是全应用唯一一个不像这个应用的面孔；自己画还顺带
+   能把"哪个 dsh 会被停掉、PID 是多少"写进去（见 shell/CloseDialog.vue）。
+   与上面的聚焦蒙层相反：**这层是模态的**，要挡住点击 —— 不选就不该操作后面的界面。 */
+
+.close-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 96;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--scrim);
+  animation: close-dialog-in 160ms ease-out 1;
+}
+
+@keyframes close-dialog-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.close-card {
+  width: min(440px, 100%);
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  /* 全局唯一那处阴影（--shadow-focus）就是给这种浮起来的卡片用的 */
+  box-shadow: var(--shadow-focus);
+}
+
+.close-title {
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+.close-lead {
+  margin-top: 6px;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+/* "会发生什么"：左强调条 + 下沉井底色，与别处的提示块同一个写法 */
+.close-impact {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-control);
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+}
+
+/* 按钮靠右：与系统弹窗的习惯一致，主操作（收起）在最左 */
+.close-card .btn-row {
+  margin-top: 18px;
+  justify-content: flex-end;
+}
+</style>
