@@ -925,9 +925,29 @@ async function main(): Promise<void> {
         '.update-progress',
         '.update-bar',
         '.spotlight',
+        // 这条原来误放在「控制台」一节里，其实只有设置页用（t48 第三批顺手收回来）
+        '.settings-status',
       ],
       // 设置页画了、但是多页共用的：复选框行（5 处）、卡片后面那句提示（多处）
       staysGlobal: ['.check', '.panel-block > .hint'],
+    },
+    {
+      pane: 'DashboardPane.vue',
+      scoped: [
+        '.dash',
+        '.focus-card',
+        '.rule',
+        '.stats',
+        '.stat',
+        '.meta-line',
+        '.event-log',
+        '.chart',
+        '.spark',
+        '.command',
+      ],
+      // `.panel` / `.panel-head` / `.panel-block` / `.hint` 是卡片零件，`.block-head` /
+      // `.block-note` 插件页也在用 —— 都留在全局表
+      staysGlobal: ['.panel-head', '.block-head'],
     },
     {
       pane: 'ArchivePane.vue',
@@ -951,9 +971,11 @@ async function main(): Promise<void> {
       if (!pattern.test(scopedRules)) layerProblems.push(`${row.pane}: 组件里缺 ${sel}`);
     }
     for (const sel of row.staysGlobal) {
-      const pattern = new RegExp(`\\${sel}(?![\\w-])`);
-      if (!pattern.test(cssRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 没留在全局表`);
-      if (pattern.test(scopedRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 被搬进组件了`);
+      // 行首锚定：要查的是"这条选择器自己有没有被定义"，而不是"哪条选择器里提到了它" ——
+      // 控制台搬走的 `.log-panel .panel-head` 里头就含 `.panel-head`，用 contains 会误判成"搬走了"。
+      const defined = new RegExp(`^${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'm');
+      if (!defined.test(cssRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 没留在全局表`);
+      if (defined.test(scopedRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 被搬进组件了`);
     }
   }
   // v-html 渲染出来的元素没有 scope 属性，`.archive-turn-body <元素>` 必须写成 `:deep(...)`。

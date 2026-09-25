@@ -525,10 +525,17 @@ PATH 里第一个是 nvm 22 的 corepack shim = **9.6.0** → `store/v3`。而 `
 `.spotlight` 只有 `SettingsPane.vue` 用 → 搬进它的 `<style scoped>`（198 行）；
 `.check`（设置页 / 关闭确认卡片 / 看板 / 环境自检 / 向导**五处**都画）与 `.panel-block > .hint`
 （多处用）是共享件 → **必须留在全局表**。**归档会话页** —— `.archive*` 一整节 415 行全部搬进
-`ArchivePane.vue`（全局表 4329 → 3914）。搬之前先按"每个段落里哪些规则只有这一页用"数一遍
+`ArchivePane.vue`（全局表 4329 → 3914）。**控制台** —— 37 个条目 263 行搬进 `DashboardPane.vue`，
+顺手把误放在「控制台」一节里的 `.settings-status` 收进 `SettingsPane.vue`（它只有设置页用）；
+留在全局表的是卡片零件（`.panel` / `.panel-head` / `.panel-block` / `.hint`）与
+`.block-head` / `.block-note`（控制台与插件页都在用）—— 全局表 3914 → 3649。搬之前先按"每个段落里哪些规则只有这一页用"数一遍
 （本仓实测：插件页 83 条私有、向导/门禁 94、归档 55、控制台 35、环境自检 32、骨架里的 shell 私有 31、
 终端 8、内嵌界面 4）—— 段落规模 ≠ 能搬的规模，很多段落里大部分是共享件（`.banner` / `.embedded-view` /
 `body[data-immersive]` 那类）。
+
+**判据要用"行首锚定"查，别用 contains**：搬走 `.log-panel .panel-head` 之后，
+`contains('.panel-head')` 会把它误判成"共享件也被搬走了"（这条选择器里含 `.panel-head`）。
+自检里查"某条共享选择器还在不在全局表"用的是行首锚定的正则（`^选 择器(?![-\w])` 带 `m`）。
 
 **v-html 渲染出来的内容必须走 `:deep(...)`**：Vue 只给**模板里**的元素加 scope 属性，而
 `ArchivePane` 的 `.archive-turn-body` 里那些 `h1 / p / code / table …` 是 `renderMarkdown` 通过
