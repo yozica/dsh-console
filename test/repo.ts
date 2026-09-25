@@ -63,6 +63,12 @@ export interface Repo {
   uiPaneSource: string;
   /** `src/main/plugin-manager.ts` 原文 */
   pluginSource: string;
+  /**
+   * `src/main/process-utils.ts`（barrel）+ `src/main/process-*.ts`（八个叶子模块）的全文拼接。
+   * t50 把这一个文件按主题拆开之后，"读源码文本"的断言要看整份，不能只看 barrel ——
+   * 那里只有 re-export，一条 `export function …(…)` 都搜不到。
+   */
+  processUtilsSource: string;
   /** 读 `test/fixtures/<名字>` 下的夹具（真实输出，不是编出来的） */
   fixture(name: string): string;
   /** 全局表 `styles.css` 原文 */
@@ -123,6 +129,19 @@ export function createRepo(): Repo {
 
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
   const pluginSource = fs.readFileSync(path.join(srcDir, 'main', 'plugin-manager.ts'), 'utf8');
+  const processUtilsSource = [
+    'process-utils',
+    'process-types',
+    'process-shell',
+    'process-pnpm',
+    'process-path-env',
+    'process-dsh',
+    'process-launch',
+    'process-probe',
+    'process-proc',
+  ]
+    .map((stem) => fs.readFileSync(path.join(srcDir, 'main', `${stem}.ts`), 'utf8'))
+    .join('\n');
   const ipcSource = fs.readFileSync(path.join(srcDir, 'shared', 'ipc.ts'), 'utf8');
   const flatIpc = ipcSource.replace(/\s+/g, ' ');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as PackageJson;
@@ -157,6 +176,7 @@ export function createRepo(): Repo {
     mountJs,
     uiPaneSource,
     pluginSource,
+    processUtilsSource,
     fixture: (name: string): string =>
       fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8'),
     pkg,

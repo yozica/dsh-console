@@ -36,7 +36,15 @@ src/
     main.ts             窗口、IPC、生命周期、退出清理、关闭窗口行为（询问 / 收起托盘 / 直接退出）、开发工具快捷键、内嵌页诊断
     dsh-manager.ts      dsh 进程状态机：启动 / 停止 / 接管 / 健康轮询 / 令牌 URL 捕获
     pty-sessions.ts     node-pty 会话注册表（dsh 终端 + 本地 Shell 共用）
-    process-utils.ts    命令探测、端口占用、进程名、结束进程树、HTTP 探测、ANSI 清理，以及**启动 spec 的公共件**（LaunchSpec / launchSpec / dshLaunchSpec / isRunnablePath）
+    process-utils.ts    **barrel**：把下面八个叶子模块的公开面逐条再导出（t50 拆开，见 7.35）
+    process-types.ts    平台判断、COMSPEC 与跨模块共用的形状（InvocationSpec / DshLauncher / …）
+    process-shell.ts    命令查找与 PATH 展开（whichSync / windowsBinCandidates / findNodeExe / 转发器识别）
+    process-pnpm.ts     pnpm 定位与 VC++ 运行库检测（含 profile 的 pnpm 大版本匹配）
+    process-path-env.ts 给子进程补 PATH（pathWithKnownBins / envWithKnownBins / 全局 dsh bin.js）
+    process-dsh.ts      dsh 解释器候选与启动命令解析（含"每个进程只测一次"的实测缓存）
+    process-launch.ts   启动 spec 的公共件（LaunchSpec / launchSpec / dshLaunchSpec / isRunnablePath）
+    process-probe.ts    HTTP 健康探测与端口占用（netstat / lsof 解析）
+    process-proc.ts     进程名、结束进程树、存活判定、homeDir
     settings.ts         settings.json 读写（含 v1→v2 一次性迁移）
     logger.ts           主进程日志：console 同时落盘到 <userData>/logs/console.log
     updater.ts          自动更新状态机（electron-updater）：检查 / 下载 / 安装
@@ -1125,6 +1133,41 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 **哪条自检守着**：这一层没有专门的断言（自检守的是被测代码），但**每一条**断言都在搬完后照跑；
 `scripts/selftest-sandbox.mjs` 会自动收录 `test/**` 的编译图（它按 tsc 报的 `TSFILE:` 行删产物，
 新增模块天然被覆盖）。
+
+### 7.35 拆源码文件的套路：barrel + 叶子模块（t50 起）
+
+`src/main/process-utils.ts`（1347 行）是第一个按这套路拆的源码文件，拆完 9 个文件、**导出面一个不差**：
+
+| 文件                  | 行数 | 职责                                                                   |
+| --------------------- | ---- | ---------------------------------------------------------------------- |
+| `process-utils.ts`    | 68   | **barrel**：逐条 `export { … } from './process-x'`，没有任何运行时逻辑 |
+| `process-types.ts`    | 75   | 平台判断、`COMSPEC` 与跨模块共用的形状                                 |
+| `process-shell.ts`    | 267  | 命令查找 / PATH 展开 / 转发器识别                                      |
+| `process-pnpm.ts`     | 260  | pnpm 定位 + VC++ 运行库（`pnpmVersionCache` 跟着 `pnpmVersionOf` 走）  |
+| `process-path-env.ts` | 85   | 给子进程补 PATH                                                        |
+| `process-dsh.ts`      | 256  | 解释器候选与 dsh 启动命令（`dshProbeCache` 跟着 `canRunDsh` 走）       |
+| `process-launch.ts`   | 159  | 启动 spec 的公共件                                                     |
+| `process-probe.ts`    | 165  | HTTP 健康探测 + 端口占用                                               |
+| `process-proc.ts`     | 172  | 进程名 / 结束进程树 / 存活判定 / `homeDir`                             |
+
+**四条做法**（下一次拆 `env-doctor.ts` / `node-installer.ts` / `main.ts` 照这个来）：
+
+1. **barrel 用显式清单，不用 `export *`**。叶子模块里还有只给兄弟模块用的内部件（`isFile`、
+   `quoteForCmd`、`versionManagerInstalls` …），`export *` 会把它们一起漏进公开面。显式清单也顺手
+   把"这个模块对外承诺什么"写下来了。
+2. **判据是导出面机械比对**，比"测试还绿"更直接：
+   `npm run build:main` 后 `node -e "console.log(Object.keys(require('./dist/main/process-utils.js')).sort().join('
+'))"`
+   改前存一份、改后 diff，必须**零差异**（这次 43 个）——注意 `require` 只看得到运行时值，
+   **类型导出要另外核**：漏一个 `export type { … }` 的表现是别处 `tsc` 报 TS2724。
+3. **模块级缓存必须跟着它的读者一起搬**：`pnpmVersionCache` 与 `dshProbeCache` 都是"每个进程只测
+   一次"的落点（§7.4 / §7.32），拆散会让实测退化成每次都测。
+4. **读源码文本的自检要改成读"整份"**：`process-utils.ts` 变成 barrel 之后，`export function …` 一条
+   都搜不到。`test/repo.ts` 因此加了 `processUtilsSource`（barrel + 八个叶子模块的拼接），四条断言
+   改读它。**拆下一个文件时先想清楚：哪些断言在读这个文件的文本。**
+
+**单向依赖**：`types ← shell ← path-env / pnpm ← dsh ← launch`，`probe` / `proc` 只依赖 types。
+拆的时候按这个方向放，就不会出现循环 import。
 
 ## 8. 调试手段
 

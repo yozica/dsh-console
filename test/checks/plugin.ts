@@ -575,7 +575,7 @@ export function runPlugin(repo: Repo): void {
   check(
     '插件安装：Windows 上找 pnpm / node 不写死 .cmd（独立安装包是 pnpm.exe），并有已知目录兜底',
     (() => {
-      const source = fs.readFileSync('src/main/process-utils.ts', 'utf8');
+      const source = repo.processUtilsSource;
       // 写死 `pnpm.cmd` 会漏掉 pnpm 官方安装包装的 `pnpm.exe`；交给 whichSync 按 PATHEXT 展开
       const viaPathext = /whichSync\('pnpm'\)/.test(source) && /whichSync\('node'\)/.test(source);
       // 键名大小写不统一（LocalAppData / LOCALAPPDATA 都见过），按小写索引后两种写法都要认
