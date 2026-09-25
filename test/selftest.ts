@@ -1785,12 +1785,15 @@ async function main(): Promise<void> {
   check(
     '插件：装进来却没形成层的依赖、以及什么都没贡献的 bundle 都会被列出来（普通依赖带包名）',
     (() => {
-      const plain = pluginManager.plainDependencies({
-        name: null,
-        dependencies: { 'some-lib': 'link:../lib' },
-        bundles: ['@deepseek-ai/dsh-base'],
-        patchReload: null,
-      });
+      const plain = pluginManager.plainDependencies(
+        {
+          name: null,
+          dependencies: { 'some-lib': 'link:../lib' },
+          bundles: ['@deepseek-ai/dsh-base'],
+          patchReload: null,
+        },
+        path.join(sandbox, '没有这个目录'),
+      );
       const missing = pluginManager.missingLayers(
         {
           name: null,
@@ -1807,6 +1810,52 @@ async function main(): Promise<void> {
         plain[0].packageName === 'some-lib' &&
         missing.length === 1 &&
         missing[0].kind === 'missing-layer'
+      );
+    })(),
+  );
+  // 「临时停用」之后回不去，是因为它掉进了"不形成层"这一档、而那一档只给「卸掉它」。
+  // 分档的唯一依据是**包自己有没有声明 dsh.bundle**（读 profile 的 node_modules）：
+  // 声明过 = 它本来该形成层、是被人从 bundles 里摘掉的 → 给「放回层里」。
+  check(
+    '插件：声明过 dsh.bundle 却不在列表里 = 「掉出了层列表」（能放回）；真·普通依赖只能卸',
+    (() => {
+      const dir = path.join(sandbox, 'plain-deps');
+      fs.rmSync(dir, { recursive: true, force: true });
+      const writeManifest = (name: string, raw: unknown) => {
+        const packageDir = path.join(dir, 'node_modules', name);
+        fs.mkdirSync(packageDir, { recursive: true });
+        fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify(raw), 'utf8');
+      };
+      writeManifest('@yozica/dsh-plugin-paths', {
+        name: '@yozica/dsh-plugin-paths',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      });
+      writeManifest('some-lib', { name: 'some-lib', dsh: { profile: { bundles: [] } } });
+      const problems = pluginManager.plainDependencies(
+        {
+          name: null,
+          dependencies: {
+            '@yozica/dsh-plugin-paths': 'link:../paths',
+            'some-lib': 'link:../lib',
+            读不到的包: '^1.0.0',
+          },
+          bundles: ['@deepseek-ai/dsh-base'],
+          patchReload: null,
+        },
+        dir,
+      );
+      const suspended = problems.find((item) => item.packageName === '@yozica/dsh-plugin-paths');
+      const plain = problems.find((item) => item.packageName === 'some-lib');
+      const unreadable = problems.find((item) => item.packageName === '读不到的包');
+      return (
+        problems.length === 3 &&
+        suspended?.kind === 'suspended-bundle' &&
+        plain?.kind === 'plain-dependency' &&
+        // 没装到 / 读不到 package.json：按"本来就不是 bundle"处理，绝不当成能放回的
+        unreadable?.kind === 'plain-dependency' &&
+        pluginManager.bundleDeclared({ dsh: { bundle: './cordis.patch.yml' } }) &&
+        !pluginManager.bundleDeclared({ dsh: { profile: {} } }) &&
+        !pluginManager.bundleDeclared(null)
       );
     })(),
   );
@@ -2413,6 +2462,38 @@ async function main(): Promise<void> {
       );
     })(),
   );
+  // 界面重开之后内存里那条"刚停用"的记录就没了 —— 恢复不能因此插错位置（层序就是覆盖顺序）。
+  // 出路是读改动前的备份：最近的一份里就写着它当时在第几位。
+  check(
+    '救援：没带位置也能从改动前的备份里找回它原来在第几位（找不到就放末尾、并说实话）',
+    (() => {
+      const dir = path.join(sandbox, 'bundle-recover');
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'package.json');
+      // 备份 = 改动前的样子（`@deepseek-ai/dsh-web-app` 在第 2 位）
+      fs.writeFileSync(path.join(dir, 'package.json.bak-20260925-101010'), realManifest, 'utf8');
+      fs.writeFileSync(
+        file,
+        profileBundles.suspendBundle(realManifest, '@deepseek-ai/dsh-web-app').text,
+        'utf8',
+      );
+
+      const restored = profileBundles.applyBundleEdit(dir, 'restore', '@deepseek-ai/dsh-web-app');
+      const after = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        dsh: { profile: { bundles: string[] } };
+      };
+      return (
+        restored.ok === true &&
+        restored.index === 1 &&
+        after.dsh.profile.bundles[1] === '@deepseek-ai/dsh-web-app' &&
+        // 位置是从哪份备份里找回来的，要说出来（人才能核对）
+        /package\.json\.bak-20260925-101010/.test(restored.detail ?? '') &&
+        // 没有那份记录时：不假装知道，老实追加到末尾
+        profileBundles.recoverBundleIndex(dir, '从来没在列表里过') === null
+      );
+    })(),
+  );
   check(
     '救援：只剩注释的补丁层能补成空数组；有内容的文件它不动',
     (() => {
@@ -2513,6 +2594,19 @@ async function main(): Promise<void> {
       /editBundle\('suspend'/.test(vueSource) &&
       /editBundle\('restore'/.test(vueSource) &&
       /showRescue/.test(vueSource),
+  );
+  // 停用**不是单向门**。原来「恢复」只长在救援条里，而救援条只在 dsh 起不来时出现 ——
+  // 在层栈详情里点「临时停用」的人，dsh 明明好好的，于是界面上再也找不到"放回去"。
+  check(
+    '救援：「放回层里」不依赖救援条 —— 巡检那行里也有，黄条上也有（停用之后回得去）',
+    /if \(kind === 'suspended-bundle'\) return '掉出了层列表'/.test(vueSource) &&
+      /function canRestore\(item: PluginProblem\): boolean/.test(vueSource) &&
+      /restoreProblem\(item\)/.test(vueSource) &&
+      /放回层里/.test(vueSource) &&
+      /id="btn-plugin-restore-bundle"/.test(vueSource) &&
+      /editBundle\('restore', suspended\.name, suspended\.index\)/.test(vueSource) &&
+      // 两种"不形成层"都能卸；只有被摘掉的那种能放回
+      /item\.kind === 'plain-dependency' \|\| item\.kind === 'suspended-bundle'/.test(vueSource),
   );
   check(
     '插件安装：spec 是一个 argv（不拼 shell）、PATH 补过 pnpm、输出双向都收',

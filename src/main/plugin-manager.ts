@@ -481,16 +481,55 @@ function buildLayers(options: {
   return layers;
 }
 
-/** 树外依赖里没有形成层的那些：装进来了但不贡献配置（dsh 自己也会打一行 warning） */
-export function plainDependencies(manifest: ProfileManifest): PluginProblem[] {
+/**
+ * 一份 package.json 的内容里有没有声明 `dsh.bundle`（纯函数，不碰磁盘）。
+ *
+ * 这是分两档的**唯一**依据：声明了却是普通依赖 = 它本来该形成层，是被人从
+ * `dsh.profile.bundles` 里摘掉的（临时停用 / 手工删过）；没声明 = 它本来就不是 bundle。
+ * 两者的出路完全不同（放回层里 / 卸掉它），所以不能只看"不在 bundles 里"。
+ */
+export function bundleDeclared(raw: unknown): boolean {
+  const bundle = asRecord(asRecord(raw).dsh).bundle;
+  return bundle !== undefined && bundle !== null && bundle !== false;
+}
+
+/** 装进来的那个包**自己**有没有声明 `dsh.bundle`：读 profile 的 node_modules（`link:` 是软链，也读得到） */
+export function declaresBundle(profileDir: string, name: string): boolean {
+  const moduleDir = resolveModuleDir(name, [profileDir]);
+  if (!moduleDir) return false;
+  try {
+    const raw: unknown = JSON.parse(fs.readFileSync(path.join(moduleDir, 'package.json'), 'utf8'));
+    return bundleDeclared(raw);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 树外依赖里没有形成层的那些：装进来了但不贡献配置（dsh 自己也会打一行 warning）。
+ *
+ * 分两档（见 `bundleDeclared`）：**声明了 `dsh.bundle` 却不在列表里**的给
+ * `suspended-bundle` —— 界面据此给「放回层里」，这是"临时停用之后回不去了"的唯一入口
+ * （停用后它既不是层、也不在 bundles 里，别处都点不到它）；真·普通依赖给
+ * `plain-dependency`，出路只有「卸掉它」。
+ */
+export function plainDependencies(manifest: ProfileManifest, profileDir: string): PluginProblem[] {
   const bundles = new Set(manifest.bundles);
   return Object.keys(manifest.dependencies)
     .filter((name) => !bundles.has(name))
-    .map((name) => ({
-      kind: 'plain-dependency' as const,
-      packageName: name,
-      detail: `${name} 装成了普通依赖，但它没有声明 dsh.bundle，所以不形成配置层`,
-    }));
+    .map((name) =>
+      declaresBundle(profileDir, name)
+        ? {
+            kind: 'suspended-bundle' as const,
+            packageName: name,
+            detail: `${name} 声明了 dsh.bundle，却不在 dsh.profile.bundles 里 —— 它是被摘掉的（临时停用 / 手工删过），现在不形成配置层`,
+          }
+        : {
+            kind: 'plain-dependency' as const,
+            packageName: name,
+            detail: `${name} 装成了普通依赖，但它没有声明 dsh.bundle，所以不形成配置层`,
+          },
+    );
 }
 
 /**
@@ -1238,7 +1277,7 @@ export class PluginManager {
     const dumpLayers = parseDump(run.stdout);
     const problems = [
       ...parseProblems(run.stderr, path.join(profileDir, PATCH_FILE)),
-      ...plainDependencies(manifest),
+      ...plainDependencies(manifest, profileDir),
       ...missingLayers(manifest, dumpLayers),
     ];
 

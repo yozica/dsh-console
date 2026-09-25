@@ -2424,7 +2424,10 @@ body[data-immersive='true'] .webview-wrap {
   font-size: var(--t-xs);
 }
 
-.plugin-problem-kind[data-kind='plain-dependency'] {
+/* 两种"不形成层"（真普通依赖 / 被摘掉的 bundle）都在黄档：不会让 dsh 起不来，只是改动不生效。
+   缺贡献（missing-layer）留在上面的红档 —— 那一种 dsh 启动时可能直接失败。 */
+.plugin-problem-kind[data-kind='plain-dependency'],
+.plugin-problem-kind[data-kind='suspended-bundle'] {
   background: var(--amber-soft);
   color: var(--amber);
 }

@@ -647,6 +647,7 @@ function problemLabel(kind: PluginProblem['kind']): string {
   if (kind === 'unmatched-patch') return '指向了不存在的条目';
   if (kind === 'parse-error') return '解析失败';
   if (kind === 'plain-dependency') return '不形成层';
+  if (kind === 'suspended-bundle') return '掉出了层列表';
   if (kind === 'missing-layer') return '没有贡献';
   return '提示';
 }
@@ -655,6 +656,11 @@ function problemLabel(kind: PluginProblem['kind']): string {
 //   1. patch 指向了不存在的 id → 删掉那一行（**只在它能改的那份层上**，见下面 editable）；
 //   2. 装成了普通依赖、不形成层 → 卸掉它（走 dsh plugin remove，所以要重启 dsh）。
 // 第三种（列在 bundles 里却一条都没贡献）没有通用的修法，只把话说清楚。
+//
+// 还有第四种、也是"临时停用之后回不去"的根因：**包自己声明了 dsh.bundle，却不在
+// dsh.profile.bundles 里**（`suspended-bundle`）。它既不是层、也不在 bundles 里 ——
+// 层栈详情点不到它，别处也没有入口。这里必须给「放回层里」，否则停用就是个单向门。
+// 位置不需要界面记着：主进程从改动前的 .bak- 备份里找（见 profile-bundles.ts）。
 
 /** 这条能不能就地删掉：必须是 profile 那份补丁层里的、而且主进程认得那个文件是它 */
 function canDrop(item: PluginProblem): boolean {
@@ -666,14 +672,28 @@ function dropProblem(item: PluginProblem): void {
   void editLayer('drop', item.entryId);
 }
 
-/** 这条能不能就地卸掉：普通依赖有包名就行 */
+/** 这条能不能就地卸掉：两种"不形成层"都有包名 */
 function canRemove(item: PluginProblem): boolean {
-  return item.kind === 'plain-dependency' && Boolean(item.packageName);
+  return (
+    (item.kind === 'plain-dependency' || item.kind === 'suspended-bundle') &&
+    Boolean(item.packageName)
+  );
 }
 
 function removeProblem(item: PluginProblem): void {
   if (!item.packageName) return;
   void startOp('remove', item.packageName);
+}
+
+/** 这条能不能放回层里：被摘掉的 bundle（声明过 dsh.bundle 的那种） */
+function canRestore(item: PluginProblem): boolean {
+  return item.kind === 'suspended-bundle' && Boolean(item.packageName);
+}
+
+function restoreProblem(item: PluginProblem): void {
+  if (!item.packageName) return;
+  // 不带 index：主进程会从改动前的备份里找回它原来在第几位
+  void editBundle('restore', item.packageName);
 }
 
 /** 这一层在生效配置里的条目（自己插入的 + 它覆盖掉的） */
@@ -841,6 +861,17 @@ function clearFilters(): void {
         bundle 列表是启动时读的；改你自己的 <code>cordis.patch.yml</code> 才是即时生效。
       </span>
       <span class="spacer"></span>
+      <!-- 刚停用的那一个就地放回：停用之后它既不是层、也不在 bundles 里，别处都点不到它。
+          这里带的是这次操作记住的原位置（重开页面之后走「需要注意的」那一行的「放回层里」）。 -->
+      <button
+        v-if="suspended"
+        id="btn-plugin-restore-bundle"
+        class="btn small"
+        :disabled="opBusy"
+        @click="editBundle('restore', suspended.name, suspended.index)"
+      >
+        放回 {{ suspended.name }}
+      </button>
       <button class="btn ghost small" :disabled="navPending" @click="dismissRestartBanner">
         {{ canRestartAgain ? '稍后' : '知道了' }}
       </button>
@@ -951,7 +982,16 @@ function clearFilters(): void {
               {{ problemLabel(item.kind) }}
             </span>
             <span class="plugin-problem-text">{{ item.detail }}</span>
-            <div v-if="canDrop(item) || canRemove(item)" class="spacer"></div>
+            <div v-if="canRestore(item) || canDrop(item) || canRemove(item)" class="spacer"></div>
+            <button
+              v-if="canRestore(item)"
+              class="btn tiny"
+              :disabled="opBusy"
+              title="插回 dsh.profile.bundles（位置照改动前的备份找回来），重启 dsh 后生效"
+              @click="restoreProblem(item)"
+            >
+              放回层里
+            </button>
             <button
               v-if="canDrop(item)"
               class="btn tiny"
