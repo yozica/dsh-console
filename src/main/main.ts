@@ -40,7 +40,7 @@ import {
 } from './env-doctor';
 import { NodeInstaller } from './node-installer';
 import { createUpdater, type Updater } from './updater';
-import { describeValue, installFileLogging } from './logger';
+import { installFileLogging } from './logger';
 import {
   createEmbeddedTools,
   cleanedUserAgent,
@@ -48,6 +48,8 @@ import {
   suppressElectronDevNoise,
 } from './main-embedded';
 import { applyDockIcon, installApplicationMenu, makeIcon } from './main-menu';
+import { installCrashGuards } from './main-crash';
+import { createExternalOpener } from './main-url';
 import { createThemeTools } from './main-theme';
 import * as processUtils from './process-utils';
 import type {
@@ -139,24 +141,6 @@ fileLog.writeLine(
  *      用"，而原因已经摆在用户眼前了；
  *   3. 只加监听、不改 console 的接管方式 —— 日志走既有通道，不另造一份。
  */
-function installCrashGuards(): void {
-  const report = (kind: string, value: unknown): void => {
-    console.error(`[main] ${kind}：`, value);
-    const where = fileLog.file
-      ? `\n\n日志文件（把下面这段内容发出来就能定位）：\n${fileLog.file}`
-      : '';
-    try {
-      dialog.showErrorBox(`DSH Console 出错了（${kind}）`, `${describeValue(value)}${where}`);
-    } catch {
-      /* 连对话框都弹不出来（比如没有图形会话）：日志里已经有了 */
-    }
-  };
-  process.on('uncaughtException', (error) => report('未捕获的异常', error));
-  process.on('unhandledRejection', (reason) => report('未处理的 Promise 拒绝', reason));
-}
-
-installCrashGuards();
-
 let mainWindow: BrowserWindow | null = null;
 // 下面这几个都在 bootstrap() 里赋值；用 `!` 明确"这里不重复判空"——
 // 所有 IPC handler 与事件回调都只在 bootstrap 之后才可能被触发。
@@ -199,6 +183,8 @@ const extraSessions = new Set<string>();
 /** 渲染层是否已经连上（用于日志确认页面没被 CSP 之类的东西拦死） */
 let rendererConnected = false;
 
+installCrashGuards({ logFile: () => fileLog.file });
+
 function sendToRenderer(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
@@ -216,40 +202,7 @@ const theme = createThemeTools({
 
 const menuCtx = { isMac };
 
-// ---------------------------------------------------------------- 外链
-
-/** 交给系统默认程序打开的白名单：其余 scheme（DSH 自己的 `dsh-resource:` 文件引用、`vscode:` 之类）不往外抛 */
-const EXTERNAL_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
-
-/**
- * 打开外链的**唯一**入口（主窗口、内嵌页、渲染层 IPC 三处都走它）。
- *
- * 为什么要单独有个函数（真机踩过：弹「DSH Console 出错了（未处理的 Promise 拒绝）」）：
- * `shell.openExternal` 返回的是 promise，系统里没有对应处理程序的 URL 会让它 reject；
- * 而这个调用原先写在 `setWindowOpenHandler` 里、用 `void` 丢掉返回值 —— reject 就没人接，
- * 变成未处理的 Promise 拒绝。内嵌的 DSH 界面里点一个 `dsh-resource:` 文件引用就够触发一次。
- *
- * 所以这里做两件事：scheme 不在白名单就只记一行日志（不打扰系统），在白名单里也**接住失败**。
- */
-async function openExternalSafely(url: string, from: string): Promise<boolean> {
-  let scheme = '';
-  try {
-    scheme = new URL(url).protocol;
-  } catch {
-    // 不是合法 URL（裸路径之类）：当作不在白名单
-  }
-  if (!EXTERNAL_URL_SCHEMES.has(scheme)) {
-    dshManager.log('info', `不用系统程序打开（scheme ${scheme || '未知'}）：${url} — 来自${from}`);
-    return false;
-  }
-  try {
-    await shell.openExternal(url);
-    return true;
-  } catch (error) {
-    dshManager.log('error', `用系统默认程序打开失败：${url} — 来自${from}：${String(error)}`);
-    return false;
-  }
-}
+const external = createExternalOpener({ log: (level, text) => dshManager.log(level, text) });
 
 // ---------------------------------------------------------------- 主题
 
@@ -325,7 +278,7 @@ function createWindow(): void {
 
   // 外链一律交给系统浏览器，不在应用内导航
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void openExternalSafely(url, '主窗口');
+    void external.openExternalSafely(url, '主窗口');
     return { action: 'deny' };
   });
 
@@ -345,7 +298,7 @@ function createWindow(): void {
   // 内嵌页（DSH 界面 / DeepSeek 用量）：禁止它们自己弹原生窗口，弹窗一律交给系统浏览器
   win.webContents.on('did-attach-webview', (_event, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
-      void openExternalSafely(url, '内嵌页');
+      void external.openExternalSafely(url, '内嵌页');
       return { action: 'deny' };
     });
     // 内嵌页也要能单独开开发者工具：半渲染、空白这类问题都在它自己那一侧
@@ -935,7 +888,7 @@ function registerIpc(): void {
 
   ipcMain.handle('app:openExternal', async (_event: IpcMainInvokeEvent, url?: string) => {
     const target = url || dshManager.uiUrl || dshManager.origin;
-    await openExternalSafely(target, '渲染层');
+    await external.openExternalSafely(target, '渲染层');
     return target;
   });
 
