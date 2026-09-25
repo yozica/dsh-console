@@ -511,12 +511,18 @@ PATH 里第一个是 nvm 22 的 corepack shim = **9.6.0** → `store/v3`。而 `
 ### 7.33 样式分层：全局骨架 + 组件 `<style scoped>`（t48）
 
 **现状（2026-09-26 做完，八批）**：`src/renderer/styles.css` 从 **4502 行 → 1497 行（−67%）**，
-**15 个组件各有 `<style scoped>`**；剩下的全局表只有四类：**变量/主题与基础重置**、
+**14 个组件各有 `<style scoped>`**；剩下的全局表只有四类：**变量/主题与基础重置**、
 **跨组件布局契约与 `html`/`body` 状态开关**、**共享件**（按钮 / 卡片零件 / 空状态 / webview 盒子 /
 共享控件 / 指示灯基础形状）、以及三处"两个页面共用一套"的（向导 ↔ 环境自检详情层、
 `.env-op*` ↔ 向导、`.term-host` 基础规则 ↔ 两路终端）＋ `index.html` 里静态标记的覆盖层。
 **接活时的口径**：只有这一页在用的 → 组件的 `<style scoped>`；两个以上页面共用、挂在 `html`/`body`
 状态上、或是 `index.html` 里的标记 → 全局表，并在段落注释里写清"谁在用"。
+
+**各批的权威行数**（`git show <提交>:src/renderer/styles.css | wc -l`，八批的提交就是 `styles.css` 的八次改动）：
+`4502`（分层前 `cc39eb4`）→ `4329`（`f08e55f`）→ `3914`（`ea11a6e`）→ `3647`（`33fcbec`）→ `3376`（`615bc5c`）→
+`2649`（`36a784b`）→ `1944`（`3e93ed3`）→ `1651`（`dab84ab`）→ **`1497`**（`a08f34e`）。
+下面各批笔记里写的"搬走 N 行"是当时脚本从全局表切走的块大小（含跟着走的注释与空行），与前后差值
+不一定相等 —— **以这条链与每批写的「全局表 A → B」为准**。
 
 它当年是一份 4500 行的单表（0 个 `.vue` 带 `<style>`），组织形式是"按页面分段落 + 一段全局"，
 所以分层本质上是**把页面私有的段落搬进对应组件**，全局表只留跨组件的东西：
@@ -529,20 +535,20 @@ PATH 里第一个是 nvm 22 的 corepack shim = **9.6.0** → `store/v3`。而 `
 **判据只有一条：这个选择器里的 class 是不是只有这一页在用**（`grep -rl` 一遍 .vue / .html 就知道）。
 
 已搬完的（一页一个 PR）：**设置页** —— `.settings` / `.form-row` / `.input-suffix` / `.update-*` /
-`.spotlight` 只有 `SettingsPane.vue` 用 → 搬进它的 `<style scoped>`（198 行）；
+`.spotlight` 只有 `SettingsPane.vue` 用 → 搬进它的 `<style scoped>`（全局表 4502 → 4329）；
 `.check`（设置页 / 关闭确认卡片 / 看板 / 环境自检 / 向导**五处**都画）与 `.panel-block > .hint`
 （多处用）是共享件 → **必须留在全局表**。**归档会话页** —— `.archive*` 一整节 415 行全部搬进
-`ArchivePane.vue`（全局表 4329 → 3914）。**控制台** —— 37 个条目 263 行搬进 `DashboardPane.vue`，
+`ArchivePane.vue`（全局表 4329 → 3914）。**控制台** —— 37 个条目搬进 `DashboardPane.vue`，
 顺手把误放在「控制台」一节里的 `.settings-status` 收进 `SettingsPane.vue`（它只有设置页用）；
 留在全局表的是卡片零件（`.panel` / `.panel-head` / `.panel-block` / `.hint`）与
-`.block-head` / `.block-note`（控制台与插件页都在用）—— 全局表 3914 → 3649。
+`.block-head` / `.block-note`（控制台与插件页都在用）—— 全局表 3914 → 3647。
 **环境自检页** —— 「环境自检」与「更新入口与下载来源」两节里"只有 EnvPane 用"的 37 个条目
-276 行搬进 `EnvPane.vue`；`.env` 外层 / `.env-actions`（设置页的「运行环境」卡也画）与 `.env-op*`
-（环境向导的执行输出面板与这一页同形）留在全局表 —— 全局表 3649 → 3377。**注意**：同一节里
+搬进 `EnvPane.vue`；`.env` 外层 / `.env-actions`（设置页的「运行环境」卡也画）与 `.env-op*`
+（环境向导的执行输出面板与这一页同形）留在全局表 —— 全局表 3647 → 3376。**注意**：同一节里
 "哪些能搬"要**按规则逐条数**，不能按段落整体判断（这一节 42 条里只有 28 条是 EnvPane 私有的）。
-**插件页（装配层）** —— 整节 **96 个条目 728 行**全搬进 `PluginPane.vue`（`.plugin*` / `.layer*` /
-`.plugin-op*` …；这一页没有 v-html，不需要 `:deep()`）—— 全局表 3377 → 2649。
-**首启环境向导与入口门禁** —— 98 个条目 695 行搬进 `shell/EnvGate.vue`（全局表 2649 → 1945），
+**插件页（装配层）** —— 整节 **96 个条目**全搬进 `PluginPane.vue`（`.plugin*` / `.layer*` /
+`.plugin-op*` …；这一页没有 v-html，不需要 `:deep()`）—— 全局表 3376 → 2649。
+**首启环境向导与入口门禁** —— 98 个条目搬进 `shell/EnvGate.vue`（全局表 2649 → 1944），
 与环境自检详情层共用的 42 个条目（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` / `.wizard-*`，
 EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局表；顺手把误放在这一节里的 `.wizard-readout`
 收进 `EnvPane.vue`。注意 **`.gate-rail` 在全局表里仍以 `html[…] body[…] .gate-rail { … }` 的形式存在**
@@ -550,7 +556,7 @@ EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局
 用 contains 会把它误判成没搬干净。
 
 **外壳四件** —— 「骨架」里左栏 / 顶栏 / 底栏自己的 29 个条目 + 「指示灯」里按状态着色的 5 条 +
-「关闭确认卡片」整节 7 条搬进 `shell/{RailNav,TopBar,StatusBar,CloseDialog}.vue`（全局表 1944 → 1653）。
+「关闭确认卡片」整节 7 条搬进 `shell/{RailNav,TopBar,StatusBar,CloseDialog}.vue`（全局表 1944 → 1651）。
 **跨组件的布局契约留在全局表**：`.app` / `.workspace` / `.pane`（两列网格、页面用 `visibility` 互斥、
 挂载点 `display: contents`）与 `html`/`body` 上的状态开关（macOS 红绿灯留白、系统全屏撤回、应用内全屏）
 —— 判据里因此要把 `html` / `body` / `:root` 开头的规则**先排除**，它们天生不属于任何组件。
@@ -559,7 +565,7 @@ EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局
 `.term-view*` / `.shell-tab*` / `.shell-pane*` / `.chips` / `.btn.outline`）、`DshTerminal.vue` 1 条
 （`.bar-title`）、`UiPane.vue` 4 条（`.ui-paste*`）、`TopBar.vue` 2 条（`.immersive-only` /
 `.topbar-note.lit`）、`GateBanner.vue` 1 条、`EnvPane.vue` 2 条（`.env` / `.env > .bar`）——
-全局表 1651 → 1500。**`.term-host` 的"基础规则"仍留在全局表**（两路终端都用它，见 §7.30），
+全局表 1651 → 1497。**`.term-host` 的"基础规则"仍留在全局表**（两路终端都用它，见 §7.30），
 `.term-body > .term-host` 那几条只作用于本地 Shell 那一路、跟着 TerminalPane 走。
 这一批把三处**直接读 `stylesCode`** 的自检也改成读两层（`.btn.outline` / `.shell-tab.active`、
 `.term-body` 与 `.term-host` 的四条、`.topbar-note.lit` 与三条"已经删掉的那套"），
