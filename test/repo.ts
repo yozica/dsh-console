@@ -1,18 +1,26 @@
 'use strict';
 
 /**
- * 自检共用的"仓库事实"：路径、临时目录、共享的 `Settings` 实例。
+ * 自检共用的"仓库事实"：路径、临时目录、共享的 `Settings` 实例，以及那些被反复读到的源码文本。
  *
- * 原来这些都长在 `test/selftest.ts` 的 `main()` 开头，别的段落（环境自检、安装引擎、
- * 门禁界面）隔着几千行还在用同一个 `settings` / `sandbox` —— 拆文件时它们必须有一个
- * 公开的落脚点，所以收进这里。往后各主题要共享的"读到的源码文本"也加在这一份里，
- * 以免出现"检查 A 从检查 B 的文件里 import 一个派生值"这种绕回去的依赖。
+ * 原来这些都长在 `test/selftest.ts` 的 `main()` 开头，别的段落（环境自检、安装引擎、门禁界面）
+ * 隔着几千行还在用同一个 `settings` / `sandbox` / `rendererCode` —— 拆文件时它们必须有一个
+ * 公开的落脚点，所以收进这里。往后各主题要共享的派生值也加在这一份里，以免出现"检查 A 从检查 B
+ * 的文件里 import 一个派生值"这种绕回去的依赖。
+ *
+ * 这里只做**读**，不碰网络、不起子进程、不写仓库（`.verify/` 除外）。
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { Settings } from '../src/main/settings';
+
+/** package.json 里自检真正读到的字段（用最小的 interface 兜住 JSON.parse 的 any） */
+export interface PackageJson {
+  version: string;
+  build?: { mac?: { identity?: string } };
+}
 
 export interface Repo {
   /** 仓库根 */
@@ -21,6 +29,42 @@ export interface Repo {
   sandbox: string;
   /** 共享的设置实例（§1 起就要求：不认识的键要报错、且一个字都不写） */
   settings: Settings;
+
+  // ---- 源码文本：自检里大量断言是"读源码文本"的，集中读一次 ----
+  srcDir: string;
+  rendererDir: string;
+  libDir: string;
+  /** `index.html` 原文 */
+  html: string;
+  /** `panes/` 与 `shell/` 下的 `.vue`（形如 `{ dir, name }`） */
+  vueFiles: { dir: string; name: string }[];
+  /** 所有 `.vue` 的全文拼接 */
+  vueSource: string;
+  /** `lib/` 下所有 `.ts` 的拼接 */
+  libSource: string;
+  /** 渲染层脚本的两处来源：`app.ts` + `lib/` */
+  rendererJs: string;
+  /** 标记的两处来源：静态 HTML + `.vue` 模板 */
+  markup: string;
+  /** 渲染层脚本：`app.ts` + `lib/` + `.vue` */
+  rendererAll: string;
+  /** `rendererAll` 去掉注释（注释里常拿没实现的写法举例，当真引用去查会误报） */
+  rendererCode: string;
+  mountJs: string;
+  /** `panes/UiPane.vue` 原文（内嵌界面那一页，几处契约断言都读它） */
+  uiPaneSource: string;
+  /** 全局表 `styles.css` 原文 */
+  css: string;
+  /** 各组件 `<style>` 块的拼接 */
+  vueStyles: string;
+  /** 两层样式表：全局表 + 各组件块（t48 起「整份样式」就是这两层） */
+  allCss: string;
+
+  // ---- 处理文本的小工具（用得太多，跟着数据一起放这里） ----
+  /** 把一段文本转义成可以塞进正则里的字面量 */
+  escaped(text: string): string;
+  /** 从两层样式表里取一条规则的规则体：`cssBlock('.btn')` */
+  cssBlock(selector: string): string;
 }
 
 export function createRepo(): Repo {
@@ -31,5 +75,77 @@ export function createRepo(): Repo {
   const settings = new Settings(path.join(sandbox, 'settings.json'));
   settings.patch({ port: 3080, host: '127.0.0.1', extraArgs: '' });
 
-  return { root, sandbox, settings };
+  const srcDir = path.join(root, 'src');
+  const rendererDir = path.join(srcDir, 'renderer');
+
+  // 界面已经逐页迁到 Vue 单文件组件，所以**标记与脚本都要把 .vue 一起算进来**
+  // （panes/ 是页面，shell/ 是外壳），否则迁走的部分会悄悄脱离这些检查的覆盖。
+  const vueDirs = ['panes', 'shell'];
+  const vueFiles: { dir: string; name: string }[] = [];
+  for (const dir of vueDirs) {
+    const full = path.join(rendererDir, dir);
+    if (!fs.existsSync(full)) continue;
+    for (const name of fs.readdirSync(full).filter((n) => n.endsWith('.vue'))) {
+      vueFiles.push({ dir, name });
+    }
+  }
+  const vueSource = vueFiles
+    .map(({ dir, name }) => fs.readFileSync(path.join(rendererDir, dir, name), 'utf8'))
+    .join('\n');
+
+  const html = fs.readFileSync(path.join(rendererDir, 'index.html'), 'utf8');
+  const libDir = path.join(rendererDir, 'lib');
+  const libSource = fs.existsSync(libDir)
+    ? fs
+        .readdirSync(libDir)
+        .filter((name) => name.endsWith('.ts'))
+        .map((name) => fs.readFileSync(path.join(libDir, name), 'utf8'))
+        .join('\n')
+    : '';
+  const rendererJs = `${fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8')}\n${libSource}`;
+  const markup = `${html}\n${vueSource}`;
+  const rendererAll = `${rendererJs}\n${vueSource}`;
+  // 只看代码，不看注释：注释里常拿 `getElementById('btn-xxx')` 这种示意写法举例，
+  // 当真引用去查会误报（已经误报过一次）。
+  const rendererCode = rendererAll.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
+  const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
+  // 全局表（变量 / 主题 / 骨架 / 共享件）与各组件自己的 `<style>` 块是两层：
+  // 变量块与主题仍在全局表里（那不是页面私有的东西），所以读变量块的检查只看 `css`。
+  const css = fs.readFileSync(path.join(rendererDir, 'styles.css'), 'utf8');
+  const vueStyles = vueFiles
+    .map(({ dir, name }) => {
+      const text = fs.readFileSync(path.join(rendererDir, dir, name), 'utf8');
+      return text.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '';
+    })
+    .join('\n');
+  const allCss = `${css}\n${vueStyles}`;
+
+  return {
+    root,
+    sandbox,
+    settings,
+    srcDir,
+    rendererDir,
+    libDir,
+    html,
+    vueFiles,
+    vueSource,
+    libSource,
+    rendererJs,
+    markup,
+    rendererAll,
+    rendererCode,
+    mountJs,
+    uiPaneSource,
+    css,
+    vueStyles,
+    allCss,
+    escaped: (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    cssBlock: (selector: string): string =>
+      allCss.match(
+        new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*\\}`),
+      )?.[0] || '',
+  };
 }
