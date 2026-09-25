@@ -765,12 +765,23 @@ async function main(): Promise<void> {
 
   // ---------------------------------------------------------- 7. 主题
   const css = fs.readFileSync(path.join(rendererDir, 'styles.css'), 'utf8');
+  // t48 样式分层起，「整份样式」是**两层**：全局表（变量 / 主题 / 骨架 / 共享件）+ 各组件
+  // 自己的 `<style>` 块（页面私有的规则搬进组件）。变量块与主题仍在全局表里 —— 那不是
+  // 页面私有的东西，所以下面几条读变量块的检查继续只看 `css`。
+  const vueStyles = vueFiles
+    .map(({ dir, name }) => {
+      const text = fs.readFileSync(path.join(rendererDir, dir, name), 'utf8');
+      return text.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '';
+    })
+    .join('\n');
+  const allCss = `${css}\n${vueStyles}`;
   check('主题：CSS 定义了亮色变量块', /:root\[data-theme='light'\]\s*\{/.test(css));
 
   // 深色基础块 + 亮色覆盖块之外不应再出现硬编码颜色，否则亮色下会漏改。
   // 先剥注释：解释性注释里常引用颜色字面量（例如说明"xterm 自带样式写死了 #000"），
-  // 那不是样式声明，不该报（这类误报已经出现三次）。
-  const cssCode = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  // 那不是样式声明，不该报（这类误报已经出现三次）。两层都要查 —— 搬进组件的规则
+  // 同样是"亮色下会漏改"的一份。
+  const cssCode = allCss.replace(/\/\*[\s\S]*?\*\//g, '');
   const withoutVarBlocks = cssCode
     .replace(/:root\s*\{[\s\S]*?\n\}/, '')
     .replace(/:root\[data-theme='light'\]\s*\{[\s\S]*?\n\}/, '');
@@ -877,12 +888,57 @@ async function main(): Promise<void> {
     )
     .filter((name) => /^[a-zA-Z][\w-]*$/.test(name));
   const htmlClasses = new Set([...staticClasses, ...dynamicClasses]);
-  const cssClasses = new Set([...css.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((match) => match[1]));
+  const cssClasses = new Set([...allCss.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((match) => match[1]));
   const unstyled = [...htmlClasses].filter((name) => !cssClasses.has(name));
   check(
-    '样式：标记用到的 class 都有对应样式（HTML + .vue）',
+    '样式：标记用到的 class 都有对应样式（HTML + .vue，两层样式表都算）',
     unstyled.length === 0,
     unstyled.length ? `未定义样式 ${unstyled.join(', ')}` : `${htmlClasses.size} 个 class`,
+  );
+
+  // t48 样式分层（试点：设置页）。判据是"这个 class 只有这一页在用"，搬走的必须是私有的：
+  //   - 搬进组件后**全局表里不许再有一份** —— 两份定义谁生效要看谁更具体（scoped 会 +1 个属性
+  //     选择器），正是分层想消灭的那种推理；
+  //   - 跨组件的共享件（`.check` 被 5 处画、`.panel-block > .hint` 多处用）**必须留在全局表**，
+  //     否则搬进某一个组件后，别的页面就没有这条样式了。
+  const settingsPaneSource = fs.readFileSync(
+    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
+    'utf8',
+  );
+  const settingsStyle = settingsPaneSource.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? '';
+  // 查"规则在不在"要先剥注释：两张表里都有解释性注释点名这些 class（"设置页那一族（.settings…）"），
+  // 拿原文去 match 会把注释当成定义 —— 这正是这类检查最容易骗过自己的地方。
+  const cssRules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const settingsRules = settingsStyle.replace(/\/\*[\s\S]*?\*\//g, '');
+  const movedToSettings = [
+    '.settings',
+    '.form-row',
+    '.input-suffix',
+    '.update-head',
+    '.update-title',
+    '.update-phase',
+    '.update-progress',
+    '.update-bar',
+    '.spotlight',
+  ];
+  const stillGlobal = movedToSettings.filter((sel) =>
+    new RegExp(`\\${sel}(?![\\w-])`).test(cssRules),
+  );
+  const missingFromSettings = movedToSettings.filter(
+    (sel) => !new RegExp(`\\${sel}(?![\\w-])`).test(settingsRules),
+  );
+  check(
+    '样式分层：页面私有的规则搬进组件的 <style scoped>，共享件留在全局表',
+    settingsStyle.length > 500 &&
+      stillGlobal.length === 0 &&
+      missingFromSettings.length === 0 &&
+      /^\.check \{/m.test(cssRules) &&
+      !/^\.check \{/m.test(settingsRules) &&
+      /^\.panel-block > \.hint \{/m.test(cssRules) &&
+      !/^\.panel-block > \.hint \{/m.test(settingsRules),
+    stillGlobal.length || missingFromSettings.length
+      ? `还在全局表里：${stillGlobal.join(', ') || '—'}；组件里缺：${missingFromSettings.join(', ') || '—'}`
+      : `${movedToSettings.length} 条私有规则在组件里，共享件在全局表`,
   );
 
   check(

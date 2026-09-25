@@ -60,7 +60,7 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
-test/selftest.ts        313 项自检（`npm test`），不需要 Electron
+test/selftest.ts        314 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -102,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（313 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（314 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -507,6 +507,51 @@ PATH 里第一个是 nvm 22 的 corepack shim = **9.6.0** → `store/v3`。而 `
 **哪条自检守着**：「插件安装：从 profile 的 .modules.yaml 读出"这份依赖是哪个大版本的 pnpm 装的"（纯函数）」
 「插件安装：store 大版本不一致时给人话（不再是 pnpm 那段原文）」（夹具就是真机那段原文）
 「插件安装：装之前按 profile 挑 pnpm，并把选中的那份顶到子进程 PATH 最前」。
+
+### 7.33 样式分层：全局骨架 + 组件 `<style scoped>`（t48）
+
+**现状**：`src/renderer/styles.css` 曾经是一份 4500 行的单表（0 个 `.vue` 带 `<style>`）。
+它的组织形式是"按页面分段落 + 一段全局"，所以分层本质上是**把页面私有的段落搬进对应组件**，
+全局表只留跨组件的东西：
+
+| 层   | 放哪                  | 内容                                                                                                                                   |
+| ---- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 全局 | `styles.css`          | CSS 变量/主题、html·body 状态开关、跨组件骨架（rail / panes / overlay / z-index 预算）、共享件（`.btn`、`.check`、`.empty`、`.hint`…） |
+| 局部 | 组件 `<style scoped>` | 只有这一页在用的规则（容器布局、表单行、卡片内部排版、只属于它的覆盖层）                                                               |
+
+**判据只有一条：这个选择器里的 class 是不是只有这一页在用**（`grep -rl` 一遍 .vue / .html 就知道）。
+试点「设置页」就是这么切的：`.settings` / `.form-row` / `.input-suffix` / `.update-*` / `.spotlight`
+只有 `SettingsPane.vue` 用 → 搬进它的 `<style scoped>`（198 行，全局表 4502 → 4329）；
+`.check`（设置页 / 关闭确认卡片 / 看板 / 环境自检 / 向导 五处都画）与 `.panel-block > .hint`
+（多处用）是共享件 → **必须留在全局表**，搬走别的页面就没有这条样式了。
+
+**两个必须记住的后果**：
+
+1. **scoped 会给选择器加一个属性选择器**（`.settings` → `.settings[data-v-9f3c543c]`），也就是
+   **特异性 +1 档** —— 覆盖关系从"谁在后面"变成"谁更具体"。所以搬进组件的规则**不许在全局表里
+   再留一份**（两份定义谁赢要靠推特异性，这正是分层想消灭的那种推理）；反过来，共享件也不许搬。
+   实测：产物里组件样式排在全局表之后（`[data-v-*]` 在 57809、全局共享件在 22090），两条都占优。
+2. **自检要跟着分两层看**。`test/selftest.ts` 里「整份样式」= `css`（全局表）+ `vueStyles`
+   （各组件 `<style>` 块）= `allCss`：class 覆盖（「标记用到的 class 都有对应样式」）与
+   「除变量块外没有硬编码颜色」两条都改成查 `allCss`（搬进组件的规则同样会漏改亮色）；
+   而变量块/主题那几条继续只看全局表 —— 变量不是页面私有的东西。
+
+**每搬一页跑的三道验收**（缺一不可，样式搬家不能只靠眼看）：
+
+1. **机械等价**：把「全局表 + 各组件块」按 `选择器 → 声明` 抽成多重集，和改动前的
+   `git show HEAD:src/renderer/styles.css` 快照比 —— **不丢、不重、不改声明**（试点：577 条 → 577 条）。
+2. **视觉等价**：headless Chrome 用「改动前整张表」与「改动后全局表 + 组件块」各渲染同一段
+   夹具（覆盖搬走的那些 class），**逐像素比对**（设置页 + 聚焦蒙层两段夹具都是逐像素一致）。
+3. **自检 + 真机**：`npm test` 绿；用户在 dev 里翻一眼那一页。
+
+搬完一页就在自检里把这一页的判据钉住（「样式分层：页面私有的规则搬进组件的 `<style scoped>`，
+共享件留在全局表」——它同时守 ① 私有规则不许在全局表留第二份、② 共享件不许搬走、③ 组件里真的
+有那些规则）。**注意读"规则在不在"时先剥注释**：两张表里的解释性注释都会点名这些 class，
+拿原文去 `match` 会把注释当成定义（第一版就骗过了自己）。
+
+**哪条自检守着**：「样式：标记用到的 class 都有对应样式（HTML + .vue，两层样式表都算）」
+「主题：样式表除变量块外没有硬编码颜色」（两层）「样式分层：页面私有的规则搬进组件的
+`<style scoped>`，共享件留在全局表」。
 
 ### 7.10 本地 Shell 有意**不持久化**
 
@@ -942,7 +987,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，313 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，314 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：
