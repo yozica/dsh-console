@@ -1500,7 +1500,12 @@ body[data-immersive='true'] .webview-wrap {
 
 .banner {
   display: flex;
-  align-items: flex-start;
+  /* **居中，不用 flex-start**（t48，用户第二次指出同一个现象）。原来的 flex-start 是给
+     「标题 + 说明」两行准备的，可它有个宽度依赖的坏处：同一条黄条在宽窗口上是一行、窄窗口上
+     才是两行 —— 一行时内容被顶到上面（真机截图量出来：上方留白 20px、下方 34px，偏上 7 物理 px）。
+     而"两行"的时候最高的那一项本来就是文本块，居中与顶对齐**对它的位置没有影响** ——
+     所以真正被 flex-start 影响的只有图标与按钮，它们居中才是常态（常见 alert 摆法）。 */
+  align-items: center;
   gap: 10px;
   margin: 0 20px 12px;
   padding: 11px 14px;
@@ -1538,23 +1543,11 @@ body[data-immersive='true'] .webview-wrap {
 .banner .i {
   width: 15px;
   height: 15px;
-  margin-top: 2px;
   color: var(--amber);
 }
 
 .banner b {
   color: var(--ink);
-}
-
-/* 单行的结局提示（「✓ 装配层改动已加载」这类）：`.banner` 的 `align-items: flex-start`
-   与图标 `margin-top: 2px` 是给「标题 + 说明」两行准备的，单行套上去文字会明显偏上
-   （用户真机截图指出）。单行这一态改用居中，图标也不再自己往下挪。 */
-.banner.line {
-  align-items: center;
-}
-
-.banner.line .i {
-  margin-top: 0;
 }
 
 /* ============================================================ 设置 */
