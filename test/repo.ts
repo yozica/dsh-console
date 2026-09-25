@@ -25,6 +25,8 @@ export interface PackageJson {
 export interface Repo {
   /** 仓库根 */
   root: string;
+  /** `test/` 目录（夹具都在它下面；搬进子目录的模块不能再用 `__dirname` 拼） */
+  testDir: string;
   /** 自检的临时目录（`.verify/`，建好且被 git 忽略） */
   sandbox: string;
   /** 共享的设置实例（§1 起就要求：不认识的键要报错、且一个字都不写） */
@@ -59,6 +61,10 @@ export interface Repo {
   flatIpc: string;
   /** `panes/UiPane.vue` 原文（内嵌界面那一页，几处契约断言都读它） */
   uiPaneSource: string;
+  /** `src/main/plugin-manager.ts` 原文 */
+  pluginSource: string;
+  /** 读 `test/fixtures/<名字>` 下的夹具（真实输出，不是编出来的） */
+  fixture(name: string): string;
   /** 全局表 `styles.css` 原文 */
   css: string;
   /** 各组件 `<style>` 块的拼接 */
@@ -116,6 +122,7 @@ export function createRepo(): Repo {
   const rendererCode = rendererAll.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
+  const pluginSource = fs.readFileSync(path.join(srcDir, 'main', 'plugin-manager.ts'), 'utf8');
   const ipcSource = fs.readFileSync(path.join(srcDir, 'shared', 'ipc.ts'), 'utf8');
   const flatIpc = ipcSource.replace(/\s+/g, ' ');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as PackageJson;
@@ -133,6 +140,7 @@ export function createRepo(): Repo {
 
   return {
     root,
+    testDir: __dirname,
     sandbox,
     settings,
     srcDir,
@@ -148,6 +156,9 @@ export function createRepo(): Repo {
     rendererCode,
     mountJs,
     uiPaneSource,
+    pluginSource,
+    fixture: (name: string): string =>
+      fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8'),
     pkg,
     ipcSource,
     flatIpc,
