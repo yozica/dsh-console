@@ -896,49 +896,84 @@ async function main(): Promise<void> {
     unstyled.length ? `未定义样式 ${unstyled.join(', ')}` : `${htmlClasses.size} 个 class`,
   );
 
-  // t48 样式分层（试点：设置页）。判据是"这个 class 只有这一页在用"，搬走的必须是私有的：
+  // t48 样式分层。判据是"这个 class 只有这一页在用"，搬走的必须是私有的：
   //   - 搬进组件后**全局表里不许再有一份** —— 两份定义谁生效要看谁更具体（scoped 会 +1 个属性
   //     选择器），正是分层想消灭的那种推理；
   //   - 跨组件的共享件（`.check` 被 5 处画、`.panel-block > .hint` 多处用）**必须留在全局表**，
   //     否则搬进某一个组件后，别的页面就没有这条样式了。
-  const settingsPaneSource = fs.readFileSync(
-    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
-    'utf8',
-  );
-  const settingsStyle = settingsPaneSource.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? '';
   // 查"规则在不在"要先剥注释：两张表里都有解释性注释点名这些 class（"设置页那一族（.settings…）"），
   // 拿原文去 match 会把注释当成定义 —— 这正是这类检查最容易骗过自己的地方。
   const cssRules = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  const settingsRules = settingsStyle.replace(/\/\*[\s\S]*?\*\//g, '');
-  const movedToSettings = [
-    '.settings',
-    '.form-row',
-    '.input-suffix',
-    '.update-head',
-    '.update-title',
-    '.update-phase',
-    '.update-progress',
-    '.update-bar',
-    '.spotlight',
+  const readScoped = (file: string): string => {
+    const text = fs.readFileSync(path.join(rendererDir, 'panes', file), 'utf8');
+    const body = text.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? '';
+    return body.replace(/\/\*[\s\S]*?\*\//g, '');
+  };
+  // 改一页就往这张表里加一行。它同时守住三件事：
+  //   ① 搬走的私有规则**不许在全局表里留第二份**；② `staysGlobal` 的共享件**不许被搬走**；
+  //   ③ 组件里**真有**那些规则 —— 别只删不加。
+  const styleLayers: { pane: string; scoped: string[]; staysGlobal: string[] }[] = [
+    {
+      pane: 'SettingsPane.vue',
+      scoped: [
+        '.settings',
+        '.form-row',
+        '.input-suffix',
+        '.update-head',
+        '.update-title',
+        '.update-phase',
+        '.update-progress',
+        '.update-bar',
+        '.spotlight',
+      ],
+      // 设置页画了、但是多页共用的：复选框行（5 处）、卡片后面那句提示（多处）
+      staysGlobal: ['.check', '.panel-block > .hint'],
+    },
+    {
+      pane: 'ArchivePane.vue',
+      scoped: [
+        '.archive',
+        '.archive-body',
+        '.archive-search-input',
+        '.archive-item',
+        '.archive-turn-body',
+        '.archive-empty',
+      ],
+      staysGlobal: [],
+    },
   ];
-  const stillGlobal = movedToSettings.filter((sel) =>
-    new RegExp(`\\${sel}(?![\\w-])`).test(cssRules),
-  );
-  const missingFromSettings = movedToSettings.filter(
-    (sel) => !new RegExp(`\\${sel}(?![\\w-])`).test(settingsRules),
-  );
+  const layerProblems: string[] = [];
+  for (const row of styleLayers) {
+    const scopedRules = readScoped(row.pane);
+    for (const sel of row.scoped) {
+      const pattern = new RegExp(`\\${sel}(?![\\w-])`);
+      if (pattern.test(cssRules)) layerProblems.push(`${row.pane}: ${sel} 还在全局表里`);
+      if (!pattern.test(scopedRules)) layerProblems.push(`${row.pane}: 组件里缺 ${sel}`);
+    }
+    for (const sel of row.staysGlobal) {
+      const pattern = new RegExp(`\\${sel}(?![\\w-])`);
+      if (!pattern.test(cssRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 没留在全局表`);
+      if (pattern.test(scopedRules)) layerProblems.push(`${row.pane}: 共享件 ${sel} 被搬进组件了`);
+    }
+  }
+  // v-html 渲染出来的元素没有 scope 属性，`.archive-turn-body <元素>` 必须写成 `:deep(...)`。
+  // **多行选择器列表踩过**：`.archive-turn-body h1,\n h2,\n h3 { }` 只给最后一行加了 :deep()，
+  // 前几行会编译成 `.archive-turn-body h2[data-v-x]` —— 一条都匹配不上（h2..h5、ul 就是这么漏的，
+  // 靠"看构建产物里的选择器"才抓到）。`(?!\{)` 是因为 `.archive-turn-body {` 本来就该是普通写法。
+  const archiveRules = readScoped('ArchivePane.vue');
+  const deepLeaks = archiveRules
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^\.archive-turn-body\s+(?!\{)\S/.test(line) && !line.includes(':deep('));
   check(
-    '样式分层：页面私有的规则搬进组件的 <style scoped>，共享件留在全局表',
-    settingsStyle.length > 500 &&
-      stillGlobal.length === 0 &&
-      missingFromSettings.length === 0 &&
-      /^\.check \{/m.test(cssRules) &&
-      !/^\.check \{/m.test(settingsRules) &&
-      /^\.panel-block > \.hint \{/m.test(cssRules) &&
-      !/^\.panel-block > \.hint \{/m.test(settingsRules),
-    stillGlobal.length || missingFromSettings.length
-      ? `还在全局表里：${stillGlobal.join(', ') || '—'}；组件里缺：${missingFromSettings.join(', ') || '—'}`
-      : `${movedToSettings.length} 条私有规则在组件里，共享件在全局表`,
+    '样式分层：页面私有的规则搬进组件的 <style scoped>，共享件留在全局表（v-html 内容走 :deep）',
+    layerProblems.length === 0 &&
+      styleLayers.every((row) => readScoped(row.pane).length > 200) &&
+      /\.archive-turn-body :deep\(/.test(archiveRules) &&
+      deepLeaks.length === 0,
+    layerProblems.length || deepLeaks.length
+      ? [...layerProblems, ...deepLeaks.map((l) => `漏了 :deep：${l}`)].join('；')
+      : `${styleLayers.length} 个页面、${styleLayers.reduce((n, r) => n + r.scoped.length, 0)} 条私有规则`,
   );
 
   check(
