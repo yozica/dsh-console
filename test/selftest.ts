@@ -932,6 +932,22 @@ async function main(): Promise<void> {
       staysGlobal: ['.check', '.panel-block > .hint'],
     },
     {
+      pane: 'PluginPane.vue',
+      scoped: [
+        '.plugin',
+        '.plugin-views',
+        '.plugin-problems',
+        '.plugin-problem',
+        '.plugin-layer',
+        '.plugin-tag',
+        '.plugin-install-input',
+        '.plugin-op',
+        '.plugin-detail-actions',
+      ],
+      // 与别处共用的：`.btn` / `.panel*` / `.banner` / `.hint` / `.empty` / `.spacer` / `.block-head`
+      staysGlobal: ['.panel-block', '.block-head'],
+    },
+    {
       pane: 'EnvPane.vue',
       scoped: [
         '.env-scope',
