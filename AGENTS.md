@@ -60,7 +60,13 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
-test/selftest.ts        314 项自检（`npm test`），不需要 Electron
+test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（314 项，`npm test`）
+test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
+test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
+test/text.ts            从源码文本里切片段的纯函数（blockOf / functionBodyOf / methodSliceOf / strip*）
+test/env-fixtures.ts    环境自检与环境向导共用的夹具（一份"什么都好"的事实 + 几份源码文本）
+test/checks/*.ts        按主题分的断言：launch / renderer / styles / release / plugin /
+                        env-doctor / env-wizard / install-engine（见 7.34）
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -82,7 +88,7 @@ eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 - **渲染层由 Vite 打包成单个自包含的普通脚本**（见下）。
 - **共享状态只有一份**：`lib/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
 - **门禁层是一个覆盖层，不是第 8 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
-- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/selftest.ts`；渲染层 = `renderer/{panes/**,shell/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
+- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/**`；渲染层 = `renderer/{panes/**,shell/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
 
 **一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。启动后 1.5 秒另有一轮**只读**的运行环境自检在后台跑（`main/env-doctor.ts`，见 7.20）：它不参与启动、不碰 dsh 进程，结果由渲染层 `envCheck()` 拉取。
 
@@ -125,7 +131,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 
 ## 4. 代码约定
 
-**TypeScript 迁移已完成**：`src/`、`test/`、`tools/` 全是 TypeScript，仓库里没有手写的 `.js` 源码。类型**不放宽**：`tsconfig.base.json` 开了 `strict`，且仓库里没有 `as any` / `: any` / 非空断言；需要兜 `JSON.parse` 的 `any` 时用最小 `interface`（例如 `test/selftest.ts` 里的 `PackageJson`）。
+**TypeScript 迁移已完成**：`src/`、`test/`、`tools/` 全是 TypeScript，仓库里没有手写的 `.js` 源码。类型**不放宽**：`tsconfig.base.json` 开了 `strict`，且仓库里没有 `as any` / `: any` / 非空断言；需要兜 `JSON.parse` 的 `any` 时用最小 `interface`（例如 `test/repo.ts` 里的 `PackageJson`）。
 
 **`.mts` 与 `.ts` 的区别**：`package.json` 没有 `"type": "module"`，所以 NodeNext 下 `.ts` 会被编译成 CommonJS（这正是主进程需要的运行形态，源码仍写标准 ESM 语法）；而 `.mts` **按扩展名永远是 ESM**，用于「由 `tsx` / Vite 直接执行、不经过 tsc 产物」的文件 —— `tools/*.mts`、`scripts/*.mts`、`vite.config.mts` 都属于这一类。想加工具脚本时按这个规则选扩展名。
 
@@ -602,7 +608,7 @@ Prettier**，不然 `format:check` 会红（这一轮又踩了一次）。
    **特异性 +1 档** —— 覆盖关系从"谁在后面"变成"谁更具体"。所以搬进组件的规则**不许在全局表里
    再留一份**（两份定义谁赢要靠推特异性，这正是分层想消灭的那种推理）；反过来，共享件也不许搬。
    实测：产物里组件样式排在全局表之后（`[data-v-*]` 在 57809、全局共享件在 22090），两条都占优。
-2. **自检要跟着分两层看**。`test/selftest.ts` 里「整份样式」= `css`（全局表）+ `vueStyles`
+2. **自检要跟着分两层看**。`test/checks/styles.ts` 里「整份样式」= `css`（全局表）+ `vueStyles`
    （各组件 `<style>` 块）= `allCss`：class 覆盖（「标记用到的 class 都有对应样式」）、
    「除变量块外没有硬编码颜色」、以及那个到处在用的 `cssBlock(selector)` 取规则体的助手
    都走 `allCss`（只看全局表会让"这条规则还在不在"这类断言成片假红 —— 搬 EnvPane 那轮
@@ -1075,6 +1081,50 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - **不溢出**：片段 `nowrap` 之后，单个片段比一行还长时会顶出容器（`.panel` 是 `overflow: hidden`，会被裁掉）。现在的路径片段最长十几个字符，四个宽度实测都没溢出；真出现超长片段（例如 Windows 上某个超长目录名），要么收窄这个策略、要么给 `.env-seg` 留一条"整段挪到下一行"的兜底。
 
 **哪条自检守着**：「环境自检页：长路径的折行落在路径分隔符上（说明切段 + 片段之间插 `<wbr>`）」—— 五组切段夹具（POSIX / Windows 反斜杠 / 中文前缀 / 无分隔符 / 空串）、往返断言、模板接线、`.env-seg` 的 `nowrap`、以及**不许 `v-html`**。
+
+### 7.34 自检的模块化：入口 55 行 + 按主题的 `test/checks/*`（t49）
+
+**现状（2026-09-26 做完，六批）**：`test/selftest.ts` 从 **6591 行 → 55 行**（只剩入口），314 条断言
+一条没改地搬进八个主题模块 + 四个公共件：
+
+| 文件                            | 行数 | 装什么                                                                                                                                                                                                                                  |
+| ------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/selftest.ts`              | 55   | 入口：`createRepo()` → 依次 `run*` → `report()`                                                                                                                                                                                         |
+| `test/harness.ts`               | 80   | `check` / `skip` / `report`（统计与 GitHub Actions 失败注解）/ `canSpawnBinaries` / `canQueryProcessName` / `IS_WINDOWS`                                                                                                                |
+| `test/repo.ts`                  | 174  | 仓库根、`.verify/`、共享 `Settings`、各源码文本（`html` / `vueSource` / `rendererCode` / `css` / `allCss` / `ipcSource` / `flatIpc` / `pkg` / `pluginSource` / `uiPaneSource` …）、`escaped` / `cssBlock` / `fixture(name)` / `testDir` |
+| `test/text.ts`                  | 62   | 从源码文本切片段的纯函数：`blockOf`（按大括号配平）、`functionBodyOf`、`methodSliceOf`（按下一个类成员为界）、`stripComments`、`stripStrings`                                                                                           |
+| `test/env-fixtures.ts`          | 143  | 环境自检与环境向导共用的夹具：一份"什么都好"的 `EnvProbeRaw`、`envCheckOf` / `envAllOk` / `envIds` / `envWizardStepIds`、以及 `envSource` / `envCode` / `envMainCode` / `envPaneCode` / `installerCode` / `gateRaw` / `gateCode`        |
+| `test/checks/launch.ts`         | 380  | §1~5：命令解析 / ANSI 与横幅 / 健康探测 / 端口占用 / DshManager 状态机                                                                                                                                                                  |
+| `test/checks/renderer.ts`       | 281  | §6：渲染层静态检查（id / class / api / 挂载点 / 平台适配）                                                                                                                                                                              |
+| `test/checks/styles.ts`         | 703  | §7：主题、样式分层与视觉契约（含启动锁层级、`:focus-visible`）                                                                                                                                                                          |
+| `test/checks/release.ts`        | 476  | §8~15：发布链路、自动更新契约、打包约定                                                                                                                                                                                                 |
+| `test/checks/plugin.ts`         | 1146 | 插件装配层（只读）/ 补丁层 / 救援                                                                                                                                                                                                       |
+| `test/checks/env-doctor.ts`     | 1348 | 运行环境自检（判定 + 探测 + 一键修复）与 VM-09                                                                                                                                                                                          |
+| `test/checks/env-wizard.ts`     | 1371 | 首启环境向导、门禁界面与 18a                                                                                                                                                                                                            |
+| `test/checks/install-engine.ts` | 874  | §18b~18d：提权、nvm 的真实模型、归属与档位                                                                                                                                                                                              |
+
+**新加一条断言放哪**：按主题进 `test/checks/*`；**要读源码文本或夹具**就从 `repo` / `env-fixtures` 取，
+不要在检查模块里自己 `readFileSync` —— 那份文本往往隔着一千行还有别的组在用（`ipcSource` 有 25 处、
+`envProbe` 有 14 处），各读一份会出现"改一处忘一处"。要新增公共事实就加在 `repo.ts`。
+
+**判据是输出逐行一致**（比"314 条都通过"更强）：搬迁前后 `npm test` 的每一行
+`PASS 名字  — 实际值` 必须同名、同值、同顺序，只把「健康探测（真实）」那行的 `, Nms` 计时归一化。
+六批都把这条贴在 PR 里。
+
+**踩过的三个坑**（子目录搬迁的固定成本，下一次搬别重犯）：
+
+1. **`__dirname` 会变**：`test/checks/` 比 `test/` 深一层，搬过去的 `path.join(__dirname, '..', 'src', …)`
+   指向 `test/` 底下（实测报 `… test/src/preload/preload.ts`、`test/checks/fixtures/profile`）。
+   一律改走 `repo.root` / `repo.srcDir` / `repo.rendererDir` / `repo.testDir` / `repo.fixture()`。
+2. **相对 import 要多退一层**：`../tools/x.mjs` → `../../tools/x.mjs`，**动态 `import(…)` 与
+   `require(…)` 同样**（这三处最容易漏，因为 prettier 不会替你改字符串）。
+3. **跨段的派生值先提成模块再搬**：环境自检那一组被后面的向导组引用 18 个值，直接搬会让
+   "检查 A 从检查 B 的文件里 import 一个夹具"。做法是先建 `test/env-fixtures.ts` / `test/text.ts`，
+   把两边都要用的提出来，再搬检查组。
+
+**哪条自检守着**：这一层没有专门的断言（自检守的是被测代码），但**每一条**断言都在搬完后照跑；
+`scripts/selftest-sandbox.mjs` 会自动收录 `test/**` 的编译图（它按 tsc 报的 `TSFILE:` 行删产物，
+新增模块天然被覆盖）。
 
 ## 8. 调试手段
 
