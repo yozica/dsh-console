@@ -61,6 +61,9 @@ export interface Repo {
   flatIpc: string;
   /** `panes/UiPane.vue` 原文（内嵌界面那一页，几处契约断言都读它） */
   uiPaneSource: string;
+  /** `main.ts` + `main-*.ts`（入口拆出的几个簇）的全文拼接 */
+  mainSource: string;
+
   /**
    * `src/main/plugin-manager.ts`（barrel + 三个类）+ `src/main/plugin-*.ts`（四个叶子模块）的全文拼接。
    * t54 把它按主题拆开之后，"读源码文本"的断言要看整份。
@@ -133,6 +136,12 @@ export function createRepo(): Repo {
   const mountJs = fs.readFileSync(path.join(rendererDir, 'mount.ts'), 'utf8');
   // t54 起 plugin-manager.ts 是 barrel + 三个类，解析与子进程住在 plugin-*.ts 里 ——
   // "读源码文本"的断言要看整份（barrel 里一条 `export function …` 都搜不到）。
+  // t56/t57 起 main.ts 拆出了若干簇（主题 / 内嵌页诊断 / 菜单 / 外链 / 崩溃兜底）——
+  // "读 main.ts 文本"的断言要看**主进程入口那一组**的全部源码。
+  const mainSource = ['main', 'main-theme', 'main-embedded', 'main-menu', 'main-crash', 'main-url']
+    .map((stem) => fs.readFileSync(path.join(srcDir, 'main', `${stem}.ts`), 'utf8'))
+    .join('\n');
+
   const pluginSource = [
     'plugin-manager',
     'plugin-shared',
@@ -204,6 +213,7 @@ export function createRepo(): Repo {
     mountJs,
     uiPaneSource,
     pluginSource,
+    mainSource,
     processUtilsSource,
     fixture: (name: string): string =>
       fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8'),

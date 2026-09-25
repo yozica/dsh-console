@@ -238,10 +238,9 @@ export async function runRelease(repo: Repo): Promise<void> {
   //   2. 真正退出（托盘菜单 / 自动更新的 quitAndInstall / 系统关机）都走 before-quit，
   //      那里**先**置 isQuitting，close 处理器才敢放行 —— 不置位的话「收起」会把退出一起拦下来。
   // 两条都是"只有用户撞上才发现"的类型，所以在这里钉住（同 7.19 的说明）。
-  const mainCloseCode = fs
-    .readFileSync(path.join(repoRoot, 'src', 'main', 'main.ts'), 'utf8')
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  // t56/t57 起 main.ts 拆出了几个簇（主题 / 内嵌页诊断 / 菜单 / 外链 / 崩溃兜底）：
+  // 这些钉子钉的是"主进程入口那一组"的形状，所以读整份。
+  const mainCloseCode = repo.mainSource.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
   check(
     '关闭询问：只给"卡片显示出来"设时限（用户想多久都行），且真正退出不被拦',
     /const CLOSE_ACK_TIMEOUT_MS = \d+;/.test(mainCloseCode) &&
@@ -259,7 +258,13 @@ export async function runRelease(repo: Repo): Promise<void> {
   //   且 helper 自己既守 scheme 白名单、又接住失败。
   check(
     '外链：三处入口共用一个 helper（scheme 白名单 + 接住 openExternal 的失败）',
-    (mainCloseCode.match(/openExternalSafely\(/g) || []).length === 4 && // 定义 1 + 调用 3
+    // 定义一处（t57 起住在 main-url.ts）+ 三处调用都走同一个 helper；
+    // 裸的 shell.openExternal( 全组只剩 helper 里那一处
+    /async function openExternalSafely\(url: string, from: string\): Promise<boolean>/.test(
+      mainCloseCode,
+    ) &&
+      (mainCloseCode.match(/shell\.openExternal\(/g) || []).length === 1 &&
+      (mainCloseCode.match(/\.openExternalSafely\(/g) || []).length === 3 &&
       !/void shell\.openExternal\(/.test(mainCloseCode) &&
       !/await shell\.openExternal\(target\)/.test(mainCloseCode) &&
       /const EXTERNAL_URL_SCHEMES = new Set\(\['http:', 'https:', 'mailto:'\]\)/.test(

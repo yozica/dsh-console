@@ -37,6 +37,8 @@ src/
     main-theme.ts       主题与系统控件配色（窗口底色 / 标题栏浮层 / themeInfo / broadcastTheme）
     main-embedded.ts    内嵌页诊断（guest console / 加载失败 / 请求失败）与开发期产物变化自动重载
     main-menu.ts        应用图标与应用菜单（Windows/Linux 留空、macOS 最小原生菜单）
+    main-crash.ts       未捕获异常 / 未处理拒绝的兜底（落盘 + 弹带日志路径的框）
+    main-url.ts         外链的唯一入口（scheme 白名单 + 接住 openExternal 的失败）
     dsh-manager.ts      dsh 进程状态机：启动 / 停止 / 接管 / 健康轮询 / 令牌 URL 捕获
     pty-sessions.ts     node-pty 会话注册表（dsh 终端 + 本地 Shell 共用）
     process-utils.ts    **barrel**：把下面八个叶子模块的公开面逐条再导出（t50 拆开，见 7.35）
@@ -1334,6 +1336,8 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 | `main-theme.ts`    | 109  | 主题、窗口底色、标题栏浮层、`broadcastTheme`                        | `isMac` / `getWindow()` / `send()` / `getMode()`          |
 | `main-embedded.ts` | 183  | 内嵌页诊断（console / 加载失败 / 请求失败）、开发期产物变化自动重载 | `isPackaged()` / `rendererDist` / `getWindow()` / `log()` |
 | `main-menu.ts`     | 71   | 应用图标与菜单（Windows/Linux 留空、macOS 最小菜单）                | `isMac`                                                   |
+| `main-crash.ts`    | 38   | 未捕获异常 / 未处理拒绝的兜底                                       | `logFile()`                                               |
+| `main-url.ts`      | 52   | 外链的唯一入口（白名单 + 接住失败）                                 | `log()`                                                   |
 
 三条这次学到的：
 
@@ -1346,6 +1350,10 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - **`__dirname` 在这里是安全的**：`main.ts` 与 `main-menu.ts` 都编到 `dist/main/`，所以
   `path.join(__dirname, '..', '..', 'build', 'icon.png')` 原样成立（与渲染层那些「子目录要退一层」
   的坑不同）。
+- **读 `main.ts` 文本的钉子要跟着换成读整份**：`test/repo.ts` 多了 `mainSource`（`main.ts` +
+  `main-*.ts`），release 那组"启动早期 / 关窗 / 外链"的断言改读它。顺手把"外链"那条从"数
+  `openExternalSafely(` 出现几次"改成"**裸的 `shell.openExternal(` 全组只剩 1 处、3 处调用都走
+  helper**" —— 前者会因为类型注解里也出现函数名而假红，后者才是它真正想钉的不变量。
 - **`registerIpc()`（558 行、依赖 27 个模块级名字）留到下一轮**：那一批必须显式造一个
   `IpcContext`，而且 Electron 起不来时**只有真机能验**。
 
