@@ -60,7 +60,7 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
-test/selftest.ts        310 项自检（`npm test`），不需要 Electron
+test/selftest.ts        313 项自检（`npm test`），不需要 Electron
 tools/                  changelog-extract.mts / release-prepare.mts / release-notes.mts / make-icon.mts
 scripts/build.mts       受限环境用的构建包装（`npm run build:sandbox`）
 scripts/selftest-sandbox.mjs  受限环境用的自检门禁：编译 + 自检 + 清理，见第 5 节
@@ -102,7 +102,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（310 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（313 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -610,6 +610,8 @@ dsh 对**没生效的改动**基本不吭声：patch 里指向一个不存在的
   - **只对本页能改的那份层开放**：dsh 打出来的层文件可能是 profile 的 `cordis.patch.yml`，也可能是机器级的 `$DSH_HOME/cordis.patch.yml`，而 console 只写前者。这个判断在**主进程**做完（`parseProblems(stderr, ownPatchFile)` 算出 `editable`），界面只看这个字段 —— 路径比较要过 realpath（macOS 上 `/var` → `/private/var`），不能让渲染层自己去比字符串。不是本页那一层时不给按钮，只把文件路径写出来（`.plugin-problem-where`）。
   - **不传 `ownPatchFile` 时一律 `editable: false`**：老调用方忘了给路径，结论必须是"不给动作"，绝不能默认成能改。
 - **装成了普通依赖 → 「卸掉它」**。走的就是已有的 `pluginRun({ action: 'remove' })`，所以**要起 pnpm、要改 profile 的 package.json/node_modules、做完必须重启 dsh**（即时生效那条路是 patch 层，别混）。包名单独放在 `PluginProblem.packageName` 里，界面不解析那句人话。
+- **声明过 `dsh.bundle` 却不在 `dsh.profile.bundles` 里 → 「放回层里」**（`suspended-bundle`）。这一档是「临时停用之后回不去」的根因：停用把它从 bundles 里摘掉之后，它**既不是层**（层栈详情里点不到它）、**也不在 bundles 里**（列表里没有它），而旧界面把它归进"不形成层"、只给「卸掉它」—— 于是"临时"变成了单向门。分档的唯一依据是**包自己有没有声明 `dsh.bundle`**：`bundleDeclared(raw)` 是纯函数，`declaresBundle(profileDir, name)` 读 profile 的 `node_modules`（`link:` 是软链，也读得到）。**读不到包目录时按"本来就不是 bundle"处理** —— 宁可只给「卸掉它」，也不能把真依赖说成"能放回"。
+  - **位置不需要界面记着**：`applyBundleEdit` 在 `index < 0` 时调 `recoverBundleIndex`，从这份 profile 目录里**最近的** `package.json.bak-*` 里找回它当时在第几位（找不到就追加到末尾，并在 `detail` 里说明是末尾）。层序就是覆盖顺序，插错位置等于悄悄改配置；而"刚停用"那条内存记录关掉页面就没了，所以恢复不能依赖它。
 - **列在 bundles 里却没贡献**没有通用修法（可能是包坏了、也可能是 patch 冲突），所以**不给动作**，只把话说清楚。
 
 自检守着：「补丁层：巡检给的『删掉这一行』只删那一条（覆盖条目 / insert 块里的都认，删完仍留顶层数组）」「插件：巡检里『指向了不存在的 id』只有本页能改的那份层才给动作（机器级那层不给）」「插件：装进来却没形成层的依赖、以及什么都没贡献的 bundle 都会被列出来（普通依赖带包名）」「救援：基线视图里不给作用于真实配置的动作（条目上的、以及巡检那块的两个按钮）」。
@@ -620,7 +622,8 @@ dsh 对**没生效的改动**基本不吭声：patch 里指向一个不存在的
 
 - **什么时候算"起不来"**：`degraded`（进程活着但超时没就绪）或 `stopped` + `lastExit.code !== 0`（起来又退出）；`pluginInspect` 失败（配置读不出来）同样弹救援条。原因那一行从快照的 `dsh 输出：…` 日志里取（主进程在非正常退出时记的），**不重新解析终端缓冲**。
 - **出口一：只看内置层**（`--dump-default-config`）——**配置坏掉时它照样能成**：实测 overlay 是非法 YAML 时 `--dump-config` 退出码 1，而 `--dump-default-config` 退出码 0、152 条。界面切到「基线」视图并写明"这不是你真正生效的配置"；基线视图里**不给**「禁用 / 启用」「移除我的插入」，也不显示运行状态 —— 那些动作都作用于真实配置。
-- **出口二：临时停用某个 bundle**（`profile-bundles.ts`）——改 `dsh.profile.bundles`，备份 + 原子写（`safe-file.ts`），**并记住它原来的位置**：层序就是覆盖顺序，恢复时追加到末尾会把"恢复"变成"挪到最后"。界面在救援条与层栈详情两个地方都给这个动作；停用之后才出现「恢复」。
+- **出口二：临时停用某个 bundle**（`profile-bundles.ts`）——改 `dsh.profile.bundles`，备份 + 原子写（`safe-file.ts`），**并记住它原来的位置**：层序就是覆盖顺序，恢复时追加到末尾会把"恢复"变成"挪到最后"。界面在救援条与层栈详情两个地方都给这个动作。
+  - **「恢复」不能只长在救援条里**：救援条只在 dsh 起不来时出现，而在层栈详情里点「临时停用」的人 dsh 明明是好的 —— 恢复按钮必须有一个**跟 dsh 状态无关**的入口：巡检那行的「掉出了层列表 / 放回层里」（见上一节），以及停用后那条黄条上的「放回 `<包名>`」（带这次记住的原位置）。这条是踩出来的：用户真机上停用了 `@yozica/dsh-plugin-paths` 之后，界面上再也找不到放回去的地方。
 - **不硬猜是哪一层**：只有失败那一行里**真的出现了**某个 bundle 的名字才给它「临时停用」按钮，认不出来就只给「只看内置层」+"到层栈里挑一个"。两条路找这个名字：层栈还在就用层栈（能顺带知道它解析到哪、什么版本）；**dump 读不出来时层栈是空的**，退到 `PluginInspectResult.bundles`（`inspect` 失败时也返回它）—— 而且**只认 `inBox === false` 的**：停用 `@deepseek-ai/dsh-base` 等于把 dsh 拆了。这条是"某个 bundle 解析不到 → dsh 起不来"那个场景唯一的出路。
 - **出口三：修**（两条，都只认能认出来的坏法，且改之前先备份）：「修成空配置」（`repairEmptyArray`，只对"只剩注释 / 空文件"生效，别的一律不动并说明原因）、「从备份恢复…」（列出 `cordis.patch.yml.bak-*`，最近的在前；恢复时当前内容也会先备份，所以这一步同样可逆）。**渲染层递来的路径不可信**：`restorePatchBackup` 只接受这份 profile 目录里的 `.bak-`。
 - **失败那一行要滤掉 Node 堆栈**：`lastOutputLine()` 先剔掉 `file:///…`、`at …`、含 `throw new` 与 `^` 的行，再优先取 `Error: …` / `dsh: …` / `ERR_PNPM_*`。不滤的话救援条会把源码行当原因显示（真机截图里就是 `if (!Array.isArray(parsed)) throw new Error(...)`）。
@@ -930,7 +933,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，310 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，313 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

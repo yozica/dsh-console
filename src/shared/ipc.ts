@@ -463,7 +463,14 @@ export interface PluginTreeLayer {
 
 /** "没报错的错"：这些不会让命令失败，但会让用户的改动悄悄不生效 */
 export interface PluginProblem {
-  kind: 'unmatched-patch' | 'parse-error' | 'plain-dependency' | 'missing-layer' | 'other';
+  kind:
+    | 'unmatched-patch'
+    | 'parse-error'
+    | 'plain-dependency'
+    /** 声明了 `dsh.bundle` 却不在 `dsh.profile.bundles` 里：被摘掉的那一种，能放回层里 */
+    | 'suspended-bundle'
+    | 'missing-layer'
+    | 'other';
   /** 人类可读的一句话（已经是我们归纳过的说法） */
   detail: string;
   /** 涉及的文件（patch 层文件） */
@@ -472,7 +479,10 @@ export interface PluginProblem {
   entryId?: string;
   /** parse-error：dsh 报的层标签（overlay / bundle 名） */
   layer?: string;
-  /** plain-dependency：装进来却不形成层的那个包名（界面据此给「卸掉它」） */
+  /**
+   * plain-dependency / suspended-bundle：装进来却不形成层的那个包名。
+   * 界面据此给「卸掉它」；`suspended-bundle` 还多给一个「放回层里」。
+   */
   packageName?: string;
   /**
    * unmatched-patch：这一条所在的文件**是不是本页能改的那份**（profile 的

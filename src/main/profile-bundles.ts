@@ -93,6 +93,52 @@ export function suspendBundle(text: string, name: string): BundleEditOutcome {
   };
 }
 
+/**
+ * 从改动前的备份里找回它**原来**在第几位。
+ *
+ * 为什么需要：界面上的「恢复」只在"刚停用"那一次手里有 index（内存里那条记录），关掉页面 /
+ * 重开应用之后就没有了 —— 而"恢复"插错位置会悄悄改掉层序。好在每次改动都会留一份
+ * `package.json.bak-<时间戳>`，最近的那份里就写着它当时在第几位。取**最近的**一份含这个名字的
+ * 备份（备份是按 mtime 排的），找不到就返回 null（调用方据此追加到末尾、并说实话）。
+ */
+export function recoverBundleIndex(
+  profileDir: string,
+  name: string,
+): { index: number; from: string } | null {
+  const prefix = 'package.json.bak-';
+  let names: string[];
+  try {
+    names = fs.readdirSync(profileDir).filter((item) => item.startsWith(prefix));
+  } catch {
+    return null;
+  }
+  const files = names
+    .map((item) => {
+      const file = path.join(profileDir, item);
+      try {
+        return { item, file, at: fs.statSync(file).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is { item: string; file: string; at: number } => item !== null)
+    .sort((a, b) => b.at - a.at);
+
+  for (const candidate of files) {
+    let text: string;
+    try {
+      text = fs.readFileSync(candidate.file, 'utf8');
+    } catch {
+      continue;
+    }
+    const manifest = parseManifest(text);
+    if (!manifest) continue;
+    const index = readBundles(manifest).indexOf(name);
+    if (index !== -1) return { index, from: candidate.item };
+  }
+  return null;
+}
+
 /** 插回原来的位置（index 超出范围就追加到末尾） */
 export function restoreBundle(text: string, name: string, index: number): BundleEditOutcome {
   const manifest = parseManifest(text);
@@ -145,8 +191,22 @@ export function applyBundleEdit(
     };
   }
 
+  // 「恢复」时没带位置（界面重开过，内存里那条"刚停用"的记录没了）→ 从改动前的备份里找。
+  // 找不到就只能追加到末尾，并在 detail 里说清这是"末尾"、而不是它原来的位置。
+  let recovery = '';
+  let at = index;
+  if (action === 'restore' && (!Number.isInteger(at) || at < 0)) {
+    const found = recoverBundleIndex(profileDir, trimmed);
+    if (found) {
+      at = found.index;
+      recovery = `（位置照 ${found.from} 里记着的原样）`;
+    } else {
+      recovery = '（没有它原来在第几位的记录，只能放在末尾）';
+    }
+  }
+
   const outcome =
-    action === 'suspend' ? suspendBundle(current, trimmed) : restoreBundle(current, trimmed, index);
+    action === 'suspend' ? suspendBundle(current, trimmed) : restoreBundle(current, trimmed, at);
   if (!outcome.changed) {
     return {
       ok: true,
@@ -172,7 +232,7 @@ export function applyBundleEdit(
   return {
     ok: true,
     changed: true,
-    detail: outcome.detail,
+    detail: `${outcome.detail}${recovery}`,
     file,
     backup,
     index: outcome.index,
