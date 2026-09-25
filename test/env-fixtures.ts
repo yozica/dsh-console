@@ -28,6 +28,12 @@ export interface EnvFixtures {
   envMainCode: string;
   /** `panes/EnvPane.vue` 原文，剥注释 */
   envPaneCode: string;
+  /** `src/main/node-installer.ts` 原文，剥注释（门禁界面与安装引擎两组都在读） */
+  installerCode: string;
+  /** `shell/EnvGate.vue` 原文（门禁界面的标记与文案） */
+  gateRaw: string;
+  /** 同上，剥注释 */
+  gateCode: string;
   envVersionProbe(over?: Partial<envDoctor.VersionProbe>): envDoctor.VersionProbe;
   envDshProbe(over?: Partial<envDoctor.DshProbe>): envDoctor.DshProbe;
   envProbe(over?: Partial<envDoctor.EnvProbeRaw>): envDoctor.EnvProbeRaw;
@@ -52,6 +58,11 @@ export function createEnvFixtures(repo: Repo): EnvFixtures {
   const envPaneCode = stripComments(
     fs.readFileSync(path.join(repo.rendererDir, 'panes', 'EnvPane.vue'), 'utf8'),
   );
+  const installerCode = stripComments(
+    fs.readFileSync(path.join(repo.srcDir, 'main', 'node-installer.ts'), 'utf8'),
+  );
+  const gateRaw = fs.readFileSync(path.join(repo.rendererDir, 'shell', 'EnvGate.vue'), 'utf8');
+  const gateCode = stripComments(gateRaw);
 
   // 夹具：一份"什么都好"的原始事实，各条断言按需覆盖一两项。
   const envVersionProbe = (over: Partial<envDoctor.VersionProbe> = {}): envDoctor.VersionProbe => ({
@@ -116,6 +127,9 @@ export function createEnvFixtures(repo: Repo): EnvFixtures {
     envJudgeBody,
     envMainCode,
     envPaneCode,
+    installerCode,
+    gateRaw,
+    gateCode,
     envVersionProbe,
     envDshProbe,
     envProbe,
