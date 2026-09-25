@@ -1550,74 +1550,11 @@ body[data-immersive='true'] .webview-wrap {
   color: var(--ink);
 }
 
-/* ============================================================ 设置 */
-
-.settings {
-  display: grid;
-  flex: 1 1 auto;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  /* 行高必须跟着内容走。默认 auto 行 + 卡片上的 min-height:0（看板侧栏需要它才能内部滚动）
-     会让这些卡片被压扁到容器高度以内，多出来的内容被 .panel 的 overflow:hidden 裁掉，
-     而且 scrollHeight == clientHeight → 连滚动条都没有（踩过：设置页最后一项永远看不到）。 */
-  grid-auto-rows: max-content;
-  gap: 16px;
-  padding: 4px 20px 20px;
-  align-content: start;
-  overflow: auto;
-  min-height: 0;
-}
-
-.form-row {
-  display: grid;
-  grid-template-columns: 118px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 7px 0;
-}
-
-.form-row > label {
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-}
-
-.form-row input[type='text'],
-.form-row input[type='number'],
-.form-row select {
-  width: 100%;
-  height: 30px;
-  padding: 0 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-control);
-  color: var(--ink);
-  font-size: var(--t-sm);
-  transition:
-    border-color var(--dur) ease,
-    box-shadow var(--dur) ease;
-}
-
-.form-row input::placeholder {
-  color: var(--ink-faint);
-}
-
-.form-row input:focus,
-.form-row select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--focus);
-}
-
-.input-suffix {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.input-suffix > span {
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  white-space: nowrap;
-}
+/* ============================================================ 共享控件
+   这一段只留**多个页面都在画**的东西：复选框行（设置页 / 关闭确认卡片 / 看板 / 环境自检 /
+   环境向导都画它）与「卡片后面那句提示」。按页面归属的样式不再堆在这张表里 ——
+   设置页那一族（`.settings` / `.form-row` / `.input-suffix` / `.update-*`）连同「聚焦蒙层」
+   都在 `panes/SettingsPane.vue` 的 `<style scoped>` 里，分层规则见 AGENTS §7.33。 */
 
 .check {
   display: flex;
@@ -1636,118 +1573,8 @@ body[data-immersive='true'] .webview-wrap {
   cursor: pointer;
 }
 
-/* 「关于」里的更新卡片：标题与状态一行，进度条只在下载时出现 */
-.update-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* 底栏点「发现新版本」进来时，这一张卡片会被聚焦蒙层单独亮出来：见后面的「聚焦蒙层」一节 */
-
-.update-title {
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-}
-
-.update-phase {
-  margin-top: 8px;
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-}
-
-.update-phase[data-phase='available'],
-.update-phase[data-phase='downloaded'] {
-  color: var(--accent);
-}
-
-.update-phase[data-phase='error'] {
-  color: var(--rose);
-}
-
-/* 进度条：下沉井当轨道、强调色当填充（不引第三方进度条，也不新增颜色令牌） */
-.update-progress {
-  height: 6px;
-  margin-top: 10px;
-  background: var(--well);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.update-bar {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 999px;
-  transition: width var(--dur) ease;
-}
-
 .panel-block > .hint {
   margin-top: 12px;
-}
-
-/* ============================================================ 聚焦蒙层
-
-   底栏点「发现新版本」进来的最后一步：铺一层盖满窗口的蒙层，在「关于」卡片处开一个洞，
-   把这一张卡片单独亮出来（见 SettingsPane 的 spotlightUpdateCard）。
-
-   两个元素分工：「洞」画那一圈铺满全屏的阴影（box-shadow 的 9999px 展开），「环」负责
-   强调色描边与呼吸。分开是因为环要动阴影扩散，而洞那层带着 9999px 的巨大阴影，
-   拿它做动画既贵又难看。
-   位置与尺寸由 JS 按 getBoundingClientRect 写在内联样式上 —— 蒙层是 fixed，
-   与 rect 正好同一个坐标系。 */
-
-.spotlight {
-  position: fixed;
-  inset: 0;
-  z-index: 95;
-  /* 不吃鼠标事件：它只是把"看这里"说清楚，用户想直接点卡片上的按钮不该被挡住
-     （那一下点击同时也会把蒙层收掉，见 SettingsPane 的 dismissSpotlight） */
-  pointer-events: none;
-  animation: spotlight-in 220ms ease-out 1;
-  transition: opacity 240ms ease;
-}
-
-/* 淡出：加上这个类，等 transition 走完再由 JS 摘掉节点 */
-.spotlight.is-closing {
-  opacity: 0;
-}
-
-@keyframes spotlight-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-.spotlight-hole {
-  position: absolute;
-  border-radius: var(--r-card);
-  box-shadow: 0 0 0 9999px var(--scrim);
-}
-
-.spotlight-ring {
-  position: absolute;
-  border-radius: var(--r-card);
-  animation: spotlight-ring 1.3s ease-in-out 2;
-}
-
-@keyframes spotlight-ring {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 1px var(--accent),
-      0 0 0 6px var(--accent-soft);
-  }
-
-  50% {
-    box-shadow:
-      0 0 0 1px var(--accent),
-      0 0 0 13px var(--accent-soft);
-  }
 }
 
 /* ============================================================ 关闭确认卡片

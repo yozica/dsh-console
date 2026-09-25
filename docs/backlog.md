@@ -34,7 +34,18 @@
 读全局表的留在原处、局部样式改成读 `.vue` 的 style 块；那条"class 都有样式"的断言要跨两层继续成立。
 试点跑通后再按页面推。
 
-**前置**：插件这边（`dsh-plugins` 的 `paths` 包）先做完 —— 用户 2026-09-25 定的顺序。
+**进展（t48，设置页试点已合并）**：`panes/SettingsPane.vue` 的 `<style scoped>` 收了 198 行
+（`.settings` / `.form-row` / `.input-suffix` / `.update-*` + 「聚焦蒙层」的 `.spotlight`），
+全局表 4502 → 4329 行；`.check` 与 `.panel-block > .hint` 是共享件，留在全局表。
+判据、两个后果（scoped 会让特异性 +1；自检必须跨两层看）与三道验收（`选择器 → 声明` 多重集的
+机械等价、headless Chrome 逐像素比对、自检钉子）都写在 AGENTS §7.33 —— 照着做下一页即可。
+
+**下一批顺序**（风险递增，一页一个 PR）：内嵌界面（UiPane）→ 终端类页面（TerminalPane + DshTerminal）
+→ 控制台（DashboardPane）→ 归档会话页（ArchivePane）→ 环境自检（EnvPane）→ 插件页（PluginPane，730 行最大）
+→ 首启环境向导与入口门禁（EnvGate，1038 行、与 EnvPane 共用一批规则，最后动）。
+覆盖层（启动锁 / 关闭确认卡片）与共享件（`.btn` / `.empty` / 指示灯）留在全局表。
+
+**前置**：插件这边（`dsh-plugins` 的 `paths` 包）先做完 —— 用户 2026-09-25 定的顺序。**已满足**。
 
 ## 2. macOS 自动更新（先放着）
 

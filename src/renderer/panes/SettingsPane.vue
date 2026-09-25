@@ -653,3 +653,183 @@ onUnmounted(() => {
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+/* 设置页自己的样式（t48 样式分层试点，规则见 AGENTS §7.33）。
+   以前它们堆在 styles.css 的「设置」一节里；搬进来之后全局表只留**跨组件**的东西：
+   `.check`（多个页面都在画的复选框行）与 `.panel-block > .hint` 仍然留在那张表里 ——
+   同一个元素会同时吃到两层，所以搬走的必须是"只有这一页在用"的那些（判据见 §7.33）。 */
+
+.settings {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  /* 行高必须跟着内容走。默认 auto 行 + 卡片上的 min-height:0（看板侧栏需要它才能内部滚动）
+     会让这些卡片被压扁到容器高度以内，多出来的内容被 .panel 的 overflow:hidden 裁掉，
+     而且 scrollHeight == clientHeight → 连滚动条都没有（踩过：设置页最后一项永远看不到）。 */
+  grid-auto-rows: max-content;
+  gap: 16px;
+  padding: 4px 20px 20px;
+  align-content: start;
+  overflow: auto;
+  min-height: 0;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.form-row > label {
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+.form-row input[type='text'],
+.form-row input[type='number'],
+.form-row select {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  transition:
+    border-color var(--dur) ease,
+    box-shadow var(--dur) ease;
+}
+
+.form-row input::placeholder {
+  color: var(--ink-faint);
+}
+
+.form-row input:focus,
+.form-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.input-suffix {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-suffix > span {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+/* 「关于」里的更新卡片：标题与状态一行，进度条只在下载时出现 */
+.update-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-title {
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+.update-phase {
+  margin-top: 8px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.update-phase[data-phase='available'],
+.update-phase[data-phase='downloaded'] {
+  color: var(--accent);
+}
+
+.update-phase[data-phase='error'] {
+  color: var(--rose);
+}
+
+/* 进度条：下沉井当轨道、强调色当填充（不引第三方进度条，也不新增颜色令牌） */
+.update-progress {
+  height: 6px;
+  margin-top: 10px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.update-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width var(--dur) ease;
+}
+
+/* 聚焦蒙层（底栏点「发现新版本」进来的最后一步）：铺一层盖满窗口的蒙层，在「关于」卡片处
+   开一个洞，把这一张卡片单独亮出来（见本文件的 spotlightUpdateCard）。
+
+   两个元素分工：「洞」画那一圈铺满全屏的阴影（box-shadow 的 9999px 展开），「环」负责
+   强调色描边与呼吸。分开是因为环要动阴影扩散，而洞那层带着 9999px 的巨大阴影，
+   拿它做动画既贵又难看。
+   位置与尺寸由 JS 按 getBoundingClientRect 写在内联样式上 —— 蒙层是 fixed，
+   与 rect 正好同一个坐标系。 */
+
+.spotlight {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  /* 不吃鼠标事件：它只是把"看这里"说清楚，用户想直接点卡片上的按钮不该被挡住
+     （那一下点击同时也会把蒙层收掉，见本文件的 dismissSpotlight） */
+  pointer-events: none;
+  animation: spotlight-in 220ms ease-out 1;
+  transition: opacity 240ms ease;
+}
+
+/* 淡出：加上这个类，等 transition 走完再由 JS 摘掉节点 */
+.spotlight.is-closing {
+  opacity: 0;
+}
+
+@keyframes spotlight-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.spotlight-hole {
+  position: absolute;
+  border-radius: var(--r-card);
+  box-shadow: 0 0 0 9999px var(--scrim);
+}
+
+.spotlight-ring {
+  position: absolute;
+  border-radius: var(--r-card);
+  animation: spotlight-ring 1.3s ease-in-out 2;
+}
+
+@keyframes spotlight-ring {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 0 0 6px var(--accent-soft);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 0 0 13px var(--accent-soft);
+  }
+}
+</style>
