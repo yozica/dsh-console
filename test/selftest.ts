@@ -1143,7 +1143,14 @@ async function main(): Promise<void> {
         stylesCode,
       ) &&
       /\.toast \{/.test(stylesCode) === false &&
-      /\.banner\.arrival/.test(stylesCode) === false,
+      /\.banner\.arrival/.test(stylesCode) === false &&
+      // 单行的结局提示要竖直居中：多行那套 flex-start + 图标 margin-top 会让文字偏上
+      // （用户真机截图指出），所以单行这一态必须有 .line 覆盖，且渲染层要真的加上这个类
+      /\.banner\.line \{[\s\S]*?align-items: center;[\s\S]*?\}/.test(stylesCode) &&
+      /\.banner\.line \.i \{[\s\S]*?margin-top: 0;[\s\S]*?\}/.test(stylesCode) &&
+      /:class="\{ rose: navOutcome === 'failed', line: !!navLine \}"/.test(
+        fs.readFileSync(path.join(rendererDir, 'panes', 'PluginPane.vue'), 'utf8'),
+      ),
   );
 
   // t46：用户在锁上按「不等了」/ Esc 要**取消**这次跳转（唯一会取消的路径，规格 §2.4）
