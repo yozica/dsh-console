@@ -36,3 +36,12 @@ export function formatAgo(at: number, now = Date.now()): string {
   if (hours < 24) return `${hours} 小时前`;
   return `${Math.floor(hours / 24)} 天前`;
 }
+
+/** 字节数说成人话：1536 → 「1.5 KB」/「2.00 GB」（门禁与详情层的下载进度共用） */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  const mb = bytes / 1024 / 1024;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  if (mb >= 1) return `${mb.toFixed(1)} MB`;
+  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
+}

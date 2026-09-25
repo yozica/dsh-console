@@ -48,7 +48,14 @@ import {
   stopNodeInstall,
   wizard,
 } from '../lib/env-wizard.js';
-import { formatAgo } from '../lib/format.js';
+import { installRunning, installSettled } from '../lib/env-install-phase.js';
+import { formatAgo, formatBytes } from '../lib/format.js';
+import {
+  BUSY_HINT,
+  CHANNEL_SHORT,
+  NODE_DOWNLOAD_URL,
+  versionWithChannel,
+} from '../lib/gate-copy.js';
 import { platform } from '../lib/platform.js';
 import { currentTab, dsh, phase, settings } from '../lib/store.js';
 import type {
@@ -57,7 +64,6 @@ import type {
   EnvCheckStatus,
   EnvFixAction,
   EnvFixPlan,
-  EnvInstallPhase,
   EnvInstallState,
   EnvNodeChannel,
   EnvNodeOwner,
@@ -66,12 +72,6 @@ import type {
 } from '../../shared/ipc.js';
 
 const api = window.dshConsole;
-
-/** 官方下载页：认不出这个 Node 是怎么装的 / 不想让我们动时的出路 */
-const NODE_DOWNLOAD_URL = 'https://nodejs.org/en/download';
-
-/** 后台忙时的统一说明：与被禁用的按钮成对出现，禁用必须看得到原因（交互 §2.9 / §11.6） */
-const BUSY_HINT = '正在执行上一步的操作，完成后按钮会自动恢复';
 
 /**
  * 归属事实的人话。读的是主进程给的字段（报告里的 `nodeOwner`、计划里的 `owner`），
@@ -85,15 +85,6 @@ const OWNER_WORDS: Record<EnvNodeOwner, string> = {
 
 /** 归属判不出来时那句话（需求 §7.7 第 3 条 / 交互 §10.2） */
 const UNKNOWN_OWNER_NOTE = '我们认不出这个 Node 是怎么装的，所以不会替它做自动更新。';
-
-/**
- * 档位的短词（并排显示与换档句用它；选择区的控件用的是「最新稳定版 / 最新当前版」）。
- * 档位与版本号大小无关，只与官方清单里那一条的档有关，所以这里只做翻译、不做判断。
- */
-const CHANNEL_SHORT: Record<EnvNodeChannel, string> = {
-  lts: '稳定版',
-  current: '当前版',
-};
 
 /** 八项的标题。写成 Record 是为了漏一个 id 就 tsc 报错（与契约里的联合类型对齐） */
 const TITLES: Record<EnvCheckId, string> = {
@@ -112,29 +103,6 @@ const STATUS_TEXT: Record<EnvCheckStatus, string> = {
   warn: '需要注意',
   missing: '不可用',
 };
-
-/** 安装通道里"还在跑"的相位 */
-const INSTALL_BUSY_PHASES: EnvInstallPhase[] = [
-  'preparing',
-  'downloading',
-  'verifying',
-  'installing',
-  'waiting',
-  'rechecking',
-];
-
-function installRunning(state: EnvInstallState): boolean {
-  return !state.detached && INSTALL_BUSY_PHASES.includes(state.phase);
-}
-
-function installSettled(state: EnvInstallState): boolean {
-  return (
-    state.detached ||
-    state.phase === 'done' ||
-    state.phase === 'cancelled' ||
-    state.phase === 'error'
-  );
-}
 
 const confirming = ref<EnvFixAction | null>(null);
 const outputOpen = ref(false);
@@ -577,11 +545,6 @@ const updateResultFact = computed(() => {
 // ------------------------------------------------------------ 更新确认区的事实
 
 /** 「版本（档位）」的人话：档位判不出来时写**档位未知** —— 不许省略、不许猜（需求 §8.5 第 1 条） */
-function versionWithChannel(version: string | null, channel: EnvNodeChannel | null): string {
-  const word = channel ? CHANNEL_SHORT[channel] : '档位未知';
-  return version ? `${version}（${word}）` : `版本没测到（${word}）`;
-}
-
 /** 更新前那一半：版本与档位都来自计划（动作开始前就定下的那一份） */
 const nodeCurrentText = computed(() =>
   versionWithChannel(
@@ -672,14 +635,6 @@ const updateResultChannels = computed(() => {
   const tail = plan.switchesChannel ? ' —— 换档完成。' : '。';
   return `Node.js：${before} → ${after}${tail}`;
 });
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '—';
-  const mb = bytes / 1024 / 1024;
-  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
-  if (mb >= 1) return `${mb.toFixed(1)} MB`;
-  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
-}
 
 /**
  * 更新 Node 之后把本应用启动的 dsh 重新拉起来（停它的是更新前置，不是我们偷偷停的）。
