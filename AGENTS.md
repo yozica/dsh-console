@@ -1230,6 +1230,39 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 (?=…)|\Z` 会一路吃到文件尾，把 `node-io.ts`
   从 480 行砍成 185 行。**教训：按文本块删东西，先 `git show HEAD:<file>` 留一份原文，删完立刻比行数。**
 
+### 7.36 渲染层拆模块：纯逻辑进 `lib/`，DOM 与模板留在组件（t53 起）
+
+**现状（第一步，2026-09-26）**：`shell/EnvGate.vue` 2648 → 2515 行、`panes/EnvPane.vue` 1546 → 1501 行，
+新增两个共享模块：
+
+| 文件                       | 行数 | 装什么                                                                                                                                          |
+| -------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/gate-copy.ts`         | 135  | 门禁与「运行环境」详情层共用的**词表与现成句子**（下载页 / 忙提示 / 三步文案 / 五项状态词 / 方法事实 / 档位 / 并存风险 / `versionWithChannel`） |
+| `lib/env-install-phase.ts` | 34   | 安装与修复的相位判据（`INSTALL_BUSY_PHASES` / `installRunning` / `installSettled` / `isFixSettled`）                                            |
+| `lib/format.ts`            | +9   | 多一个 `formatBytes`（两处各抄过一份）                                                                                                          |
+
+这一步**只搬零风险的纯逻辑**：不动 `<template>`、不动 `<style>`（判据是 `git diff` 里以 `<` 开头的行
+一个都没有），所以**免像素对比**；验收仍按老四样：`vue-tsc` / `eslint` / `npm test` 输出逐行一致 /
+`node scripts/selftest-sandbox.mjs`。顺手 dedupe 了六处逐字重复：`NODE_DOWNLOAD_URL`、`BUSY_HINT`、
+`CHANNEL_SHORT`、`versionWithChannel`、`INSTALL_BUSY_PHASES`（含两个判据函数）、`formatBytes`。
+
+**三条铁律**（后面继续拆 EnvGate / PluginPane / EnvPane 时照着来）：
+
+1. **`lib/**` 不许有 DOM**。自检直接 import `lib/` 里的纯模块来钉判据，而它的编译图
+   `tsconfig.node.json` **没有 DOM 类型** —— 一旦某个 lib 模块用了 `document` / `window` / `HTMLElement`，
+   只要它进了那张图就会编译失败。**注意这条保证只覆盖"被自检 import 的闭包"**：`vue-tsc` 有 DOM，
+   所以一个新 lib 模块如果没人 import，用了 DOM 也不会红。要么让它保持纯、要么留在组件里。
+2. **词表/判据放一份**。门禁层与详情层画的是同一套设计稿（冻结 §3.8 / 交互 §4.1），抄两份就会漂移；
+   这次六处重复里就有两处已经不一样的地方（`NODE_DOWNLOAD_URL` 的注释与用途各不相同）。
+3. **搬走的部分要确认没有断言在读它的文本**。自检里有一批"读 .vue 源码文本"的钉子（`gateRaw` / `gateCode`
+   与 `TEMPLATE_OF(EnvPane.vue)`），它们钉的是**行为与形状**（比如"逃生口的处理函数里没有 `api.`"、
+   "回看卡里没有安装动作"），搬纯词表不影响；但一旦要搬**模板或样式**，就得先看 §7.33 那三道验收
+   （机械等价 / 逐像素 / 自检），并同步改 `styleLayers` 表。
+
+**还没做的**（后续 PR）：组件级拆分（`GateNodeConfirm.vue` / `GateOutput.vue`、`EnvCheckRow.vue` /
+`EnvUpdateConfirm.vue`、`PluginRescue.vue` …）与纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts` /
+`lib/plugin-view.ts`）；模板与样式一起搬的那些必须带 §7.33 的三道验收。
+
 ## 8. 调试手段
 
 ### 自检

@@ -80,18 +80,37 @@ import {
   wizard,
   wizardError,
 } from '../lib/env-wizard.js';
+import {
+  BUSY_HINT,
+  CHANNEL_OPTIONS,
+  CHANNEL_SHORT,
+  CHANNEL_TITLES,
+  CHECK_TITLES,
+  FACT_STATUS_WORDS,
+  METHOD_FACTS,
+  METHOD_OPTIONS,
+  METHOD_RISK,
+  NODE_DOWNLOAD_URL,
+  STEP_CARD_TITLES,
+  STEP_LABELS,
+  STEP_STATE_WORDS,
+  STEP_TITLES,
+  STEP_WHY,
+  versionWithChannel,
+  type FactStatus,
+  type MethodArea,
+} from '../lib/gate-copy.js';
+import { installRunning, installSettled, isFixSettled } from '../lib/env-install-phase.js';
+import { formatBytes } from '../lib/format.js';
 import { advanceNotice, canViewStep } from '../lib/wizard-view.js';
 import { openEnvDetail } from '../lib/env-layer.js';
 import { currentTab, settings } from '../lib/store.js';
 import type {
   EnvCheck,
   EnvCheckId,
-  EnvCheckStatus,
   EnvFixAction,
   EnvFixPlan,
   EnvFixPhase,
-  EnvInstallPhase,
-  EnvInstallState,
   EnvNodeChannel,
   EnvNodeMethod,
   EnvNodeMode,
@@ -103,117 +122,6 @@ import type {
 } from '../../shared/ipc.js';
 
 const api = window.dshConsole;
-
-/** 官方下载页：装不上 / 不想让我们装时的出路（本应用改动为零） */
-const NODE_DOWNLOAD_URL = 'https://nodejs.org/en/download';
-
-/** 后台忙时的统一说明：与被禁用的按钮成对出现，禁用必须看得到原因（交互 §2.9 / §11.6） */
-const BUSY_HINT = '正在执行上一步的操作，完成后按钮会自动恢复';
-
-const STEP_LABELS: Record<EnvWizardStepId, string> = {
-  node: '第一步',
-  pnpm: '第二步',
-  dsh: '第三步',
-};
-
-const STEP_TITLES: Record<EnvWizardStepId, string> = {
-  node: '安装 Node.js',
-  pnpm: '安装 pnpm',
-  dsh: '安装 dsh',
-};
-
-const STEP_CARD_TITLES: Record<EnvWizardStepId, string> = {
-  node: '第一步：安装 Node.js',
-  pnpm: '第二步：安装 pnpm',
-  dsh: '第三步：安装 dsh',
-};
-
-const STEP_WHY: Record<EnvWizardStepId, string> = {
-  node: '没有它 dsh 起不来，也无法安装后面的东西',
-  pnpm: '装插件、卸插件、升级插件都要用它',
-  dsh: 'dsh 是 DSH Console 要启动的服务本体；没有它界面里什么都做不了',
-};
-
-const CHECK_TITLES: Record<EnvCheckId, string> = {
-  node: '外部 Node',
-  'node-version': 'Node 版本',
-  npm: 'npm',
-  pnpm: 'pnpm',
-  dsh: 'dsh 本体',
-  'dsh-run': 'dsh 能不能跑',
-  'bundled-runtime': '应用自带运行时',
-  shell: '本地 Shell',
-};
-
-/** 事实行的结论词：三种既有状态 + 两个"不是状态"的态（视觉 §6.1 的五个词逐字照用） */
-const FACT_STATUS_WORDS: Record<EnvCheckStatus | 'skipped' | 'unknown', string> = {
-  ok: '正常',
-  warn: '需要注意',
-  missing: '不可用',
-  skipped: '已跳过',
-  unknown: '没测出来',
-};
-
-const STEP_STATE_WORDS: Record<EnvStepStatus, string> = {
-  done: '已完成',
-  todo: '待办',
-  skipped: '已跳过',
-  unknown: '没测出来',
-};
-
-/** 事实行的灯：三种既有的自检状态 + 两个"不是状态"的态（见视觉 §6.1） */
-type FactStatus = EnvCheckStatus | 'skipped' | 'unknown';
-
-/**
- * 「这份 Node 是谁管的」这一件事实**只由主进程给**（需求 §7.7 的纯函数），
- * 这一层按它决定选择区长什么样 —— 判得出归属时只给一条路、判不出来时不预选（§7.8 那张表）。
- */
-type MethodArea = 'fact-nvm' | 'fact-system' | 'choose' | 'choose-fresh';
-
-/**
- * 选择区里"方法"那一块的事实行（逐字来自交互 §4.1 的 t29 修订 4-a；`choose-fresh` 那一支见 4-c）。
- * **`choose-fresh` 故意不在表里**：它的事实行要按"这台机器上有没有版本管理器"分两种说法，
- * 所以由 `methodFact` 现算 —— 见下面的 computed。
- */
-const METHOD_FACTS: Record<Exclude<MethodArea, 'choose-fresh'>, string> = {
-  'fact-nvm': '这份 Node 是版本管理器（nvm）管的，所以我们也用它来装 / 换。',
-  'fact-system': '这份 Node 是官方安装包装的，所以我们也用官方安装包把它换到同一个位置。',
-  choose: '我们认不出这个 Node 是怎么装的。',
-};
-
-/** 档位控件的两个选项（与 §4.1 第 4-b 条逐字一致：不用 `LTS` 这类术语） */
-const CHANNEL_OPTIONS: { id: EnvNodeChannel; title: string; note: string }[] = [
-  { id: 'lts', title: '最新稳定版', note: '发布更久、坑更少。' },
-  { id: 'current', title: '最新当前版', note: '追最新特性，可能还没进入稳定期。' },
-];
-
-/** 两条安装路（§4.1 的说明行逐字照用）；归属判不出来时这两条各带一句并存风险 */
-const METHOD_OPTIONS: { id: EnvNodeMethod; title: string; note: string }[] = [
-  {
-    id: 'direct',
-    title: '直接安装官方版本（会问一次管理员权限）',
-    note: '官方安装包，装到系统的默认位置；这台电脑上原来的 Node 会被换成这个版本。',
-  },
-  {
-    id: 'nvm',
-    title: '用版本管理器安装（不用管理员权限，可以装多个版本）',
-    note: '先装一个版本管理器（nvm），再用它装 Node；不会动系统里原有的 Node，之后可以随时切换版本。',
-  },
-];
-
-/** 档位词（事实行与「版本档位」那一行用它） */
-const CHANNEL_TITLES: Record<EnvNodeChannel, string> = {
-  lts: '最新稳定版',
-  current: '最新当前版',
-};
-
-/** 档位短词（并排显示与换档句用它） */
-const CHANNEL_SHORT: Record<EnvNodeChannel, string> = { lts: '稳定版', current: '当前版' };
-
-/** 用户**显式点名**的方法与这份 Node 的归属不一致时，确认区必须带这句并存风险
- *  （需求 §7.8 的三个例外 / §7.9 第 4 条：原句里"哪一份生效"说成系统查找路径） */
-const METHOD_RISK =
-  '这样这台电脑上会有两份 Node：一份是原来的（不会被删掉），一份是这次装的。之后哪一份生效，看系统查找路径里谁在前。';
 
 interface FactRow {
   key: string;
@@ -235,34 +143,6 @@ interface QueueRow {
   viewable: boolean;
   /** 正文现在画的是不是它（`aria-current`） */
   viewed: boolean;
-}
-
-/** 安装通道里"还在跑"的相位 */
-const INSTALL_BUSY_PHASES: EnvInstallPhase[] = [
-  'preparing',
-  'downloading',
-  'verifying',
-  'installing',
-  'waiting',
-  'rechecking',
-];
-
-function installRunning(state: EnvInstallState): boolean {
-  return !state.detached && INSTALL_BUSY_PHASES.includes(state.phase);
-}
-
-/** 有终态结论了：跑完 / 取消 / 失败，或用户"不再等待"（`detached` 时不给成功也不给失败） */
-function installSettled(state: EnvInstallState): boolean {
-  return (
-    state.detached ||
-    state.phase === 'done' ||
-    state.phase === 'cancelled' ||
-    state.phase === 'error'
-  );
-}
-
-function isFixSettled(phase: EnvFixPhase): boolean {
-  return phase === 'done' || phase === 'cancelled' || phase === 'error';
 }
 
 // ------------------------------------------------------------ 界面状态
@@ -598,11 +478,6 @@ function nodeInstallRequest(): {
 }
 
 /** 「版本（档位）」的人话：档位判不出来时写**档位未知**，不许省略、不许猜 */
-function versionWithChannel(version: string | null, channel: EnvNodeChannel | null): string {
-  const word = channel ? CHANNEL_SHORT[channel] : '档位未知';
-  return version ? `${version}（${word}）` : `版本没测到（${word}）`;
-}
-
 const ownerRowText = computed(() => {
   const owner = nodePlan.value?.owner ?? wizard.value?.report.nodeOwner ?? 'unknown';
   if (owner === 'nvm') return '版本管理器（nvm）管的';
@@ -1085,14 +960,6 @@ function toggleOutput(): void {
 }
 
 /** 字节说成人话（只在进度行里用；两个数缺一个就整行不出现） */
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '—';
-  const mb = bytes / 1024 / 1024;
-  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
-  if (mb >= 1) return `${mb.toFixed(1)} MB`;
-  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
-}
-
 const outputCommand = computed(() => {
   if (activeFlow.value === 'fix') return envFix.value.command || '（命令由主进程现算）';
   const plan = nodePlan.value;
