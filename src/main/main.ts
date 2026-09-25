@@ -16,13 +16,10 @@ import {
   ipcMain,
   shell,
   dialog,
-  nativeImage,
   nativeTheme,
-  session,
   type BrowserWindowConstructorOptions,
   type IpcMainInvokeEvent,
   type MessageBoxOptions,
-  type NativeImage,
   type WebContents,
 } from 'electron';
 
@@ -44,6 +41,14 @@ import {
 import { NodeInstaller } from './node-installer';
 import { createUpdater, type Updater } from './updater';
 import { describeValue, installFileLogging } from './logger';
+import {
+  createEmbeddedTools,
+  cleanedUserAgent,
+  readConsoleMessage,
+  suppressElectronDevNoise,
+} from './main-embedded';
+import { applyDockIcon, installApplicationMenu, makeIcon } from './main-menu';
+import { createThemeTools } from './main-theme';
 import * as processUtils from './process-utils';
 import type {
   AppSnapshot,
@@ -77,11 +82,9 @@ import type {
   PluginOpAction,
   PluginOpResult,
   RenameSessionResult,
-  ResolvedTheme,
   SessionExitEvent,
   SessionOutputEvent,
   ThemeInfo,
-  ThemeMode,
   UpdateState,
 } from '../shared/ipc';
 
@@ -202,6 +205,17 @@ function sendToRenderer(channel: string, payload: unknown): void {
   }
 }
 
+// t56 起主题 / 内嵌页诊断 / 菜单各有一层自己的模块；窗口、日志器与设置都是这里的单例，
+// 用 getter 传进去（窗口是可变的：关掉就新建一个）。
+const theme = createThemeTools({
+  isMac,
+  getWindow: () => mainWindow,
+  send: sendToRenderer,
+  getMode: () => settings?.get('themeMode'),
+});
+
+const menuCtx = { isMac };
+
 // ---------------------------------------------------------------- 外链
 
 /** 交给系统默认程序打开的白名单：其余 scheme（DSH 自己的 `dsh-resource:` 文件引用、`vscode:` 之类）不往外抛 */
@@ -239,236 +253,28 @@ async function openExternalSafely(url: string, from: string): Promise<boolean> {
 
 // ---------------------------------------------------------------- 主题
 
-const THEME_MODES = ['system', 'light', 'dark'] as const;
-
-function isThemeMode(value: string): value is ThemeMode {
-  return (THEME_MODES as readonly string[]).includes(value);
-}
-
-/**
- * 窗口底色与标题栏配色：与渲染层 CSS 的 --bg / --ink 保持一致。
- * （这是主进程侧唯一的颜色重复处 —— 窗口底色和系统控件浮层只能由主进程设置。）
- */
-const WINDOW_BG: Record<ResolvedTheme, string> = { dark: '#0a0c10', light: '#eef1f5' };
-const TITLEBAR_COLORS: Record<ResolvedTheme, { color: string; symbolColor: string }> = {
-  dark: { color: '#0a0c10', symbolColor: '#e8eaf0' },
-  light: { color: '#eef1f5', symbolColor: '#131a26' },
-};
-/** 标题栏高度：和渲染层的 --bar-h 对齐，否则系统控件会和顶栏错位 */
-const TITLEBAR_HEIGHT = 36;
-
-/** 渲染层产物目录：Vite 构建输出（npm start 会先构建），主进程从这里加载页面 */
 const RENDERER_DIST = path.join(__dirname, '..', '..', 'dist', 'renderer');
-
-/** 当前主题：mode 是用户选择，resolved 是实际生效的明暗 */
-function themeInfo(): ThemeInfo {
-  const mode = String(settings?.get('themeMode') || 'system');
-  return {
-    mode: isThemeMode(mode) ? mode : 'system',
-    resolved: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
-  };
-}
-
-/** 把设置里的 mode 应用到 Electron（system 时交给系统决定） */
-function applyThemeSource(mode: unknown): ThemeMode {
-  const text = String(mode);
-  const next: ThemeMode = isThemeMode(text) ? text : 'system';
-  if (nativeTheme.themeSource !== next) nativeTheme.themeSource = next;
-  return next;
-}
-
-/**
- * 系统控件浮层的配色（最小化/最大化/关闭由 Windows 画在右上角，颜色得由我们给）。
- * 窗口不是用 titleBarOverlay 建的、或平台不支持时（macOS 用红绿灯，没有浮层），
- * 这里会抛异常，直接吞掉即可。
- */
-function applyTitleBarOverlay(resolved: ResolvedTheme): void {
-  if (isMac) return; // macOS 的红绿灯由系统绘制在左上角，没有 titleBarOverlay
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const colors = TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark;
-  try {
-    mainWindow.setTitleBarOverlay({ ...colors, height: TITLEBAR_HEIGHT });
-  } catch {
-    /* 没有启用 titleBarOverlay 时忽略 */
-  }
-}
-
-function broadcastTheme(): ThemeInfo {
-  const info = themeInfo();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBackgroundColor(WINDOW_BG[info.resolved]);
-    applyTitleBarOverlay(info.resolved);
-  }
-  sendToRenderer('theme:changed', info);
-  return info;
-}
-
-// ---------------------------------------------------------------- 内嵌页诊
-interface ConsoleMessageInfo {
-  level: string;
-  message: string;
-  source: string;
-  line: number;
-}
-
-/**
- * Electron 新旧版本的 console-message 参数形状不同（新版第一个参数是 details 对象，
- * 旧版是 level/message/line/sourceId 五个位置参数），这里统一取出来。
- */
-function readConsoleMessage(args: unknown[]): ConsoleMessageInfo {
-  const details = args[0] as
-    { level?: unknown; message?: unknown; sourceId?: unknown; lineNumber?: unknown } | undefined;
-  if (details && typeof details === 'object' && 'message' in details) {
-    return {
-      level: String(details.level ?? 'info'),
-      message: String(details.message ?? ''),
-      source: String(details.sourceId ?? ''),
-      line: Number(details.lineNumber ?? 0),
-    };
-  }
-  const legacy = args as [unknown, unknown, unknown, unknown, unknown];
-  return {
-    level: ['debug', 'info', 'warning', 'error'][Number(legacy[1])] || 'info',
-    message: String(legacy[2] ?? ''),
-    source: String(legacy[4] ?? ''),
-    line: Number(legacy[3] ?? 0),
-  };
-}
-
-/** 抹掉 UA 里的 Electron 与包名 —— 不少第三方站点据此判定"不是正经浏览器" */
-function cleanedUserAgent(ua: string): string {
-  return String(ua)
-    .replace(/\s*(dsh-console|Electron)\/[\d.]+/g, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-const EMBEDDED_LABELS: Record<string, string> = {
-  'persist:dsh-ui': '内嵌 DSH 界面',
-  'persist:deepseek': 'DeepSeek 用量页',
-};
-
-function embeddedLabel(partition: string): string {
-  return EMBEDDED_LABELS[partition] || '内嵌页';
-}
-
-/**
- * Electron 自身的开发期安全提示（allowpopups / CSP 那几条）内容很长，会把事件日志刷屏，
- * 而且打包后就不会再出现。所以不进日志，只在终端里提一次。
- */
-const seenDevWarnings = new Set<string>();
-function suppressElectronDevNoise(message: string): boolean {
-  if (!/Electron Security Warning/i.test(message)) return false;
-  const key = String(message).slice(0, 60);
-  if (!seenDevWarnings.has(key)) {
-    seenDevWarnings.add(key);
-    console.log('[renderer] 已忽略 Electron 开发期安全提示（打包后不再出现）');
-  }
-  return true;
-}
-
-/**
- * 内嵌第三方页面出问题时最爱"半渲染"：外壳画出来、内容一片空，页面上什么错都不说。
- * 所以把 guest 的 console 与加载失败都收进应用的事件日志里。
- */
-function wireGuestDiagnostics(guest: WebContents): void {
-  let partition: string;
-  try {
-    // getPartition 没进 Electron 的类型声明（运行时存在），按可选方法取
-    const sessionLike = guest.session as unknown as { getPartition?: () => string };
-    partition = sessionLike.getPartition?.() || '';
-  } catch {
-    partition = '';
-  }
-  const label = embeddedLabel(partition);
-
-  guest.on('console-message', (...args: unknown[]) => {
-    const info = readConsoleMessage(args);
-    if (suppressElectronDevNoise(info.message)) return;
-    if (info.level === 'error') dshManager.log('error', `${label} 控制台报错：${info.message}`);
-    else if (info.level === 'warning')
-      dshManager.log('warn', `${label} 控制台警告：${info.message}`);
-  });
-
-  guest.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-    if (code === -3) return; // 被新导航取代，属正常
-    dshManager.log(
-      'error',
-      `${label} ${isMainFrame === false ? '子框架' : '页面'}加载失败 ${code} ${description} ${url}`,
-    );
-  });
-
-  guest.on('render-process-gone', (_event, details) => {
-    dshManager.log('error', `${label} 渲染进程退出：${details?.reason || '未知原因'}`);
-  });
-}
-
-/** 内嵌页发出的请求失败时也记一笔（CSP 拦截、DNS、连接被重置都会走这里） */
-function wireEmbeddedRequestDiagnostics(): void {
-  for (const partition of Object.keys(EMBEDDED_LABELS)) {
-    try {
-      session
-        .fromPartition(partition)
-        .webRequest.onErrorOccurred({ urls: ['*://*/*'] }, (details) => {
-          if (/ERR_ABORTED/.test(details.error)) return; // 导航被取代 / 主动取消
-          const short = details.url.length > 120 ? `${details.url.slice(0, 117)}…` : details.url;
-          dshManager.log('warn', `${embeddedLabel(partition)} 请求失败 ${details.error} ${short}`);
-        });
-    } catch (error) {
-      console.error(
-        `[main] 无法为 ${partition} 安装请求诊断:`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  }
-}
-
-/**
- * 开发期便利：渲染层产物变了就自动重载窗口。
- * 注意监听的是 Vite 的**产物目录**（dist/renderer），不是源码目录 —— 源码要经过
- * `npm run watch`（vite build --watch）重建之后窗口才有意义地重载。
- * 打包后不启用。默认菜单已被移除，Ctrl+R 之类的重载快捷键也就没有了，
- * 没有这条通路时改样式必须手动重启应用才能看到效果。
- */
-function watchRendererForDevReload(): void {
-  if (app.isPackaged) return;
-  const rendererDir = RENDERER_DIST;
-  if (!fs.existsSync(rendererDir)) return;
-  let timer: NodeJS.Timeout | null = null;
-  try {
-    fs.watch(rendererDir, { recursive: true }, (_event, filename) => {
-      const name = String(filename || '');
-      if (!/\.(js|css|html)$/i.test(name)) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        dshManager.log('info', `渲染层产物变化（${name}），自动重载窗口`);
-        mainWindow.webContents.reload();
-      }, 250);
-    });
-  } catch (error) {
-    console.error(
-      '[main] 无法监听渲染层目录:',
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
-
+const embedded = createEmbeddedTools({
+  isPackaged: () => app.isPackaged,
+  rendererDist: RENDERER_DIST,
+  getWindow: () => mainWindow,
+  log: (level, text) => dshManager.log(level, text),
+});
 function createWindow(): void {
-  const resolved = themeInfo().resolved;
+  const resolved = theme.themeInfo().resolved;
   // 标题栏策略按平台走：
   //  - Windows/Linux：hidden + titleBarOverlay，最小化/最大化/关闭由系统画在右上角浮层
   //  - macOS：hiddenInset + 红绿灯（trafficLightPosition 把红绿灯对准 36px 顶栏的中心）
   const titleBarOptions: BrowserWindowConstructorOptions = isMac
     ? {
         titleBarStyle: 'hiddenInset',
-        trafficLightPosition: { x: 14, y: Math.round((TITLEBAR_HEIGHT - 14) / 2) },
+        trafficLightPosition: { x: 14, y: Math.round((theme.TITLEBAR_HEIGHT - 14) / 2) },
       }
     : {
         titleBarStyle: 'hidden',
         titleBarOverlay: {
-          ...(TITLEBAR_COLORS[resolved] || TITLEBAR_COLORS.dark),
-          height: TITLEBAR_HEIGHT,
+          ...(theme.TITLEBAR_COLORS[resolved] || theme.TITLEBAR_COLORS.dark),
+          height: theme.TITLEBAR_HEIGHT,
         },
       };
   const win = new BrowserWindow({
@@ -477,7 +283,7 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    backgroundColor: WINDOW_BG[resolved],
+    backgroundColor: theme.WINDOW_BG[resolved],
     title: 'DSH Console',
     icon: makeIcon(),
     ...titleBarOptions,
@@ -545,7 +351,7 @@ function createWindow(): void {
     // 内嵌页也要能单独开开发者工具：半渲染、空白这类问题都在它自己那一侧
     wireDevTools(guest);
     wireGuestShortcuts(guest);
-    wireGuestDiagnostics(guest);
+    embedded.wireGuestDiagnostics(guest);
   });
 
   const entry = path.join(RENDERER_DIST, 'index.html');
@@ -644,56 +450,6 @@ function wireGuestShortcuts(guest: WebContents): void {
  * 所以 `build/icon.png` 现在也打进 asar（见 package.json 的 build.files）——
  * 那 31 KB 换的是"打包后托盘图标不是空白"。
  */
-function makeIcon(): NativeImage | undefined {
-  try {
-    const file = path.join(__dirname, '..', '..', 'build', 'icon.png');
-    if (fs.existsSync(file)) {
-      const image = nativeImage.createFromPath(file);
-      if (!image.isEmpty()) return image;
-    }
-  } catch {
-    // 读不到就用系统默认图标，不影响运行
-  }
-  return undefined;
-}
-
-/** macOS 开发态：Dock 图标取自同一张源图（打包后由 .icns 提供，不必覆盖） */
-function applyDockIcon(): void {
-  if (!isMac || app.isPackaged || !app.dock) return;
-  const icon = makeIcon();
-  if (icon) {
-    try {
-      app.dock.setIcon(icon);
-    } catch {
-      /* 设置失败不影响运行 */
-    }
-  }
-}
-
-/**
- * 应用菜单。
- *
- * Windows/Linux 上刻意留空（原来的行为）：界面自带全部操作入口，系统菜单栏只是干扰。
- *
- * macOS 不能留空 —— 系统级快捷键（Cmd+Q 退出、Cmd+W 关窗、Cmd+C/V 复制粘贴、
- * Cmd+M 最小化）都由菜单提供，菜单为空时这些键在文本框里都会失灵。
- * 所以给一个最小原生菜单：应用 / 编辑 / 显示 / 窗口。
- */
-function installApplicationMenu(): void {
-  if (!isMac) {
-    Menu.setApplicationMenu(null);
-    return;
-  }
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      { role: 'appMenu' },
-      { role: 'editMenu' },
-      { role: 'viewMenu' },
-      { role: 'windowMenu' },
-    ]),
-  );
-}
-
 // ---------------------------------------------------------------- 关闭窗口的行为
 /**
  * 点关闭（X）时做什么：问一次、收起到系统托盘，还是直接退出。
@@ -1018,31 +774,31 @@ function registerIpc(): void {
       env,
       update: updater.snapshot(),
       userData: app.getPath('userData'),
-      theme: themeInfo(),
+      theme: theme.themeInfo(),
     };
   });
 
   ipcMain.handle('theme:set', (_event: IpcMainInvokeEvent, mode: unknown): ThemeInfo => {
-    const next = applyThemeSource(mode);
+    const next = theme.applyThemeSource(mode);
     settings.patch({ themeMode: next });
     dshManager.log(
       'info',
       `界面主题：${next}${next === 'system' ? `（当前为${nativeTheme.shouldUseDarkColors ? '深色' : '亮色'}）` : ''}`,
     );
-    return broadcastTheme();
+    return theme.broadcastTheme();
   });
 
   ipcMain.handle(
     'settings:patch',
     (_event: IpcMainInvokeEvent, patch: SettingsPatch): SettingsValues => {
       const next = settings.patch(patch);
-      if (patch && 'themeMode' in patch) applyThemeSource(next.themeMode);
+      if (patch && 'themeMode' in patch) theme.applyThemeSource(next.themeMode);
       // 设置页里也能改主题，保持与工具栏开关一致
       dshManager.syncSettings();
       // 自动检查更新是开关式的：改完要立刻生效（开 → 排定时器，关 → 停）
       updater.syncSettings();
       dshManager.log('info', '设置已保存');
-      broadcastTheme();
+      theme.broadcastTheme();
       // 渲染层那份快照是共享状态的唯一真源：主进程写完必须推一次，否则"另一个组件读到旧值"。
       // 实例：环境自检页改「Node 下载来源」，首启门禁的确认区读的是同一份快照 ——
       // 不推的话那次保存只有发起方自己知道，门禁区会拿旧源拼计划说明。
@@ -1590,10 +1346,10 @@ async function bootstrap(): Promise<void> {
   // （以前是在 did-attach-webview 里改，可能晚于第一次请求）
   app.userAgentFallback = cleanedUserAgent(app.userAgentFallback);
   // 主题要在建窗口之前生效，否则会先按旧主题渲染一帧
-  applyThemeSource(settings.get('themeMode'));
+  theme.applyThemeSource(settings.get('themeMode'));
   nativeTheme.on('updated', () => {
     // system 模式下系统切换明暗时，把新结果推给渲染层
-    const info = broadcastTheme();
+    const info = theme.broadcastTheme();
     if (dshManager)
       dshManager.log('info', `系统主题变化 → ${info.resolved === 'dark' ? '深色' : '亮色'}`);
   });
@@ -1664,8 +1420,8 @@ async function bootstrap(): Promise<void> {
   // 等第一次收起才建的话，用户在那之前根本不知道有这个东西。macOS 上不建（Dock 承担这个角色）。
   ensureTray();
   registerIpc();
-  wireEmbeddedRequestDiagnostics();
-  watchRendererForDevReload();
+  embedded.wireEmbeddedRequestDiagnostics();
+  embedded.watchRendererForDevReload();
   // updater.start() 放在窗口与 IPC 都就绪之后：它可能立刻广播一次 unsupported 状态
   updater.start();
   // 启动后 1.5 秒在后台跑一轮环境自检：不 await、不阻塞启动，也不碰 dsh 进程本身。
@@ -1677,7 +1433,7 @@ async function bootstrap(): Promise<void> {
   }, 1500);
   envProbeTimer.unref?.();
 
-  const theme = themeInfo();
+  const info = theme.themeInfo();
   dshManager.startPolling();
   dshManager.log(
     'info',
@@ -1686,7 +1442,7 @@ async function bootstrap(): Promise<void> {
   dshManager.log('info', `内嵌页 UA：${app.userAgentFallback}`);
   dshManager.log(
     'info',
-    `界面主题：${theme.mode}（当前为${theme.resolved === 'dark' ? '深色' : '亮色'}）`,
+    `界面主题：${info.mode}（当前为${info.resolved === 'dark' ? '深色' : '亮色'}）`,
   );
   if (settings.migration) {
     dshManager.log(
@@ -1753,11 +1509,11 @@ if (!gotLock) {
     showMainWindow();
   });
 
-  installApplicationMenu();
+  installApplicationMenu(menuCtx);
 
   app.whenReady().then(() => {
     console.log(`[main] 日志文件: ${fileLog.file}`);
-    applyDockIcon();
+    applyDockIcon(menuCtx);
     void bootstrap();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

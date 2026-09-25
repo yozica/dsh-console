@@ -33,7 +33,10 @@ npm start          # = npm run build && electron .
 ```
 src/
   main/                 Electron 主进程，tsc 编成 CJS 到 dist/main/
-    main.ts             窗口、IPC、生命周期、退出清理、关闭窗口行为（询问 / 收起托盘 / 直接退出）、开发工具快捷键、内嵌页诊断
+    main.ts             窗口、IPC、生命周期、退出清理、关闭窗口行为（开发工具快捷键；t56 起部分簇已拆出）
+    main-theme.ts       主题与系统控件配色（窗口底色 / 标题栏浮层 / themeInfo / broadcastTheme）
+    main-embedded.ts    内嵌页诊断（guest console / 加载失败 / 请求失败）与开发期产物变化自动重载
+    main-menu.ts        应用图标与应用菜单（Windows/Linux 留空、macOS 最小原生菜单）
     dsh-manager.ts      dsh 进程状态机：启动 / 停止 / 接管 / 健康轮询 / 令牌 URL 捕获
     pty-sessions.ts     node-pty 会话注册表（dsh 终端 + 本地 Shell 共用）
     process-utils.ts    **barrel**：把下面八个叶子模块的公开面逐条再导出（t50 拆开，见 7.35）
@@ -1320,6 +1323,31 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
   所以判据从 `/^\s*import\s/m` 改成 `/^\s*import\s+(?!type\b)/m`，两处自检标题与
   `scripts/env-doctor-cases.mjs` 的 P 检查一起改口径。**这一次"输出逐行一致"有两个字的例外**
   （那两条断言改名），其余 312 行逐字不变 —— 改口径要显式说，别默默放过。
+
+**第六个：`main.ts` 的第一批（t56，1798 → 1554 行 + 三个簇）**
+
+`main.ts` 是 Electron 入口，模块级可变单例多（`mainWindow` / `tray` / 六个 `!` 声明的管理器），
+所以**先把自成一体的簇搬出去**，每个只拿一个小的 context：
+
+| 文件               | 行数 | 装什么                                                              | context 里有什么                                          |
+| ------------------ | ---- | ------------------------------------------------------------------- | --------------------------------------------------------- |
+| `main-theme.ts`    | 109  | 主题、窗口底色、标题栏浮层、`broadcastTheme`                        | `isMac` / `getWindow()` / `send()` / `getMode()`          |
+| `main-embedded.ts` | 183  | 内嵌页诊断（console / 加载失败 / 请求失败）、开发期产物变化自动重载 | `isPackaged()` / `rendererDist` / `getWindow()` / `log()` |
+| `main-menu.ts`     | 71   | 应用图标与菜单（Windows/Linux 留空、macOS 最小菜单）                | `isMac`                                                   |
+
+三条这次学到的：
+
+- **可变单例用 getter 传，别传值**：`getWindow: () => mainWindow`（窗口关掉会新建）；`send` /
+  `log` 这种稳定的才直接传函数。
+- **机械替换 `mainWindow` → `ctx.getWindow()` 会把 `!win ||` 的反向判断改坏**：一次替换生成出
+  `if (!ctx.getWindow().isDestroyed()) return;`（丢了判空、也丢了取反）。**凡是搬 `if (x && !x.y)`
+  这类判断，搬完要逐字读一遍**，别信 sed 的结果。（这次靠人工复核抓到，`npm test` 抓不到 ——
+  main.ts 不在自检的运行时图里。）
+- **`__dirname` 在这里是安全的**：`main.ts` 与 `main-menu.ts` 都编到 `dist/main/`，所以
+  `path.join(__dirname, '..', '..', 'build', 'icon.png')` 原样成立（与渲染层那些「子目录要退一层」
+  的坑不同）。
+- **`registerIpc()`（558 行、依赖 27 个模块级名字）留到下一轮**：那一批必须显式造一个
+  `IpcContext`，而且 Electron 起不来时**只有真机能验**。
 
 ## 8. 调试手段
 
