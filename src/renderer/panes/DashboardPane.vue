@@ -388,3 +388,274 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 控制台页自己的样式（t48 样式分层）：原来在 styles.css 的「控制台」一节。
+   留在全局表的是跨页面共用的那些零件（`.panel` / `.panel-head` / `.panel-block` /
+   `.hint` / `.block-head` / `.block-note`）。 */
+
+/* ============================================================ 控制台 */
+
+.dash {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 4px 20px 20px;
+}
+
+/* 控制台页的环境横幅：这一页的根容器已经让出了 20px 内边距，
+   所以不要再用 .banner 自带的那份外边距（否则会变成 40px，跟别的面板对不齐） */
+.dash > .banner {
+  margin: 0;
+}
+
+/* 焦点卡：全局唯一抬升表面，阴影只在这里 */
+.focus-card {
+  flex: 0 0 auto;
+  padding: 18px 20px 0;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-focus);
+}
+
+.focus-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.focus-text {
+  min-width: 0;
+}
+
+.focus-title {
+  font-size: var(--t-state);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.focus-desc {
+  margin-top: 3px;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+}
+
+.focus-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rule {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 4px;
+  background: var(--hairline);
+}
+
+/* 读数：卡内的小瓦片，和外面的容器不是同一层圆角 */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+@media (max-width: 900px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.stat {
+  padding: 9px 12px 10px;
+  background: var(--surface-2);
+  border-radius: var(--r-panel);
+  min-width: 0;
+}
+
+.stat dt {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.stat dd {
+  margin-top: 2px;
+  font-size: var(--t-num);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 长字符串（地址、占用进程）走这一行，不再被读数格截断 */
+.meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 14px -20px 0;
+  padding: 11px 20px;
+  border-top: 1px solid var(--hairline);
+}
+
+.meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.meta-key {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.meta-val {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+  word-break: break-all;
+}
+
+.dash-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 344px);
+  gap: 16px;
+}
+
+@media (max-width: 1080px) {
+  .dash-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.log-panel .panel-head {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.side-panel {
+  overflow: auto;
+}
+
+/* 日志：下沉井 + 等宽（机器输出的字节） */
+.event-log {
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow: auto;
+  list-style: none;
+  padding: 6px 0;
+  background: var(--well);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.event-log li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 16px;
+}
+
+.event-log li:hover {
+  background: var(--surface-2);
+}
+
+.event-log .ts {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-log .lv {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  text-align: center;
+  background: var(--surface-2);
+  color: var(--ink-dim);
+}
+
+.event-log li[data-level='info'] .lv {
+  background: var(--sky-soft);
+  color: var(--sky);
+}
+
+.event-log li[data-level='warn'] .lv {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.event-log li[data-level='error'] .lv {
+  background: var(--rose-soft);
+  color: var(--rose);
+}
+
+.event-log .msg {
+  flex: 1 1 auto;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+.event-log li[data-level='error'] .msg {
+  color: var(--ink);
+}
+
+/* 折线图：带横向基线网格 */
+.chart {
+  padding: 6px 0 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--hairline) 0,
+    var(--hairline) 1px,
+    transparent 1px,
+    transparent 33.33%
+  );
+}
+
+.spark {
+  display: block;
+  width: 100%;
+  height: 46px;
+}
+
+.spark-area {
+  fill: var(--accent-soft);
+}
+
+.spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.command {
+  display: block;
+  padding: 9px 11px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+</style>

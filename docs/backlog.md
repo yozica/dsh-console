@@ -46,8 +46,14 @@
 `.archive-turn-body h1[data-v-*]` 一条都匹配不上；② 多行选择器列表逐行加 `:deep()` 会漏掉前几行
 （这版漏了 `h2..h5 / ul / th` 共 7 条，靠查构建产物才抓到）。
 
+**第三批（控制台，已合并）**：37 个条目 263 行搬进 `DashboardPane.vue`（全局表 3914 → 3649），
+并把误放在「控制台」一节里的 `.settings-status` 收进 `SettingsPane.vue`。两个新教训记在 §7.33：
+① 「共享件还在不在全局表」要用**行首锚定**查（`.log-panel .panel-head` 里含 `.panel-head`，
+contains 会误判）；② 产物里的媒体查询被压成现代区间语法（`@media (width<=900px)`），
+按 `max-width` 去 grep 产物会以为"规则丢了"——核对产物时按属性/值 grep 更稳。
+
 **下一批顺序**按"这一页真正私有的规则条数"排（不是段落行数 —— 很多段落里大部分是共享件）：
-控制台（DashboardPane，35 条私有）→ 环境自检（EnvPane，两节共 32 条）→ 插件页（PluginPane，83 条，
+环境自检（EnvPane，两节共 32 条）→ 插件页（PluginPane，83 条，
 最大的一块）→ 首启环境向导与入口门禁（EnvGate，94 条、与 EnvPane 共用一批规则）→ 骨架里的 shell 私有
 （RailNav 18 / TopBar 7 / StatusBar 4，要拆到三个组件）→ 内嵌界面（UiPane 4）与终端类页面
 （TerminalPane 7 + DshTerminal 1，两个组件共用一个 `.term-body` 契约，搬之前先想清楚哪条归谁）。

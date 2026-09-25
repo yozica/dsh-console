@@ -832,4 +832,11 @@ onUnmounted(() => {
       0 0 0 13px var(--accent-soft);
   }
 }
+
+/* 设置页「已保存 / 已重新载入」的即时反馈，就在按钮正下方（原来误放在「控制台」一节里） */
+/* 设置页「已保存 / 已重新载入」的即时反馈，就在按钮正下方 */
+.settings-status {
+  min-height: 1.2em;
+  color: var(--run);
+}
 </style>
