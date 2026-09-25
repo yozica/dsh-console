@@ -74,7 +74,15 @@ src/
     profile-bundles.ts  救援用：临时停用 / 恢复一个 bundle（改 dsh.profile.bundles，记住原位置）
     safe-file.ts        写用户文件的公共件：先备份（.bak-<时间戳>）再原子写（tmp + rename）
   preload/preload.ts    contextBridge，把受限 API 暴露成 window.dshConsole
-  shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源）
+  shared/ipc.ts         主进程 ↔ 渲染层的**契约类型**（单一来源；t55 起是 barrel，见 7.35）
+  shared/ipc-shell.ts   主题、关闭询问与确认框
+  shared/ipc-update.ts  自动更新：相位、状态与更新源地址（两个纯常量在这里）
+  shared/ipc-runtime.ts dsh 运行时快照：状态、事件日志、端口/启动信息、会话与设置
+  shared/ipc-archive.ts 归档会话页：列表、正文、恢复与删除的结果
+  shared/ipc-plugin.ts  插件装配层：层栈、条目、巡检问题与操作结果
+  shared/ipc-env.ts     运行环境自检与首启门禁：检查项、步骤、报告与门禁状态
+  shared/ipc-node.ts    Node 安装 / 更新通道：归属、计划、请求与状态（含 t29 增量）
+  shared/ipc-api.ts     `DshConsoleApi`：渲染层能看到的全部通道（preload 照它实现）
   renderer/             Vue 3 + Vite，产物 dist/renderer/
     index.html          页面骨架：七个页面容器 + 挂载点 + 门禁层容器 + 环境自检详情层 + 启动锁 + 内联图标精灵
     main.ts             入口：样式导入顺序 → app.ts → 建立共享状态 → 挂载
@@ -1287,6 +1295,31 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 `plugin-runner.ts` 报 `Cannot find name`）。**教训：机械扫描导出的正则要允许前导注释**（或者干脆用
 `tsc` 的报错反推，而不是自己扫）。同一轮还学到一条省时的做法：自动接线要**限制轮数**（每轮一次 `tsc`，
 十几轮就会撞上执行器的 10 分钟上限）。
+
+**第五个：`shared/ipc.ts`（t55，1143 → 22 行 + 八个主题模块）**
+
+| 文件             | 行数 | 职责                                              |
+| ---------------- | ---- | ------------------------------------------------- |
+| `shared/ipc.ts`  | 22   | **barrel**：`export *` 八个模块（消费方一行没改） |
+| `ipc-shell.ts`   | 54   | 主题、关闭询问与确认框                            |
+| `ipc-update.ts`  | 59   | 自动更新（两个纯常量在这里）                      |
+| `ipc-runtime.ts` | 233  | dsh 运行时快照 / 事件 / 会话 / 设置               |
+| `ipc-archive.ts` | 88   | 归档会话页                                        |
+| `ipc-plugin.ts`  | 235  | 插件装配层                                        |
+| `ipc-env.ts`     | 175  | 环境自检与门禁                                    |
+| `ipc-node.ts`    | 204  | Node 安装 / 更新通道                              |
+| `ipc-api.ts`     | 200  | `DshConsoleApi`（preload 照它实现）               |
+
+这一步特有的两条：
+
+- **"同文件里再声明一次同名 interface"是隐式合并，拆开就失效**。t29 的增量就是那么写的
+  （`EnvDoctorReport` 在文件里出现两次，TS 把字段并起来）；拆到两个模块之后它们是**两个不同的
+  interface**，`tsc` 立刻报"缺 nodeOwner / nodeOwnerEvidence"。拆这类"增量接口"必须把字段**并回
+  同一份声明**，不能指望合并。
+- **"契约零 import"要收紧成"零*运行时* import"**。叶子之间必须 `import type`（类型引用），
+  所以判据从 `/^\s*import\s/m` 改成 `/^\s*import\s+(?!type\b)/m`，两处自检标题与
+  `scripts/env-doctor-cases.mjs` 的 P 检查一起改口径。**这一次"输出逐行一致"有两个字的例外**
+  （那两条断言改名），其余 312 行逐字不变 —— 改口径要显式说，别默默放过。
 
 ## 8. 调试手段
 

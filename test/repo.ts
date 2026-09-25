@@ -55,7 +55,7 @@ export interface Repo {
   mountJs: string;
   /** 仓库根的 `package.json`（只声明自检真正读到的字段） */
   pkg: PackageJson;
-  /** `src/shared/ipc.ts` 原文 */
+  /** `shared/ipc.ts`（barrel）+ `shared/ipc-*.ts`（八个主题模块）的全文拼接（顺序与拆分前一致） */
   ipcSource: string;
   /** 同上，但空白压平（类型声明会被 Prettier 折行，压平才好匹配） */
   flatIpc: string;
@@ -155,7 +155,22 @@ export function createRepo(): Repo {
   ]
     .map((stem) => fs.readFileSync(path.join(srcDir, 'main', `${stem}.ts`), 'utf8'))
     .join('\n');
-  const ipcSource = fs.readFileSync(path.join(srcDir, 'shared', 'ipc.ts'), 'utf8');
+  // t55 起 shared/ipc.ts 是 barrel，契约按主题住在 ipc-*.ts 里 ——
+  // "读源码文本"的断言要看整份（barrel 里一条 `export type` 都搜不到）。
+  // 顺序与拆分前的原文一致（外壳 → 更新 → 运行时 → 归档 → 插件 → 环境 → Node → API）。
+  const ipcSource = [
+    'ipc',
+    'ipc-shell',
+    'ipc-update',
+    'ipc-runtime',
+    'ipc-archive',
+    'ipc-plugin',
+    'ipc-env',
+    'ipc-node',
+    'ipc-api',
+  ]
+    .map((stem) => fs.readFileSync(path.join(srcDir, 'shared', `${stem}.ts`), 'utf8'))
+    .join('\n');
   const flatIpc = ipcSource.replace(/\s+/g, ' ');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as PackageJson;
   const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');

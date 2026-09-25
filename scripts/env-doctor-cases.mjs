@@ -540,14 +540,30 @@ check(
 );
 
 // ---------------------------------------------------------------- P. 契约静态检查
-const ipcSource = fs.readFileSync(path.join(repoRoot, 'src', 'shared', 'ipc.ts'), 'utf8');
+// t55 起 shared/ipc.ts 是 barrel，契约按主题住在 ipc-*.ts 里：读整份（顺序与拆分前一致）
+const ipcSource = [
+  'ipc',
+  'ipc-shell',
+  'ipc-update',
+  'ipc-runtime',
+  'ipc-archive',
+  'ipc-plugin',
+  'ipc-env',
+  'ipc-node',
+  'ipc-api',
+]
+  .map((stem) => fs.readFileSync(path.join(repoRoot, 'src', 'shared', `${stem}.ts`), 'utf8'))
+  .join('\n');
 const flatIpc = ipcSource.replace(/\s+/g, ' ');
-const importLines = ipcSource.split(/\r?\n/).filter((line) => /^\s*import\b/.test(line));
+// 「零运行时 import」：叶子之间只允许 import type（值 import 会把 fs/path 卷进渲染层包里）
+const importLines = ipcSource
+  .split(/\r?\n/)
+  .filter((line) => /^\s*import\b/.test(line) && !/^\s*import\s+type\b/.test(line));
 const idUnion = /export type EnvCheckId =([\s\S]*?);/.exec(ipcSource)?.[1] ?? '';
 const idList = [...idUnion.matchAll(/'([^']+)'/g)].map((match) => match[1]);
 const apiMembers = ['envCheck', 'envFix', 'envFixCancel', 'onEnvFixState', 'onEnvFixOutput'];
 check(
-  'P 契约：ipc.ts 仍是 0 个 import（纯类型 + 常量）；8 个 id 顺序与文档一致；2 个动作；5 个 API 都在',
+  'P 契约：契约仍是 0 个运行时 import（纯类型 + 常量，叶子之间只有 import type）；8 个 id 顺序与文档一致；2 个动作；5 个 API 都在',
   importLines.length === 0 &&
     idList.join(',') === 'node,node-version,npm,pnpm,dsh,dsh-run,bundled-runtime,shell' &&
     /export type EnvCheckStatus = 'ok' \| 'warn' \| 'missing';/.test(flatIpc) &&
@@ -556,7 +572,7 @@ check(
     apiMembers.every((name) => new RegExp(`${name}:`).test(flatIpc)) &&
     !/onEnvReport/.test(flatIpc),
   `imports=${importLines.length} ids=${idList.join(',')} api=${apiMembers.filter((name) => new RegExp(`${name}:`).test(flatIpc)).join(',')} onEnvReport=${/onEnvReport/.test(flatIpc)}`,
-  '0 imports、8 ids 按文档顺序、5 个 API、没有 onEnvReport',
+  '0 个运行时 import、8 ids 按文档顺序、5 个 API、没有 onEnvReport',
 );
 
 // ---------------------------------------------------------------- Q. 渲染层只递 action
