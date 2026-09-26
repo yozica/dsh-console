@@ -106,7 +106,8 @@ src/
                         ＋ GateNodeConfirm / GateOutput（门禁层的两块子组件，t58 拆开，见 7.36）
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
-                         页面，而是设置页「运行环境」卡的详情视图，见 7.30）
+                         页面，而是设置页「运行环境」卡的详情视图，见 7.30；PluginPane = 装配层，
+                         它的层栈视图与操作输出是 PluginStackView / PluginOpPanel 两个子组件，见 7.36）
 test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（314 项，`npm test`）
 test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
 test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
@@ -1364,9 +1365,30 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
   私有规则 → 15 个页面 77 条。**四条都属于"改了就该变"的口径**，在 PR 里逐条说明；断言名与通过与否
   一条都没变。
 
-**还没做的**（后续 PR）：`EnvPane.vue` / `PluginPane.vue` 的同类拆分（`EnvCheckRow.vue` /
-`EnvUpdateConfirm.vue` / `PluginRescue.vue` …）与纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；
-模板与样式一起搬的那些照上面这套来。
+**第三步（t59，2026-09-26）：插件页的两个视图**
+
+`panes/PluginPane.vue` 1916 → 1462 行，拆出层栈视图与操作输出面板：
+
+| 文件                        | 行数 | 装什么                                              | 拿什么                                                                                     |
+| --------------------------- | ---- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `panes/PluginStackView.vue` | 367  | 层栈视图（左边层列表 + 右边选中层的详情与三个动作） | `data` / `layers` / `selectedIndex` / `selected` / `selectedEntries` / `opBusy` + 四个事件 |
+| `panes/PluginOpPanel.vue`   | 163  | 操作输出面板（原文照贴 + 中断 / 收起 / 插进我的层） | 六行读数 + `cancel` / `collapse` / `insert-layer`                                          |
+
+做法与第二步同一套：子组件哑、状态留在父级（选中哪一层与"在生效配置里看这几条"的跳转、增删改
+都要用同一份），模板逐字复制、props 按原标识符命名，只改三处（根元素的 `v-if` 交给父级、
+`selectedIndex = i` → `select(i)`、面板内两处 `opOpen = false` / `editLayer('insert', …)` 换成事件）。
+样式按 §7.33 的判据分三处落：**只有这一块在用**的 23 条进 `PluginStackView`、10 条进 `PluginOpPanel`；
+**父子两边都在用**的 10 条（`.plugin-tag*` 与 `.plugin-entry*`）收进全局表；剩下 53 条留在父级。
+`styleLayers` 表跟着改成三行（父级的私有清单也据实缩短）。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/plugin-split/`）、
+`npm test` 314/314（4 行计数口径变化：`.vue` 覆盖 17 → 19、组件数 17 → 19、全局表花括号
+187 → 197、`styleLayers` 15 个页面 77 条 → 17 个页面 86 条）、沙箱门禁 32/32 + 185/185、
+`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+**还没做的**（后续 PR）：`EnvPane.vue`（1502 行）与 `PluginPane.vue` 剩下的三块（救援条、生效配置
+视图、安装行）、以及纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；模板与样式一起搬的
+那些照上面这套来（`.verify/gate-split/{equiv,pixel}.py` 可以直接改用）。
 
 **第四个：`plugin-manager.ts`（t54，1322 → 318 行 + 四个叶子）**
 

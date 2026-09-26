@@ -263,19 +263,40 @@ export function runStyles(repo: Repo): void {
     },
     {
       pane: 'PluginPane.vue',
+      // t59 起层栈视图与操作输出各是一个子组件：`.plugin-layer` / `.plugin-detail-actions` 与
+      // `.plugin-op` 跟着它们走了，剩下的是这一页自己的（表头、救援、生效配置、安装行）。
       scoped: [
         '.plugin',
         '.plugin-views',
         '.plugin-problems',
         '.plugin-problem',
-        '.plugin-layer',
-        '.plugin-tag',
         '.plugin-install-input',
-        '.plugin-op',
-        '.plugin-detail-actions',
+        '.plugin-config',
+        '.plugin-rescue',
       ],
       // 与别处共用的：`.btn` / `.panel*` / `.banner` / `.hint` / `.empty` / `.spacer` / `.block-head`
       staysGlobal: ['.panel-block', '.block-head'],
+    },
+    {
+      // t59：插件页拆出来的层栈视图（左边列表 + 右边详情）
+      pane: 'PluginStackView.vue',
+      scoped: [
+        '.plugin-body',
+        '.plugin-side',
+        '.plugin-layer',
+        '.plugin-stack',
+        '.plugin-detail',
+        '.plugin-meta',
+        '.plugin-entries',
+      ],
+      // 与父组件的"生效配置"视图共用同一种条目 / 标签 → 进全局表（t59 收进去的）
+      staysGlobal: ['.plugin-tag', '.plugin-entry', '.plugin-entry-list'],
+    },
+    {
+      // t59：插件页拆出来的操作输出面板（原文照贴 + 中断 / 收起 / 插进我的层）
+      pane: 'PluginOpPanel.vue',
+      scoped: ['.plugin-op', '.plugin-op-head', '.plugin-op-out', '.plugin-op-actions'],
+      staysGlobal: ['.plugin-tag'],
     },
     {
       pane: 'EnvPane.vue',

@@ -1062,6 +1062,79 @@ body[data-immersive='true'] .webview-wrap {
 /* 插件页（装配层）自己的样式（`.plugin*` / `.layer*` / `.patch*` / `.op-*` …）已经整节搬进
    `panes/PluginPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
+/* t59：插件页拆出 `panes/PluginStackView.vue` / `panes/PluginOpPanel.vue` 之后，下面这几条同时落在
+   父组件与子组件里（层栈那一列的条目列表与"生效配置"视图画的是同一种条目 / 标签），所以按 §7.33
+   的判据收进全局表；只有单边在用的已经跟着组件走。 */
+.plugin-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.plugin-tag.mono {
+  font-family: var(--mono);
+}
+
+.plugin-tag.muted {
+  color: var(--ink-faint);
+}
+
+.plugin-tag.warn {
+  border-color: transparent;
+  background: var(--rose-soft);
+  color: var(--rose);
+}
+
+.plugin-tag.accent {
+  border-color: transparent;
+  background: var(--sky-soft);
+  color: var(--sky);
+}
+
+.plugin-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.plugin-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--hairline);
+  font-size: var(--t-sm);
+}
+
+.plugin-entry:hover {
+  background: var(--surface-2);
+}
+
+.plugin-entry-id {
+  flex: 0 0 auto;
+  min-width: 176px;
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
+.plugin-entry-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+}
+
 /* ============================================================ 环境自检（共享部分）
    `.env` 外层与 `.env-actions`（设置页的「运行环境」卡也在用）、`.env-op*`
    （环境向导的执行输出面板与这一页共用）留在这里；这一页自己的 276 行
