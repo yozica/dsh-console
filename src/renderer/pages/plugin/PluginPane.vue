@@ -32,6 +32,7 @@ import {
   problemLabel,
   visibleGroupsOf,
 } from './plugin-view.js';
+import { useTabActivation } from '../../composables/use-tab-activation.js';
 import { restartThenOpenHarness } from '../../state/restart-flow.js';
 import PluginConfigView from './PluginConfigView.vue';
 import PluginOpPanel from './PluginOpPanel.vue';
@@ -522,15 +523,11 @@ async function restartDsh(): Promise<void> {
 }
 
 // 这一页要起一个 dsh 子进程（dump-config），所以不在启动时就跑，等真正切过来再读一次
-watch(
-  currentTab,
-  (tab) => {
-    if (tab !== 'plugin' || loadedOnce) return;
-    loadedOnce = true;
-    void load();
-  },
-  { immediate: true },
-);
+useTabActivation('plugin', () => {
+  if (loadedOnce) return;
+  loadedOnce = true;
+  void load();
+});
 
 const layers = computed<PluginLayer[]>(() => data.value?.layers || []);
 const problems = computed<PluginProblem[]>(() => data.value?.problems || []);

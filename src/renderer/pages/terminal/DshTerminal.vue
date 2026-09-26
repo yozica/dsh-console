@@ -17,6 +17,7 @@ import {
   passAppShortcutsThrough,
   TERM_THEMES,
 } from './xterm.js';
+import { useTabActivation } from '../../composables/use-tab-activation.js';
 import { currentTab, dsh, phaseInfo, snapshot } from '../../state/store.js';
 import type { TerminalEntry } from './xterm.js';
 
@@ -148,20 +149,15 @@ onUnmounted(() => {
 });
 
 // 切到本页：没有终端就现在建（此时页面已可见、布局已定型），然后 fit 并聚焦
-watch(
-  currentTab,
-  (tab) => {
-    if (tab !== 'terminal') return;
-    ensureTerminal();
-    requestAnimationFrame(() => {
-      syncFit();
-      entry?.term.focus();
-      // 再补一拍：切页那一帧容器的尺寸可能还没最终确定
-      setTimeout(syncFit, 200);
-    });
-  },
-  { immediate: true },
-);
+useTabActivation('terminal', () => {
+  ensureTerminal();
+  requestAnimationFrame(() => {
+    syncFit();
+    entry?.term.focus();
+    // 再补一拍：切页那一帧容器的尺寸可能还没最终确定
+    setTimeout(syncFit, 200);
+  });
+});
 
 // 主题变化：xterm 的配色是 JS 选项，得显式改；面板底色也一起跟上
 watch(

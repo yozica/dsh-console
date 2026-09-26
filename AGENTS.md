@@ -107,6 +107,9 @@ src/
                         env-wizard / env-layer / env-anchor / update-anchor / restart-nav / restart-flow
     shared/             **跨特性共用的逻辑**（≥2 处用、不持有状态、也不是通用工具）：gate-copy（门禁与
                         环境详情层的词表）/ env-install-phase / phase-text
+    composables/        `useXxx`：**用到 Vue 响应式原语、且多处复用**的逻辑（t70，见 7.37）：
+                        `use-tab-activation.ts`（「切到本页时做事」，5 处）、
+                        `use-webview.ts`（两个内嵌页的宿主：`view`/`note`/载入记账/四个事件/重算视口）
     components/         通用组件：被两处以上真的 import 的 `.vue` 才放这里（**现在一个都没有**，
                         规则写在 `components/README.md`，见 7.37）
     gate/               首启门禁那一层（覆盖层，不是页面）：EnvGate + 它的 9 个子组件
@@ -1686,6 +1689,21 @@ renderer/
 **目录名的两个决定**：① 外壳这一层叫 `layout/` 而不是 `shell/`（t68，用户提的）：仓库里 "shell"
 已经被「本地 Shell」（终端页那一路 zsh / pwsh）占了，两个意思撞在一个词上；② `pages/` 是页面、
 `gate/` 是覆盖层、`lib/` 是纯逻辑 —— 名字与 §7.33 的样式分层判据一一对应。
+
+**第 5 个去处：`composables/`**（t70）。判据两条**同时**满足才放这里：① 用到 Vue 的响应式原语
+（`ref` / `watch` / `onMounted`…）；② 有**两处以上**真的复用。只有一处用的跟着那一处走，
+纯计算（没有响应式）进 `utils/`。现在里面是：
+
+| 文件                    | 收的是什么                                                                                              | 谁在用                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `use-tab-activation.ts` | 「切到本页时才做事」：`watch(currentTab)` + id 过滤 + `immediate`                                       | 插件页 / 终端页 / dsh 终端 / 两个内嵌页（5 处）    |
+| `use-webview.ts`        | 内嵌页宿主：`view` / `note` / 载入记账 / 那四个事件 / `-3` 过滤 / `load()` 的 `loadURL` 兜底 / 重算视口 | `pages/ui/UiPane.vue`、`pages/usage/UsagePane.vue` |
+
+**抽之前先数重复，别按"看起来像"抽**（t70 的教训）：我最初按 grep 计数报了三处，
+读完代码只有一处站得住 —— ① 锚点滚动那处**不是 4 处同构**（两处、机制还不同，而且 `utils/scroll.ts`
+已经是共用原语）；② 终端那处只有 `resolvedTheme()` 与主题 watch 两小块重复，而两个组件一个是
+"一路终端"、一个是"一个 Map 管多路"，硬抽会变成一堆回调（**比重复更难读**）。判据是
+"两处**一字不差**"或"骨架相同、差异能用 2~3 个回调表达"，不是"都出现了 `watch`"。
 
 **四个「放哪儿」**（t69 把原来的 `lib/` 拆成前三个 + 跟回特性）：
 

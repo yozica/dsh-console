@@ -21,7 +21,8 @@ import {
   passAppShortcutsThrough,
   TERM_THEMES,
 } from './xterm.js';
-import { currentTab, snapshot, startStore } from '../../state/store.js';
+import { useTabActivation } from '../../composables/use-tab-activation.js';
+import { snapshot, startStore } from '../../state/store.js';
 import DshTerminal from './DshTerminal.vue';
 import { isMac } from '../../utils/platform.js';
 import type { TerminalEntry } from './xterm.js';
@@ -260,10 +261,14 @@ function killActive(): void {
 }
 
 // 切到本页时补一次 fit：容器刚变可见，尺寸才是最终的
-watch(currentTab, (tab) => {
-  if (tab !== 'terminal' || !activeId.value || dshActive.value) return;
-  requestAnimationFrame(() => syncFit(activeId.value));
-});
+useTabActivation(
+  'terminal',
+  () => {
+    if (!activeId.value || dshActive.value) return;
+    requestAnimationFrame(() => syncFit(activeId.value));
+  },
+  { immediate: false },
+);
 
 // 主题变化：xterm 配色是 JS 选项；面板底色（内边距、空状态）也一起跟上
 watch(
