@@ -286,7 +286,7 @@ export function runPlugin(repo: Repo): void {
     '快捷键：TAB_ORDER 与左栏顺序一致（不一致就会"按 7 打开别的页"）',
     (() => {
       const appTs = fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8');
-      const railVue = fs.readFileSync(path.join(rendererDir, 'shell', 'RailNav.vue'), 'utf8');
+      const railVue = fs.readFileSync(repo.vuePath('RailNav.vue'), 'utf8');
       const orderBlock = /TAB_ORDER: TabId\[\] = \[([\s\S]*?)\]/.exec(appTs)?.[1] ?? '';
       const order = [...orderBlock.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
       const rail = [...railVue.matchAll(/\{ id: '([a-z]+)'/g)].map((match) => match[1]);
@@ -315,17 +315,11 @@ export function runPlugin(repo: Repo): void {
   }
 
   // ── t45：左栏 9 → 7（终端合并、环境自检挪进设置）。四条钉子盯住"合并之后不许两头都在"。
-  const railSource = fs.readFileSync(path.join(rendererDir, 'shell', 'RailNav.vue'), 'utf8');
+  const railSource = fs.readFileSync(repo.vuePath('RailNav.vue'), 'utf8');
   const railStoreSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
   const appSource = fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8');
-  const mergedTermSource = fs.readFileSync(
-    path.join(rendererDir, 'panes', 'TerminalPane.vue'),
-    'utf8',
-  );
-  const railSettingsSource = fs.readFileSync(
-    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
-    'utf8',
-  );
+  const mergedTermSource = fs.readFileSync(repo.vuePath('TerminalPane.vue'), 'utf8');
+  const railSettingsSource = fs.readFileSync(repo.vuePath('SettingsPane.vue'), 'utf8');
   const envLayerSource = fs.readFileSync(path.join(rendererDir, 'lib', 'env-layer.ts'), 'utf8');
   const htmlCode = html.replace(/<!--[\s\S]*?-->/g, '');
   const tabIdUnion = /export type TabId =([\s\S]*?);/.exec(railStoreSource)?.[1] ?? '';
@@ -389,12 +383,17 @@ export function runPlugin(repo: Repo): void {
       /<DshTerminal \/>/.test(mergedTermSource) &&
       // 关掉最后一个本地 Shell 要回到 dsh 那一路，不能停在"没有会话"的空屏上
       /activeId\.value = DSH_ID;/.test(mergedTermSource) &&
-      // dsh 那一路是子组件：不在挂载清单里，但必须被宿主 import（上面那条通用检查盯着）
-      !mountJs.includes("from './panes/DshTerminal.vue'") &&
+      // dsh 那一路是子组件：**不在挂载清单的 import 里**，但必须被宿主 import（上面那条通用检查盯着）。
+      // 只看 import 说明符 —— 挂载清单的注释里点名过 `DshTerminal`（解释"由宿主渲染"），
+      // 拿整份文本去匹配会把注释当成 import（真踩过）。
+      ![...mountJs.matchAll(/from\s+'([^']*)'/g)].some((match) =>
+        match[1].endsWith('DshTerminal.vue'),
+      ) &&
       // 会话条上的动作是**镂空**的（.btn.outline），实心只留给"当前在看的那一路"：
       // 之前它用 .btn.primary（实心 accent），比选中的标签还抢眼，看不出选中了谁
       /id="btn-new-shell"[\s\S]{0,80}class="btn small outline"/.test(mergedTermSource) &&
-      // 这两条规则 t48 起在 `panes/TerminalPane.vue` 的 <style scoped> 里（cssBlock 读两层）
+      // 这两条规则 t48 起在终端页（`pages/terminal/TerminalPane.vue`）的 <style scoped> 里
+      //（cssBlock 读两层）
       /\.btn\.outline \{[^}]*background: transparent/.test(cssBlock('.btn.outline')) &&
       /\.shell-tab\.active \{[^}]*background: var\(--accent-soft\)/.test(
         cssBlock('.shell-tab.active'),

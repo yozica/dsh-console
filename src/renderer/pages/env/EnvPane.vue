@@ -22,10 +22,10 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
-import { envFocus } from '../lib/env-anchor.js';
-import { detailSegments } from '../lib/env-detail.js';
-import { closeEnvDetail } from '../lib/env-layer.js';
-import { restartThenOpenHarness } from '../lib/restart-flow.js';
+import { envFocus } from '../../lib/env-anchor.js';
+import { detailSegments } from '../../lib/env-detail.js';
+import { closeEnvDetail } from '../../lib/env-layer.js';
+import { restartThenOpenHarness } from '../../lib/restart-flow.js';
 import EnvUpdateConfirm from './EnvUpdateConfirm.vue';
 import {
   cancelEnvFix,
@@ -38,7 +38,7 @@ import {
   loadEnvReport,
   runEnvFix,
   wireEnvDoctor,
-} from '../lib/env-doctor.js';
+} from '../../lib/env-doctor.js';
 import {
   anyoneBusy,
   install,
@@ -48,17 +48,17 @@ import {
   skipStep,
   stopNodeInstall,
   wizard,
-} from '../lib/env-wizard.js';
-import { installRunning, installSettled } from '../lib/env-install-phase.js';
-import { formatAgo, formatBytes } from '../lib/format.js';
+} from '../../lib/env-wizard.js';
+import { installRunning, installSettled } from '../../lib/env-install-phase.js';
+import { formatAgo, formatBytes } from '../../lib/format.js';
 import {
   BUSY_HINT,
   CHANNEL_SHORT,
   NODE_DOWNLOAD_URL,
   versionWithChannel,
-} from '../lib/gate-copy.js';
-import { platform } from '../lib/platform.js';
-import { currentTab, dsh, phase, settings } from '../lib/store.js';
+} from '../../lib/gate-copy.js';
+import { platform } from '../../lib/platform.js';
+import { currentTab, dsh, phase, settings } from '../../lib/store.js';
 import type {
   EnvCheck,
   EnvCheckId,
@@ -70,7 +70,7 @@ import type {
   EnvNodeOwner,
   EnvNodePlan,
   EnvWizardStepId,
-} from '../../shared/ipc.js';
+} from '../../../shared/ipc.js';
 
 const api = window.dshConsole;
 
@@ -796,7 +796,7 @@ onUnmounted(() => {
           </div>
 
           <!-- 更新确认区：原地展开，不弹原生对话框。两条风险说明是需求 §8.3 的硬要求。
-               t60 起它是 panes/EnvUpdateConfirm.vue：这一层只把计划与档位递下去、把
+               t60 起它是 pages/env/EnvUpdateConfirm.vue：这一层只把计划与档位递下去、把
                "开始 / 取消 / 换档 / 换源"接回来 —— 同一份计划父级那一行也在读，所以留在父级。 -->
           <EnvUpdateConfirm
             v-if="(check.id === 'node' || check.id === 'pnpm') && updateOpen === check.id"

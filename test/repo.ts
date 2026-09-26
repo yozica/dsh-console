@@ -38,8 +38,13 @@ export interface Repo {
   libDir: string;
   /** `index.html` 原文 */
   html: string;
-  /** `panes/` 与 `shell/` 下的 `.vue`（形如 `{ dir, name }`） */
-  vueFiles: { dir: string; name: string }[];
+  /**
+   * 渲染层**全部** `.vue`（递归扫，按 `path` 排序）：`path` 相对 `renderer/`
+   * （形如 `pages/plugin/PluginPane.vue`），`dir` 是它所在目录。
+   */
+  vueFiles: { path: string; dir: string; name: string }[];
+  /** 按文件名找组件（`vuePath('EnvGate.vue')` → 绝对路径）；名字拼错或重名当场抛错 */
+  vuePath(name: string): string;
   /** 所有 `.vue` 的全文拼接 */
   vueSource: string;
   /** `lib/` 下所有 `.ts` 的拼接 */
@@ -59,7 +64,7 @@ export interface Repo {
   ipcSource: string;
   /** 同上，但空白压平（类型声明会被 Prettier 折行，压平才好匹配） */
   flatIpc: string;
-  /** `panes/UiPane.vue` 原文（内嵌界面那一页，几处契约断言都读它） */
+  /** `pages/ui/UiPane.vue` 原文（内嵌界面那一页，几处契约断言都读它） */
   uiPaneSource: string;
   /** `main.ts` + `main-*.ts`（入口拆出的几个簇）的全文拼接 */
   mainSource: string;
@@ -103,19 +108,39 @@ export function createRepo(): Repo {
   const rendererDir = path.join(srcDir, 'renderer');
 
   // 界面已经逐页迁到 Vue 单文件组件，所以**标记与脚本都要把 .vue 一起算进来**
-  // （panes/ 是页面，shell/ 是外壳），否则迁走的部分会悄悄脱离这些检查的覆盖。
-  const vueDirs = ['panes', 'shell'];
-  const vueFiles: { dir: string; name: string }[] = [];
-  for (const dir of vueDirs) {
-    const full = path.join(rendererDir, dir);
-    if (!fs.existsSync(full)) continue;
-    for (const name of fs.readdirSync(full).filter((n) => n.endsWith('.vue'))) {
-      vueFiles.push({ dir, name });
+  // （`pages/<一处>/` 是页面与页面私有的子件，`gate/` 是门禁层，`shell/` 是外壳，
+  // `components/` 是通用件），否则迁走的部分会悄悄脱离这些检查的覆盖。
+  // **递归扫**（t67）：目录结构是活的（按"一处一目录"整理过），把目录名写死在自检里
+  // 就等于"每搬一次目录都要改自检"—— 这里只认扩展名，路径一律走下面的 `vuePath()`。
+  const vueFiles: { path: string; dir: string; name: string }[] = [];
+  const walkVue = (rel: string): void => {
+    const full = path.join(rendererDir, rel);
+    for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
+      const next = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walkVue(next);
+      else if (entry.name.endsWith('.vue')) {
+        vueFiles.push({ path: next, dir: path.posix.dirname(next), name: entry.name });
+      }
     }
-  }
-  const vueSource = vueFiles
-    .map(({ dir, name }) => fs.readFileSync(path.join(rendererDir, dir, name), 'utf8'))
-    .join('\n');
+  };
+  walkVue('');
+  vueFiles.sort((a, b) => a.path.localeCompare(b.path));
+  const vueText = new Map(
+    vueFiles.map(({ path: rel }) => [rel, fs.readFileSync(path.join(rendererDir, rel), 'utf8')]),
+  );
+  // 按**文件名**找组件：目录结构是活的，断言不该把目录名写死（t67）
+  const findVue = (name: string): string => {
+    const hits = vueFiles.filter((file) => file.name === name);
+    if (hits.length !== 1) {
+      throw new Error(
+        `渲染层里叫 ${name} 的组件有 ${hits.length} 个（应当唯一）：${
+          hits.map((h) => h.path).join(', ') || '（一个都没有）'
+        }`,
+      );
+    }
+    return path.join(rendererDir, hits[0].path);
+  };
+  const vueSource = vueFiles.map(({ path: rel }) => vueText.get(rel) ?? '').join('\n');
 
   const html = fs.readFileSync(path.join(rendererDir, 'index.html'), 'utf8');
   const libDir = path.join(rendererDir, 'lib');
@@ -195,7 +220,7 @@ export function createRepo(): Repo {
     .join('\n');
   const flatIpc = ipcSource.replace(/\s+/g, ' ');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as PackageJson;
-  const uiPaneSource = fs.readFileSync(path.join(rendererDir, 'panes', 'UiPane.vue'), 'utf8');
+  const uiPaneSource = fs.readFileSync(findVue('UiPane.vue'), 'utf8');
   // 全局表（变量 / 主题 / 骨架 / 共享件）与各组件自己的 `<style>` 块是两层：
   // 变量块与主题仍在全局表里（那不是页面私有的东西），所以读变量块的检查只看 `css`。
   const css = fs.readFileSync(path.join(rendererDir, 'styles.css'), 'utf8');
@@ -217,6 +242,7 @@ export function createRepo(): Repo {
     libDir,
     html,
     vueFiles,
+    vuePath: findVue,
     vueSource,
     libSource,
     rendererJs,

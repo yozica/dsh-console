@@ -30,7 +30,6 @@ import { blockOf, functionBodyOf, stripComments, stripStrings } from '../text';
 export function runEnvDoctor(repo: Repo): void {
   const f = createEnvFixtures(repo);
   const repoRoot = repo.root;
-  const rendererDir = repo.rendererDir;
   const cssBlock = repo.cssBlock;
   const srcDir = repo.srcDir;
   const sandbox = repo.sandbox;
@@ -287,7 +286,7 @@ export function runEnvDoctor(repo: Repo): void {
       ];
       // 模板里那句注释本身就写着"不用 v-html"，所以查之前先把注释剥掉（§7.13 的老规矩）
       const template = fs
-        .readFileSync(path.join(rendererDir, 'panes', 'EnvPane.vue'), 'utf8')
+        .readFileSync(repo.vuePath('EnvPane.vue'), 'utf8')
         .replace(/<!--[\s\S]*?-->/g, '');
       return (
         cases.every(

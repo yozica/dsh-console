@@ -7,13 +7,13 @@
  * 同一份数据父级的层栈视图与操作输出也在读（`activeData` / `opBusy`），拆开就会变成两个真源。
  * 这里只把输入与点击报回去；分组与过滤是父级用 `lib/plugin-view.ts` 的纯函数算好的。
  */
-import { stateLabel } from '../lib/plugin-view.js';
+import { stateLabel } from '../../lib/plugin-view.js';
 import type {
   PluginEntry,
   PluginInspectResult,
   PluginLiveEntry,
   PluginLayerEditAction,
-} from '../../shared/ipc.js';
+} from '../../../shared/ipc.js';
 
 /** 按层分好组、过滤完的条目（`lib/plugin-view.ts` 的 `visibleGroupsOf` 的输出） */
 interface ConfigGroup {

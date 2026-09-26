@@ -1160,7 +1160,7 @@ watch(fixConfirmAction, (action) => {
             <p class="gate-card-why">{{ STEP_WHY[currentStep.id] }}</p>
 
             <!-- 选择区：步骤 1 的两条安装路径。开始之前随时能改；安装阶段同时不可用。
-                 t61 起是 shell/GateNodeChoice.vue：方法与档位仍由这一层持有（确认区读的是同一份）。 -->
+                 t61 起是 gate/GateNodeChoice.vue：方法与档位仍由这一层持有（确认区读的是同一份）。 -->
             <GateNodeChoice
               v-if="currentStep.id === 'node'"
               :step-id="currentStep.id"
@@ -1177,7 +1177,7 @@ watch(fixConfirmAction, (action) => {
             />
 
             <!-- 事实行 / 进行中进度 / npm 那条交代：三者占同一个槽位（视觉 §5.5）。
-                 t63 起是 shell/GateFacts.vue：这一层只画，事实行与进度读数都由父级算。 -->
+                 t63 起是 gate/GateFacts.vue：这一层只画，事实行与进度读数都由父级算。 -->
             <GateFacts
               v-if="!stepSettled"
               :step-id="currentStep.id"
@@ -1194,7 +1194,7 @@ watch(fixConfirmAction, (action) => {
               @toggle-output="toggleOutput"
             />
 
-            <!-- 操作行：一屏只有一处强调色实底（t62 起是 shell/GateActions.vue） -->
+            <!-- 操作行：一屏只有一处强调色实底（t62 起是 gate/GateActions.vue） -->
             <GateActions
               v-if="!stepRunning && !stepSettled"
               ref="actionsRef"
@@ -1209,7 +1209,7 @@ watch(fixConfirmAction, (action) => {
             />
 
             <!-- 「展开看详情」排在两个操作**之后**（交互 §11.1 / §11.4 的 Tab 顺序）。
-                 t65 起是 shell/GateDetails.vue：这一层只把检查项与"展开着哪一步"递下去。 -->
+                 t65 起是 gate/GateDetails.vue：这一层只把检查项与"展开着哪一步"递下去。 -->
             <GateDetails
               v-if="!stepRunning && currentChecks.length"
               :step-id="currentStep.id"
@@ -1220,7 +1220,7 @@ watch(fixConfirmAction, (action) => {
             />
 
             <!-- 确认区：原地展开，不弹原生对话框、不跳页（交互 §3.2）。
-                 t58 起它是 shell/GateNodeConfirm.vue：这一层只把计划与选择递下去、"开始 / 取消 /
+                 t58 起它是 gate/GateNodeConfirm.vue：这一层只把计划与选择递下去、"开始 / 取消 /
                  换源"接回来 —— 同一批选择在选择区里也画着，所以状态留在这里（一份状态一个真源）。 -->
             <GateNodeConfirm
               v-if="nodeConfirmOpen"
@@ -1242,7 +1242,7 @@ watch(fixConfirmAction, (action) => {
             />
 
             <!-- 一键修复（pnpm / dsh）的确认区：命令原文与目标目录都来自主进程的计划。
-                 t62 起是 shell/GateFixConfirm.vue（焦点由它自己暴露的 focusStart 收）。 -->
+                 t62 起是 gate/GateFixConfirm.vue（焦点由它自己暴露的 focusStart 收）。 -->
             <GateFixConfirm
               v-if="fixConfirmPlan"
               ref="fixRef"
@@ -1253,7 +1253,7 @@ watch(fixConfirmAction, (action) => {
               @close="closeFixConfirm"
             />
 
-            <!-- 跳过是一次确认，不是静默操作（交互 §5.4）—— t65 起是 shell/GateSkipConfirm.vue -->
+            <!-- 跳过是一次确认，不是静默操作（交互 §5.4）—— t65 起是 gate/GateSkipConfirm.vue -->
             <GateSkipConfirm
               v-if="skipConfirmOpen"
               @confirm="confirmSkip"
@@ -1261,7 +1261,7 @@ watch(fixConfirmAction, (action) => {
             />
 
             <!-- 结果行：与事实行同一个槽位，失败不换地方、不弹窗、不整屏红（t61 起是
-                 shell/GateResult.vue：点色 / 结论 / 说明 / 那排出路都由这一层递下去） -->
+                 gate/GateResult.vue：点色 / 结论 / 说明 / 那排出路都由这一层递下去） -->
             <GateResult
               v-if="stepSettled"
               :current-step-id="currentStep.id"
@@ -1282,7 +1282,7 @@ watch(fixConfirmAction, (action) => {
               @open-settings="openSettings"
             />
 
-            <!-- 流式输出：默认收起，展开后与自检页的输出区同一套形态（t58 起是 shell/GateOutput.vue） -->
+            <!-- 流式输出：默认收起，展开后与自检页的输出区同一套形态（t58 起是 gate/GateOutput.vue） -->
             <GateOutput
               v-if="outputOpen"
               :command="outputCommand"

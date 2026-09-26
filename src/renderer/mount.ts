@@ -2,7 +2,8 @@
  * 把外壳与各页面挂到各自的挂载点上。
  *
  * 迁移是逐页进行的，所以这里是一个"挂载清单"而不是一个根组件：
- * 外壳拆成 RailNav / TopBar / StatusBar 三块，页面在 panes/ 下。
+ * 外壳拆成 RailNav / TopBar / StatusBar 三块，页面在 `pages/<一处>/` 下（t67 起：
+ * 一个页面 / 一个特性一个目录，通用组件才进 `components/` —— 见 AGENTS §2）。
  * 等剩下几页也迁完，这份清单会收成一个真正的根组件（那时 index.html
  * 只剩一个挂载点，也不再有"外壳渲染一半、app.ts 管另一半"的接缝）。
  *
@@ -12,17 +13,17 @@
 
 import { createApp, type Component } from 'vue';
 
-import ArchivePane from './panes/ArchivePane.vue';
-import DashboardPane from './panes/DashboardPane.vue';
-import EnvPane from './panes/EnvPane.vue';
-import PluginPane from './panes/PluginPane.vue';
-import SettingsPane from './panes/SettingsPane.vue';
-import TerminalPane from './panes/TerminalPane.vue';
-import UiPane from './panes/UiPane.vue';
-import UsagePane from './panes/UsagePane.vue';
+import EnvGate from './gate/EnvGate.vue';
+import GateBanner from './gate/GateBanner.vue';
+import ArchivePane from './pages/archive/ArchivePane.vue';
+import DashboardPane from './pages/dashboard/DashboardPane.vue';
+import EnvPane from './pages/env/EnvPane.vue';
+import PluginPane from './pages/plugin/PluginPane.vue';
+import SettingsPane from './pages/settings/SettingsPane.vue';
+import TerminalPane from './pages/terminal/TerminalPane.vue';
+import UiPane from './pages/ui/UiPane.vue';
+import UsagePane from './pages/usage/UsagePane.vue';
 import CloseDialog from './shell/CloseDialog.vue';
-import EnvGate from './shell/EnvGate.vue';
-import GateBanner from './shell/GateBanner.vue';
 import RailNav from './shell/RailNav.vue';
 import StatusBar from './shell/StatusBar.vue';
 import TopBar from './shell/TopBar.vue';

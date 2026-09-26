@@ -113,15 +113,15 @@ ready = phase === 'running' && Boolean(dsh.uiUrl);
 
 ## 4. 实现落点
 
-| 文件                                    | 做什么                                                                                       |
-| --------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `src/renderer/lib/restart-nav.ts`（新） | 意图 / 结果 / 到达提示的共享状态；`isRestartReady()` 纯判据；`restartThenOpenHarness()` 编排 |
-| `src/renderer/app.ts`                   | 显式开 `afterRestart` 回合 + 就绪 / 异常 / 超时的收尾 + 锁文案按回合分开                     |
-| `src/renderer/lib/dsh-actions.ts`       | `restartFlow` 返回结果（`ok` / `error` / `cancelled`），供编排判断"要不要谈生效"             |
-| `src/renderer/panes/PluginPane.vue`     | 黄条改成四种状态（进行中 / 失败 / 未就绪 / 已生效），按钮走共享流程                          |
-| `src/renderer/panes/DashboardPane.vue`  | 「重启」走共享流程                                                                           |
-| `src/renderer/panes/EnvPane.vue`        | 「重新启动 dsh」走共享流程                                                                   |
-| `src/renderer/panes/UiPane.vue`         | 「重启为受管实例」走共享流程 + 到达轻提示（浮在内嵌界面顶部、自动消失）                      |
+| 文件                                             | 做什么                                                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `src/renderer/lib/restart-nav.ts`（新）          | 意图 / 结果 / 到达提示的共享状态；`isRestartReady()` 纯判据；`restartThenOpenHarness()` 编排 |
+| `src/renderer/app.ts`                            | 显式开 `afterRestart` 回合 + 就绪 / 异常 / 超时的收尾 + 锁文案按回合分开                     |
+| `src/renderer/lib/dsh-actions.ts`                | `restartFlow` 返回结果（`ok` / `error` / `cancelled`），供编排判断"要不要谈生效"             |
+| `src/renderer/pages/plugin/PluginPane.vue`       | 黄条改成四种状态（进行中 / 失败 / 未就绪 / 已生效），按钮走共享流程                          |
+| `src/renderer/pages/dashboard/DashboardPane.vue` | 「重启」走共享流程                                                                           |
+| `src/renderer/pages/env/EnvPane.vue`             | 「重新启动 dsh」走共享流程                                                                   |
+| `src/renderer/pages/ui/UiPane.vue`               | 「重启为受管实例」走共享流程 + 到达轻提示（浮在内嵌界面顶部、自动消失）                      |
 
 ---
 

@@ -13,14 +13,14 @@
  */
 import { computed } from 'vue';
 
-import { CHANNEL_SHORT, versionWithChannel } from '../lib/gate-copy.js';
+import { CHANNEL_SHORT, versionWithChannel } from '../../lib/gate-copy.js';
 import type {
   EnvCheck,
   EnvFixPlan,
   EnvNodeChannel,
   EnvNodeOwner,
   EnvNodePlan,
-} from '../../shared/ipc.js';
+} from '../../../shared/ipc.js';
 
 const props = defineProps<{
   /** 这一行是哪一项：`node` = 更新 Node（带档位控件），`pnpm` = 更新 pnpm（一句话 + 命令） */

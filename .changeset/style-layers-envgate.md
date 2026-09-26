@@ -2,7 +2,7 @@
 'dsh-console': patch
 ---
 
-样式分层第六批：首启环境向导与入口门禁搬进 `shell/EnvGate.vue` 的 `<style scoped>`
+样式分层第六批：首启环境向导与入口门禁搬进 `gate/EnvGate.vue` 的 `<style scoped>`
 
 - 「首启环境向导与入口门禁」一节里 EnvGate 私有的 **98 个条目**搬走（`.gate*` 外壳与节点时间线、卡片、确认表等），全局表 **2649 → 1944 行（−705，比最初的 4502 少了 57%）**。
 - 与环境自检详情层**共用**的 42 个条目（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` / `.wizard-*` —— EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局表；顺手把误放在这一节里的 `.wizard-readout` 收进 `EnvPane.vue`。

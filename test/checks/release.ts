@@ -231,7 +231,7 @@ export async function runRelease(repo: Repo): Promise<void> {
       !/^import\s*\{[^}]*\}\s*from\s*'electron-updater'/m.test(updaterSource),
   );
 
-  // 关闭询问改成渲染层自己画的卡片（shell/CloseDialog.vue）之后，多了两处**只会静默坏掉**的点：
+  // 关闭询问改成渲染层自己画的卡片（`shell/CloseDialog.vue`）之后，多了两处**只会静默坏掉**的点：
   //   1. 渲染层没接住时必须退回原生弹窗 —— 不然渲染层一卡，窗口就再也关不掉了。
   //      注意**只给握手设时限**：卡片显示出来之后就不能再计时，否则用户多想两秒都会被判成
   //      "卡住"，系统弹窗自己冒出来（第一版就是这么错的）；
@@ -458,10 +458,7 @@ export async function runRelease(repo: Repo): Promise<void> {
   //    具体的措辞与排版**不在这里钉**：那是外观，改动频繁，钉字面量只会让"润色一句话就得改断言"
   //    （判据见 AGENTS「为什么这些检查放在自检里」）。渲染出来的每个相位的文案由本地冒烟脚本
   //    打印出来给人看，那里也会量"按钮在标题行里"这类布局。
-  const settingsSource = fs.readFileSync(
-    path.join(rendererDir, 'panes', 'SettingsPane.vue'),
-    'utf8',
-  );
+  const settingsSource = fs.readFileSync(repo.vuePath('SettingsPane.vue'), 'utf8');
   check(
     '更新卡片：说明行由 canAutoUpdate 分支决定（Windows 才承诺下载/安装）',
     /const updateNote = computed[\s\S]{0,400}?update\.value\.canAutoUpdate/.test(settingsSource),

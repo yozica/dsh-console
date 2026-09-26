@@ -403,7 +403,7 @@ main {
 /* ============================================================ 指示灯（共享部分）
    `.lamp` 基础形状与 `#hero-dot`（看板上的大圆点）是多处在用的；按状态着色的那几条
    跟着各自的组件走（`.rail-service[…] .lamp` 在 `shell/RailNav.vue`、
-   `.lamp-lg` 在 `panes/DashboardPane.vue`）。 */
+   `.lamp-lg` 在 `pages/dashboard/DashboardPane.vue`）。 */
 
 /* ============================================================ 指示灯 */
 
@@ -450,7 +450,7 @@ main {
 
 /* ============================================================ 按钮
    `.btn` 基础与各变体是跨页面共用件；`.btn.outline`（会话条上的镂空动作按钮）
-   只有终端页用，跟着搬进 `panes/TerminalPane.vue` —— 见 AGENTS §7.33。 */
+   只有终端页用，跟着搬进 `pages/terminal/TerminalPane.vue` —— 见 AGENTS §7.33。 */
 
 /* ============================================================ 按钮 */
 
@@ -628,7 +628,7 @@ main {
 /* ============================================================ 终端类页面（共享部分）
    `.term-host` 的**基础**规则（relative + flex: 1 1 auto）两路终端都在用，留在全局表；
    终端页自己的 `.term-body` / `.term-view` / `.shell-tab*` / `.chips` 搬进
-   `panes/TerminalPane.vue`，`.bar-title` 搬进 `panes/DshTerminal.vue`（见 §7.30 / §7.33）。 */
+   `pages/terminal/TerminalPane.vue`，`.bar-title` 搬进 `pages/terminal/DshTerminal.vue`（见 §7.30 / §7.33）。 */
 
 /* ============================================================ 终端类页面 */
 
@@ -823,7 +823,7 @@ main {
 
 /* ============================================================ 内嵌界面（共享部分）
    `.webview-wrap` / `.embedded-view` 两个内嵌页共用；`.ui-paste*` 与 `.immersive-only` /
-   `.topbar-note.lit` 分别搬进 `panes/UiPane.vue` 与 `shell/TopBar.vue`；
+   `.topbar-note.lit` 分别搬进 `pages/ui/UiPane.vue` 与 `shell/TopBar.vue`；
    `body[data-immersive]` 那几条状态规则留在这一层。 */
 
 /* ============================================================ 内嵌界面 */
@@ -927,7 +927,7 @@ body[data-immersive='true'] .webview-wrap {
    这一段只留**多个页面都在画**的东西：复选框行（设置页 / 关闭确认卡片 / 看板 / 环境自检 /
    环境向导都画它）与「卡片后面那句提示」。按页面归属的样式不再堆在这张表里 ——
    设置页那一族（`.settings` / `.form-row` / `.input-suffix` / `.update-*`）连同「聚焦蒙层」
-   都在 `panes/SettingsPane.vue` 的 `<style scoped>` 里，分层规则见 AGENTS §7.33。 */
+   都在 `pages/settings/SettingsPane.vue` 的 `<style scoped>` 里，分层规则见 AGENTS §7.33。 */
 
 .check {
   display: flex;
@@ -1045,7 +1045,7 @@ body[data-immersive='true'] .webview-wrap {
 }
 
 /* 归档会话页（`.archive*`，含 v-html 渲染出来的对话正文排版）的样式已经搬进
-   `panes/ArchivePane.vue` 的 `<style scoped>` —— 分层判据与 :deep() 的用法见 AGENTS §7.33。 */
+   `pages/archive/ArchivePane.vue` 的 `<style scoped>` —— 分层判据与 :deep() 的用法见 AGENTS §7.33。 */
 
 /* ============================================================ 尊重系统的减弱动效 */
 
@@ -1060,9 +1060,9 @@ body[data-immersive='true'] .webview-wrap {
 }
 
 /* 插件页（装配层）自己的样式（`.plugin*` / `.layer*` / `.patch*` / `.op-*` …）已经整节搬进
-   `panes/PluginPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
+   `pages/plugin/PluginPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
-/* t63：门禁拆出 `shell/GateFacts.vue` 之后，这两条同时落在父组件与子组件上（`.gate-card-why` 父级
+/* t63：门禁拆出 `gate/GateFacts.vue` 之后，这两条同时落在父组件与子组件上（`.gate-card-why` 父级
    的步骤卡也画、`.gate-detail-cmd` 父级的"展开看详情"也画），按 §7.33 的判据收进全局表。 */
 .gate-card-why {
   max-width: var(--wizard-read);
@@ -1081,7 +1081,7 @@ body[data-immersive='true'] .webview-wrap {
   user-select: text;
 }
 
-/* t59：插件页拆出 `panes/PluginStackView.vue` / `panes/PluginOpPanel.vue` 之后，下面这几条同时落在
+/* t59：插件页拆出 `pages/plugin/PluginStackView.vue` / `pages/plugin/PluginOpPanel.vue` 之后，下面这几条同时落在
    父组件与子组件里（层栈那一列的条目列表与"生效配置"视图画的是同一种条目 / 标签），所以按 §7.33
    的判据收进全局表；只有单边在用的已经跟着组件走。 */
 .plugin-tag {
@@ -1158,9 +1158,9 @@ body[data-immersive='true'] .webview-wrap {
    `.env` 外层与 `.env-actions`（设置页的「运行环境」卡也在用）、`.env-op*`
    （环境向导的执行输出面板与这一页共用）留在这里；这一页自己的 276 行
    （`.env-row*` / `.env-scope` / `.env-confirm*` / `.env-source*` …）已经搬进
-   `panes/EnvPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
+   `pages/env/EnvPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
-/* t60：环境自检页把"更新 Node / pnpm 的确认区"拆成 `panes/EnvUpdateConfirm.vue` 之后，
+/* t60：环境自检页把"更新 Node / pnpm 的确认区"拆成 `pages/env/EnvUpdateConfirm.vue` 之后，
    下面几条同时落在父组件（一键修复的确认区）与子组件上，按 §7.33 的判据收进全局表。 */
 /* 确认区：整行铺开（父级是 flex-wrap 的一行），把命令原文与目标目录都摆在按钮之前 */
 .env-confirm {
@@ -1207,7 +1207,7 @@ body[data-immersive='true'] .webview-wrap {
 
 /* ============================================================ 环境自检（共享部分）
    这里其实只剩 `.env-*` 那批与环境向导共用的；`.env` 外层与 `.env > .bar`
-   只有环境自检页用，搬进 `panes/EnvPane.vue`。 */
+   只有环境自检页用，搬进 `pages/env/EnvPane.vue`。 */
 
 .env-actions {
   flex: 0 0 auto;
@@ -1307,12 +1307,12 @@ body[data-immersive='true'] .webview-wrap {
 
 /* ============================================================ 共享的向导零件
    向导与环境自检详情层共用的那批（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` /
-   `.wizard-*`）都在这里；`.gate-banner-actions` 只有常驻横幅用，搬进 `shell/GateBanner.vue`。 */
+   `.wizard-*`）都在这里；`.gate-banner-actions` 只有常驻横幅用，搬进 `gate/GateBanner.vue`。 */
 
 /* ============================================================ 共享的向导零件
    `.gate-option*` / `.gate-choice*` / `.gate-confirm*` / `.wizard-*` 这批是**首启向导与
    环境自检详情层两边都在画**的（EnvPane 复用向导的选项 / 选择 / 确认 / 进度行），
-   所以留在全局表；向导自己的 `.gate-*` 外壳与其余零件都搬进了 `shell/EnvGate.vue`
+   所以留在全局表；向导自己的 `.gate-*` 外壳与其余零件都搬进了 `gate/EnvGate.vue`
    的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
 /* 设置页「运行环境」卡里那行按钮（t45） */
@@ -1482,7 +1482,7 @@ body[data-gate-visible='true'] .rail > * {
   color: var(--code-ink);
 }
 
-/* t58：以下几条原来在 EnvGate 的 <style scoped> 里 —— 向导的确认区拆成 shell/GateNodeConfirm.vue
+/* t58：以下几条原来在 EnvGate 的 <style scoped> 里 —— 向导的确认区拆成 gate/GateNodeConfirm.vue
    之后它们同时落在父组件与子组件上（`.gate-choice` / `.gate-detail*` / `.gate-fact-more` /
    `.gate-option-risk` 在"选择区 / 展开看详情"里也画着），按 §7.33 的判据收进全局表。
    `.gate-confirm-loading` 只有那个子组件在用，跟着它进组件的 scoped 块。 */

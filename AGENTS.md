@@ -102,14 +102,21 @@ src/
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
                         ＋ clipboard / status-message（复制与状态栏那句话，t58 从 EnvGate 提出来）
-    shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
-                        ＋ EnvGate 的子组件：GateNodeConfirm / GateOutput（t58）、GateNodeChoice / GateResult（t61）、
-                          GateActions / GateFixConfirm（t62）、GateFacts（t63）—— 见 7.36
-    panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
-                         Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
-                         页面，而是设置页「运行环境」卡的详情视图，见 7.30；PluginPane = 装配层，
-                         它的层栈视图 / 操作输出 / 生效配置视图是 PluginStackView / PluginOpPanel /
-                         PluginConfigView 三个子组件，EnvPane 的更新确认区是 EnvUpdateConfirm，见 7.36）
+    components/         通用组件：被两处以上真的 import 的 `.vue` 才放这里（**现在一个都没有**，
+                        规则写在 `components/README.md`，见 7.37）
+    gate/               首启门禁那一层（覆盖层，不是页面）：EnvGate + 它的 9 个子组件
+                        （GateNodeConfirm / GateOutput（t58）、GateNodeChoice / GateResult（t61）、
+                        GateActions / GateFixConfirm（t62）、GateFacts（t63）、GateDetails / GateSkipConfirm（t65））
+                        ＋ 常驻横幅 GateBanner —— 见 7.36
+    shell/              应用外壳：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）
+    pages/              **一处一目录**（t67，见 7.37）：dashboard / terminal / ui / usage / archive /
+                        plugin / env / settings 八个目录，页面本体与它自己的子组件同目录：
+                        - `terminal/`：TerminalPane（终端：一条会话条带 dsh 终端与各本地 Shell）+ 子组件 DshTerminal
+                        - `plugin/`：PluginPane（装配层）+ 层栈视图 / 操作输出 / 生效配置视图
+                          （PluginStackView / PluginOpPanel / PluginConfigView）
+                        - `env/`：EnvPane + 更新确认区 EnvUpdateConfirm（它不再是页面，是设置页
+                          「运行环境」卡的详情视图，见 7.30）
+                        - `dashboard` / `ui` / `usage` / `archive` / `settings`：各自一页，暂时只有一个文件
 test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（315 项，`npm test`）
 test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
 test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
@@ -138,7 +145,7 @@ eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 - **渲染层由 Vite 打包成单个自包含的普通脚本**（见下）。
 - **共享状态只有一份**：`lib/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
 - **门禁层是一个覆盖层，不是第 8 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
-- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/**`；渲染层 = `renderer/{panes/**,shell/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
+- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/**`；渲染层 = `renderer/{pages/**,gate/**,shell/**,components/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
 
 **一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。启动后 1.5 秒另有一轮**只读**的运行环境自检在后台跑（`main/env-doctor.ts`，见 7.20）：它不参与启动、不碰 dsh 进程，结果由渲染层 `envCheck()` 拉取。
 
@@ -430,9 +437,9 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 左栏原来是九项，其中「dsh 终端」与「本地 Shell」是同一件事的两个入口、「环境自检」多数时候只看一眼结论。
 现在：
 
-- **一个「终端」页**（`panes/TerminalPane.vue`）：一条会话条，**第一项固定是 `dsh 终端`**（保留 id `'dsh'`，
+- **一个「终端」页**（`pages/terminal/TerminalPane.vue`）：一条会话条，**第一项固定是 `dsh 终端`**（保留 id `'dsh'`，
   不能改名也不能关闭），后面是各本地 Shell，`＋ 新建本地 Shell` 在最右；`关闭当前` 只在本地 Shell
-  那一路上出现。dsh 那一路是子组件 `panes/DshTerminal.vue`（= 原来那一页，带它自己的状态条与
+  那一路上出现。dsh 那一路是子组件 `pages/terminal/DshTerminal.vue`（= 原来那一页，带它自己的状态条与
   三个动作），所以**它不在挂载清单里** —— 这就是为什么那条自检要认「被别的组件 import」。
   顶栏标题也跟着从 `dsh 终端` 改成 `终端`（这一页不再只有 dsh 那一路）；`TopBar.vue` 的 `PAGE_TITLES`
   里 `shell` / `env` 两个键同时删掉 —— `currentTab` 已经是七项的联合类型，留着就是死键。
@@ -604,7 +611,7 @@ PATH 里第一个是 nvm 22 的 corepack shim = **9.6.0** → `store/v3`。而 `
 "哪些能搬"要**按规则逐条数**，不能按段落整体判断（这一节 42 条里只有 28 条是 EnvPane 私有的）。
 **插件页（装配层）** —— 整节 **96 个条目**全搬进 `PluginPane.vue`（`.plugin*` / `.layer*` /
 `.plugin-op*` …；这一页没有 v-html，不需要 `:deep()`）—— 全局表 3376 → 2649。
-**首启环境向导与入口门禁** —— 98 个条目搬进 `shell/EnvGate.vue`（全局表 2649 → 1944），
+**首启环境向导与入口门禁** —— 98 个条目搬进 `gate/EnvGate.vue`（全局表 2649 → 1944），
 与环境自检详情层共用的 42 个条目（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` / `.wizard-*`，
 EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局表；顺手把误放在这一节里的 `.wizard-readout`
 收进 `EnvPane.vue`。注意 **`.gate-rail` 在全局表里仍以 `html[…] body[…] .gate-rail { … }` 的形式存在**
@@ -617,7 +624,7 @@ EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局
 挂载点 `display: contents`）与 `html`/`body` 上的状态开关（macOS 红绿灯留白、系统全屏撤回、应用内全屏）
 —— 判据里因此要把 `html` / `body` / `:root` 开头的规则**先排除**，它们天生不属于任何组件。
 
-**最后一批（终端页 / 内嵌界面 / 零散几条）** —— `panes/TerminalPane.vue` 12 条（`.term-body` /
+**最后一批（终端页 / 内嵌界面 / 零散几条）** —— `pages/terminal/TerminalPane.vue` 12 条（`.term-body` /
 `.term-view*` / `.shell-tab*` / `.shell-pane*` / `.chips` / `.btn.outline`）、`DshTerminal.vue` 1 条
 （`.bar-title`）、`UiPane.vue` 4 条（`.ui-paste*`）、`TopBar.vue` 2 条（`.immersive-only` /
 `.topbar-note.lit`）、`GateBanner.vue` 1 条、`EnvPane.vue` 2 条（`.env` / `.env > .bar`）——
@@ -691,8 +698,9 @@ Prettier**，不然 `format:check` 会红（这一轮又踩了一次）。
 `.topbar-note.lit { … }`（顶栏那格"亮一下"的变体）都以 `.close-card` / `.topbar-note` 开头，
 会把"没搬干净"和"共享变体还在"混为一谈（这一轮两条假红就是这么来的）。
 
-自检里那张表的 `readScoped(file)` 会**先在 `panes/` 找、再在 `shell/` 找** —— 页面组件在 `panes/`、
-外壳组件（`EnvGate` / `CloseDialog`）在 `shell/`，只写 `panes/` 会直接读不到文件。
+自检里那张表的 `readScoped(file)` 按**文件名**找组件（`repo.vuePath()`，t67 起）：组件散在
+`pages/*` / `gate/` / `shell/` 下，把目录名写死在自检里就等于"每搬一次目录都要改自检"；
+按文件名找还顺带钉住"组件不许重名"，拼错名字会当场抛错并列出所有同名候选（见 7.37）。
 
 搬完一页就往自检里那张 `styleLayers` 表加一行（「样式分层：页面私有的规则搬进组件的
 `<style scoped>`，共享件留在全局表（v-html 内容走 :deep）」）—— 它同时守 ① 私有规则不许在全局表
@@ -756,7 +764,8 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 ### 7.13 静态检查只看代码、不看注释
 
-自检里的 id / class / api / webview 检查扫描 `index.html + panes/*.vue + shell/*.vue + lib/*.ts` 的合集，并**先剥掉注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、`#000` 这类示意写法举例，当真值去查会误报。class 检查要认得动态绑定（`:class="{ active: 条件 }"` 的键名算用到的 class）。新增页面时记得同步挂载清单、样式与（如需要）preload 暴露的 API —— 自检「样式：标记用到的 class 都有对应样式（HTML + .vue）」已经挡住过两次真问题。
+自检里的 id / class / api / webview 检查扫描 `index.html` ＋**全部** `.vue`（递归扫 `pages/` /
+`gate/` / `shell/` / `components/`）＋ `lib/*.ts` 的合集，并**先剥掉注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、`#000` 这类示意写法举例，当真值去查会误报。class 检查要认得动态绑定（`:class="{ active: 条件 }"` 的键名算用到的 class）。新增页面时记得同步挂载清单、样式与（如需要）preload 暴露的 API —— 自检「样式：标记用到的 class 都有对应样式（HTML + .vue）」已经挡住过两次真问题。
 
 ### 7.14 设置页网格：`min-height: 0` 会吃掉溢出内容
 
@@ -966,7 +975,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - **安装一旦开始就不杀**：`stop()` 按相位分两种语义（下载 / 校验 = 真取消并删临时文件；安装 / 等待 = 只置 `detached`），`detachOnQuit()` 在退出时也**不杀不 wait**；互斥锁在 `detached` 期间**仍然持有**，直到复检证明落地 / 用户点「我确认安装已经结束」/ 应用重启。**阶段一那条 5 分钟超时 `kill` 的规则不适用于安装器**（杀在半路会留下一个半装的 Node）。
 - **面向用户的结论不许出现内部记号**：`detail` 里不写 `EPERM` / `EACCES`（同一个含义说成人话："这个运行环境不允许起子进程 —— 不代表没装"），原始错误经 `EnvDoctorHooks.log` 落 `<userData>/logs/console.log`。判定口径也随之收紧：**只有真的跑不起来（有路径但零输出 / 退出码非 0）才 `missing`**，"测不出来"仍是 `warn`（不挡人，与门禁判据 `pnpm.status !== 'missing'` 对齐）。
 - **版本管理器的模型按 v2 的真相推，不按 v1 的变量推**（VM-11 / VM-12 的客机实测）：nvm-windows **v2** 用 **shim 模式 + PATH**（用户 PATH 里是 `<root>` 与 `<root>\.nodejs`），各版本在 `<root>\installs`，**不设 `NVM_HOME` / `NVM_SYMLINK`**，另有 `nvm on/off`（注册表 `Enabled` 里读得到）；`NVM_HOME` / `NVM_SYMLINK` 只作 v1 风格机器的兜底。所以 `deriveNvmModel()` 的证据优先级是「`nvm.exe` 的真实路径 → `nvm env` / 注册表偏好 → 用户 PATH 里那条 `…\nvm` → `NVM_HOME`」，`activeDir` 先认 PATH 里真实存在的 `.nodejs`；**模型不许写死成 v1 的形状**。配套那条更硬的规矩：**「版本管理器装好了但没有可用版本」不是让用户回终端 `nvm use` 的理由 —— 装版本是应用自己的事**（`nvm install` → `nvm use` → 实测 `<node> --version` 与 `<npm> --version` 都有输出才算完成）。模型、证据与这条状态的出路写在 **`docs/env-wizard.md` §7.6**。
-- **「更新 Node」不许把方法写死 —— 判据跟着那份 Node 的真实归属走**（VM-14 的真实现场）：**现象** —— 这台电脑上的 Node 由版本管理器管着，点「更新 Node.js」却下载了官方安装包装到 `C:\Program Files\nodejs`，装完机器上**有两份 Node**，之后 `node` 用哪一份只看系统查找路径里谁在前（终端 / 插件 / 我们自己可能各拿一份）。**原因** —— 渲染层把方法写死成直装（历史现场是 `panes/EnvPane.vue` 里两处调用的 `method: 'direct'`），而"这份 Node 归谁管"这件事**在契约里根本没有字段可读**，于是界面只能替用户猜一个。**现在的做法** —— 归属判定 `detectNodeOwner()`（纯函数，判据见 `docs/env-wizard.md` §7.7）→ 进 `EnvDoctorReport.nodeOwner` → 计划里 `EnvNodePlan.owner`：`nvm` 只走版本管理器、`system` 只走官方安装包、`unknown` **不预选**（更新不做自动更新；安装两条路都列出来让用户显式选 + 先说清两份并存的后果）。**两种 `unknown` 必须分开（VM-16）**：**已经有一份 Node** 时两条路都列、**一条都不预选**（必须显式选）；**一份 Node 都没有**时**两条路也都要在**（默认**预选**一条：机器上已有可辨认的版本管理器就用它，否则官方安装包），预选**只是预选**、随时能改 —— 把这一支做成"只给一句事实行、另一条点不了"，就是用户重置虚拟机后第一次装 Node 时**找不到「用版本管理器安装」**的那个回归。**渲染层只递选择、不递事实**：更新入口的请求是 `{ mode: 'update' }`（方法省略 = 跟随归属），归属判不出来时那一行**不给「更新」**，只给官方下载页 + 重新检测。配套两条同样要守：**机器上已经有可辨认的版本管理器时不许再装它一遍**（`EnvNodePlan.installsManager === false` → 跳过下载与校验两段，直接 `nvm install` → `nvm use`），以及**归属纯函数只有一份**（`env-doctor` 采集侧与安装计划共用，渲染层零路径判断）。
+- **「更新 Node」不许把方法写死 —— 判据跟着那份 Node 的真实归属走**（VM-14 的真实现场）：**现象** —— 这台电脑上的 Node 由版本管理器管着，点「更新 Node.js」却下载了官方安装包装到 `C:\Program Files\nodejs`，装完机器上**有两份 Node**，之后 `node` 用哪一份只看系统查找路径里谁在前（终端 / 插件 / 我们自己可能各拿一份）。**原因** —— 渲染层把方法写死成直装（历史现场是 `pages/env/EnvPane.vue` 里两处调用的 `method: 'direct'`），而"这份 Node 归谁管"这件事**在契约里根本没有字段可读**，于是界面只能替用户猜一个。**现在的做法** —— 归属判定 `detectNodeOwner()`（纯函数，判据见 `docs/env-wizard.md` §7.7）→ 进 `EnvDoctorReport.nodeOwner` → 计划里 `EnvNodePlan.owner`：`nvm` 只走版本管理器、`system` 只走官方安装包、`unknown` **不预选**（更新不做自动更新；安装两条路都列出来让用户显式选 + 先说清两份并存的后果）。**两种 `unknown` 必须分开（VM-16）**：**已经有一份 Node** 时两条路都列、**一条都不预选**（必须显式选）；**一份 Node 都没有**时**两条路也都要在**（默认**预选**一条：机器上已有可辨认的版本管理器就用它，否则官方安装包），预选**只是预选**、随时能改 —— 把这一支做成"只给一句事实行、另一条点不了"，就是用户重置虚拟机后第一次装 Node 时**找不到「用版本管理器安装」**的那个回归。**渲染层只递选择、不递事实**：更新入口的请求是 `{ mode: 'update' }`（方法省略 = 跟随归属），归属判不出来时那一行**不给「更新」**，只给官方下载页 + 重新检测。配套两条同样要守：**机器上已经有可辨认的版本管理器时不许再装它一遍**（`EnvNodePlan.installsManager === false` → 跳过下载与校验两段，直接 `nvm install` → `nvm use`），以及**归属纯函数只有一份**（`env-doctor` 采集侧与安装计划共用，渲染层零路径判断）。
 - **档位是事实，不是偏好：`switchesChannel` 按构造保证，别改回去**（VM-15 的另一半）：**现象** —— 用户在向导里选了「当前版」装出 `v26.9.0`，之后点「更新」，目标却按默认的稳定版算成 `v24.21.0`，**比已装的更低**，而界面没说这是换档。**原因** —— 目标档位的默认值写死成 `'lts'`；"这一次是不是换档"只在显式选档那一支上算，于是另两条可达路径（`install` 的设计默认正好跨档、目标版本比现在低）拿不到"这是换档"的事实，界面就把它当"更新"显示。**现在的做法** —— ① `update` 省略档位 = **跟随当前档位**（当前档 = 已装版本在官方清单里那一条的 `lts` 字段，判不出来就 `null`、不许猜），只有 `install` 才用设计默认的"最新稳定版"；② `decideNodePlan()` 在**所有**分支上算 `switchesChannel = direction === 'older' || (currentChannel !== null && channel !== currentChannel)` —— 即"**档位变了 或 目标更低**"这个**超集**语义，于是约定 ②「`direction === 'older'` ⟹ `switchesChannel === true`」**按构造无条件成立**（不是靠"跟随时现实中不会出现更低的目标"这种概率性理由）。⚠️ **`src/shared/ipc.ts` 里那句注释只写了充分条件**（"目标档位与当前档位不同 = 这是「换档」"），照它把这一行改回"只比档位"就会让 `older` 重新变成一次没有解释的静默降级（t9 的变异实验正是这么把它还原红的）—— **以后者（代码里的构造）为准，别照注释改**；③ 跨档的**两个来源**都要认：用户显式选档，以及 `install` 的设计默认正好跨档（向导第三步「换一个 Node」那条可达路径）。
 - **「先停 dsh」这类承诺必须与引擎的实际动作同位**（同一类坑的第二个实例）：**现象** —— 确认区上写着「更新会先停掉正在运行的 dsh」，但真机上 `dsh` 没被停。**原因** —— 那句承诺对应的 `hooks.stopDsh()` 原先住在 `installPhase()` 里，而"机器上已经有版本管理器"（`installsManager === false`）那条路**整个跳过安装阶段**，于是那句承诺**悄悄落空**（界面说着会停、实际没停）。**现在的做法** —— 停 dsh 是 `execute()` 里 `mode === 'update'` 的**唯一一处**调用（`stopDshForUpdate()`，排在 `installsManager` 分支**之前**）：不管走哪条路、要不要下载，先停一次，结构上不可能漏、也不可能停两次。**代价与时序**（船长裁定，记下来免得后人当 bug 修）：直装那条路因此从「下载 → 校验 → 停 → 装」变成「**停 → 下载 → 校验 → 装**」—— 好处是与需求 §8.3 的"先停、再更新"逐字一致、两条路共用同一处；代价是**下载失败 / 取消时 dsh 已经被停了**。这个代价**可以接受**：终态仍是 `error`（界面照旧给「重新启动 dsh」这个一键恢复的出口），不为它新增"dsh 已经停掉了"的额外文案。
 
@@ -1324,7 +1333,7 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 ### 7.36 渲染层拆模块：纯逻辑进 `lib/`，DOM 与模板留在组件（t53 起）
 
-**现状（第一步，2026-09-26）**：`shell/EnvGate.vue` 2648 → 2515 行、`panes/EnvPane.vue` 1546 → 1501 行，
+**现状（第一步，2026-09-26）**：`gate/EnvGate.vue` 2648 → 2515 行、`pages/env/EnvPane.vue` 1546 → 1501 行，
 新增两个共享模块：
 
 | 文件                       | 行数 | 装什么                                                                                                                                          |
@@ -1358,14 +1367,14 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第二步（t58，2026-09-26）：模板级拆分 —— 门禁层的两块子组件**
 
-`shell/EnvGate.vue` 2515 → 2153 行，拆出两个子组件：
+`gate/EnvGate.vue` 2515 → 2153 行，拆出两个子组件：
 
-| 文件                        | 行数 | 装什么                                                                           | 拿什么                                                                                                              |
-| --------------------------- | ---- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `shell/GateNodeConfirm.vue` | 357  | Node 安装 / 更新那条路的**确认区**（"将要执行"卡片 + 未签名 / 未校验那两档确认） | 计划、方法、档位、忙位（props）+ 六个事件（close / start / pick-method / use-direct / open-source / open-download） |
-| `shell/GateOutput.vue`      | 57   | 流式输出面板（原文照贴 + 跟着新片段滚 + 收起）                                   | 四行读数（command / text / state / summary）+ `collapse`                                                            |
-| `lib/status-message.ts`     | 9    | 状态栏那一句话的唯一出口（`say`）                                                | —                                                                                                                   |
-| `lib/clipboard.ts`          | 17   | 复制到剪贴板 + 那句话（父子的"复制"共用一份）                                    | —                                                                                                                   |
+| 文件                       | 行数 | 装什么                                                                           | 拿什么                                                                                                              |
+| -------------------------- | ---- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `gate/GateNodeConfirm.vue` | 357  | Node 安装 / 更新那条路的**确认区**（"将要执行"卡片 + 未签名 / 未校验那两档确认） | 计划、方法、档位、忙位（props）+ 六个事件（close / start / pick-method / use-direct / open-source / open-download） |
+| `gate/GateOutput.vue`      | 57   | 流式输出面板（原文照贴 + 跟着新片段滚 + 收起）                                   | 四行读数（command / text / state / summary）+ `collapse`                                                            |
+| `lib/status-message.ts`    | 9    | 状态栏那一句话的唯一出口（`say`）                                                | —                                                                                                                   |
+| `lib/clipboard.ts`         | 17   | 复制到剪贴板 + 那句话（父子的"复制"共用一份）                                    | —                                                                                                                   |
 
 这一步学到的五条：
 
@@ -1395,12 +1404,12 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第三步（t59，2026-09-26）：插件页的两个视图**
 
-`panes/PluginPane.vue` 1916 → 1462 行，拆出层栈视图与操作输出面板：
+`pages/plugin/PluginPane.vue` 1916 → 1462 行，拆出层栈视图与操作输出面板：
 
-| 文件                        | 行数 | 装什么                                              | 拿什么                                                                                     |
-| --------------------------- | ---- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `panes/PluginStackView.vue` | 367  | 层栈视图（左边层列表 + 右边选中层的详情与三个动作） | `data` / `layers` / `selectedIndex` / `selected` / `selectedEntries` / `opBusy` + 四个事件 |
-| `panes/PluginOpPanel.vue`   | 163  | 操作输出面板（原文照贴 + 中断 / 收起 / 插进我的层） | 六行读数 + `cancel` / `collapse` / `insert-layer`                                          |
+| 文件                               | 行数 | 装什么                                              | 拿什么                                                                                     |
+| ---------------------------------- | ---- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `pages/plugin/PluginStackView.vue` | 367  | 层栈视图（左边层列表 + 右边选中层的详情与三个动作） | `data` / `layers` / `selectedIndex` / `selected` / `selectedEntries` / `opBusy` + 四个事件 |
+| `pages/plugin/PluginOpPanel.vue`   | 163  | 操作输出面板（原文照贴 + 中断 / 收起 / 插进我的层） | 六行读数 + `cancel` / `collapse` / `insert-layer`                                          |
 
 做法与第二步同一套：子组件哑、状态留在父级（选中哪一层与"在生效配置里看这几条"的跳转、增删改
 都要用同一份），模板逐字复制、props 按原标识符命名，只改三处（根元素的 `v-if` 交给父级、
@@ -1416,7 +1425,7 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第四步（t60，2026-09-26）：环境自检页的更新确认区**
 
-`panes/EnvPane.vue` 1501 → 1205 行，拆出 `panes/EnvUpdateConfirm.vue`（362 行）：**更新 Node / pnpm
+`pages/env/EnvPane.vue` 1501 → 1205 行，拆出 `pages/env/EnvUpdateConfirm.vue`（362 行）：**更新 Node / pnpm
 的确认区**（版本档位控件、归属与下载来源的事实表、跨档说明、以及"开始 / 取消 / 换档 / 换源"）。
 
 同样是"子组件哑、状态留父级"：计划、档位、忙位、报告里的归属都由父级拿着（父级那一行本身也在读
@@ -1438,12 +1447,12 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第五步（t61，2026-09-26）：门禁的选择区与结果行**
 
-`shell/EnvGate.vue` 2153 → 1989 行，拆出两块：
+`gate/EnvGate.vue` 2153 → 1989 行，拆出两块：
 
-| 文件                       | 行数 | 装什么                                                              | 拿什么                                                                                        |
-| -------------------------- | ---- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `shell/GateNodeChoice.vue` | 123  | 选择区：版本档位 + 安装方法两组单选（含"两条路都没预选"那两句提示） | 9 个 props（档位 / 方法事实 / 要不要列两条路 / 有没有预选 …）+ `pick-method` / `pick-channel` |
-| `shell/GateResult.vue`     | 184  | 结果行：状态点 + 结论句 + 说明 + 那排出路（三种结局各一套按钮）     | 7 个 props（点色 / 结论 / 说明 / 走哪条通道 / 三种结局）+ 9 个事件                            |
+| 文件                      | 行数 | 装什么                                                              | 拿什么                                                                                        |
+| ------------------------- | ---- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `gate/GateNodeChoice.vue` | 123  | 选择区：版本档位 + 安装方法两组单选（含"两条路都没预选"那两句提示） | 9 个 props（档位 / 方法事实 / 要不要列两条路 / 有没有预选 …）+ `pick-method` / `pick-channel` |
+| `gate/GateResult.vue`     | 184  | 结果行：状态点 + 结论句 + 说明 + 那排出路（三种结局各一套按钮）     | 7 个 props（点色 / 结论 / 说明 / 走哪条通道 / 三种结局）+ 9 个事件                            |
 
 两块都是**哑的**：方法与档位仍由父级持有（确认区读的是同一份），点色 / 结论 / 说明也是父级算的
 （父级的进行中与输出区读同一份，`outputState` / `outputSummary` 就在用）。**模板逐字搬**：
@@ -1462,12 +1471,12 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第六步（t62，2026-09-26）：门禁的操作行与一键修复确认区**
 
-`shell/EnvGate.vue` 1989 → 1916 行，拆出两块：
+`gate/EnvGate.vue` 1989 → 1916 行，拆出两块：
 
-| 文件                       | 行数 | 装什么                                                                               | 拿什么                                                              |
-| -------------------------- | ---- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| `shell/GateActions.vue`    | 126  | 操作行：一屏唯一一处强调色实底 + 一条次操作（三步各一套）+ pnpm 那句"跳过之后会怎样" | 4 个 props（哪一步 / 忙位 / 两条路都没预选 / npm 不可用）+ 4 个事件 |
-| `shell/GateFixConfirm.vue` | 77   | 一键修复（pnpm / dsh）的确认区：命令原文 + 目标目录 + 两个按钮                       | 计划 / 来源那句话 / 忙位 + `start` / `close`                        |
+| 文件                      | 行数 | 装什么                                                                               | 拿什么                                                              |
+| ------------------------- | ---- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `gate/GateActions.vue`    | 126  | 操作行：一屏唯一一处强调色实底 + 一条次操作（三步各一套）+ pnpm 那句"跳过之后会怎样" | 4 个 props（哪一步 / 忙位 / 两条路都没预选 / npm 不可用）+ 4 个事件 |
+| `gate/GateFixConfirm.vue` | 77   | 一键修复（pnpm / dsh）的确认区：命令原文 + 目标目录 + 两个按钮                       | 计划 / 来源那句话 / 忙位 + `start` / `close`                        |
 
 **这一步多出来的一条经验：焦点也要跟着搬。** 这两块里原来各有一个 `ref`（`primaryRef` /
 `startRef`）被父级的 `focusDefault()` 与 `watch(fixConfirmAction)` 直接 `.focus()` —— 搬走之后
@@ -1487,8 +1496,8 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第七步（t63，2026-09-26）：门禁的事实行 / 进行中进度**
 
-`shell/EnvGate.vue` 1989 → 1781 行（这一轮只拆一块，但它是三块共用一个槽位的）：
-`shell/GateFacts.vue`（181 行）= **事实行 + 进行中进度 + 第二步那条 `corepack` 交代**（视觉 §5.5：
+`gate/EnvGate.vue` 1989 → 1781 行（这一轮只拆一块，但它是三块共用一个槽位的）：
+`gate/GateFacts.vue`（181 行）= **事实行 + 进行中进度 + 第二步那条 `corepack` 交代**（视觉 §5.5：
 不在跑时摆事实行，在跑时摆状态行 + 进度 + 一个明确的按钮）。
 
 它**一个判据都不持有**：事实行、进度文案、百分比、"停止"的文案与可见性都由父级算好递下来
@@ -1503,8 +1512,8 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第九步（t65，2026-09-26）：门禁的最后两个小件**
 
-`shell/EnvGate.vue` 1781 → 1768 行，拆出 `shell/GateDetails.vue`（54 行，「展开看详情」）与
-`shell/GateSkipConfirm.vue`（26 行，「先跳过 pnpm」的二次确认）。两块用的都是**全局零件**
+`gate/EnvGate.vue` 1781 → 1768 行，拆出 `gate/GateDetails.vue`（54 行，「展开看详情」）与
+`gate/GateSkipConfirm.vue`（26 行，「先跳过 pnpm」的二次确认）。两块用的都是**全局零件**
 （`.gate-fact-more` / `.gate-detail*` / `.wizard-decide`），所以这一步**一条样式都没搬** ——
 自检里"全局表花括号"与 `styleLayers` 那两行数字不动，也因此没做像素夹具（没有可比的样式改动）。
 
@@ -1550,7 +1559,7 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **第八步（t64，2026-09-26）：插件页的生效配置视图**
 
-`panes/PluginPane.vue` 1462 → 1152 行，拆出 `panes/PluginConfigView.vue`（423 行）：组合出来的条目按层
+`pages/plugin/PluginPane.vue` 1462 → 1152 行，拆出 `pages/plugin/PluginConfigView.vue`（423 行）：组合出来的条目按层
 分组 + 搜索 / 两个过滤开关 + 基线那句"这是 dsh 自带的组合结果" + "运行中但配置里没有"的那几行 + 会话
 插件行数，以及每个条目行内的三个动作（禁用 / 启用 / 移除我的插入）。
 
@@ -1646,6 +1655,63 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
   helper**" —— 前者会因为类型注解里也出现函数名而假红，后者才是它真正想钉的不变量。
 - **`registerIpc()`（558 行、依赖 27 个模块级名字）留到下一轮**：那一批必须显式造一个
   `IpcContext`，而且 Electron 起不来时**只有真机能验**。
+
+### 7.37 渲染层的目录结构：一处一目录（t67）
+
+**为什么改**（用户看目录树时提的）：`shell/` 里外壳的 6 件与门禁的 10 件平铺在一起、`panes/` 里
+8 个页面与 5 个页面私有的子件平铺在一起 —— 看目录看不出"哪几个文件是一处的"。
+
+**现在的结构**：
+
+```
+renderer/
+  lib/          纯逻辑（判据 / 词表 / 格式化；不许有 DOM，见 7.36）
+  components/   通用组件：被**两处以上**真的 import 的 `.vue` 才放这里（今天一个都没有，
+                规则写在 `components/README.md`）
+  gate/         首启门禁那一层（覆盖层，不是页面）：EnvGate + 9 个子件 + 常驻横幅 GateBanner
+  shell/        应用外壳：RailNav / TopBar / StatusBar / CloseDialog
+  pages/<一处>/ 一个页面 / 一个特性一个目录，页面本体与它自己的子件同目录
+                （dashboard / terminal / ui / usage / archive / plugin / env / settings）
+```
+
+**判据，按顺序问三条**：
+
+1. 被**两处以上**真的 import 吗？→ `components/`。今天没有这样的组件：28 个 `.vue` 里 14 个只被挂载、
+   14 个只有一个父级。`GateOutput` 一度看着像（`PluginOpPanel.vue` 的注释里点了它的名），但它只被
+   `gate/EnvGate.vue` import —— 两边只是"同一套做法"，不是同一个组件。
+2. 是**一页 / 一个特性**用的吗？→ 放进那一处的目录：页面进 `pages/<一处>/`，门禁层进 `gate/`，
+   外壳进 `shell/`。
+3. 是**纯逻辑**吗？→ `lib/`，不进组件目录。
+
+**单文件的目录为什么也建**（`pages/dashboard/` 等 5 个）：规则统一（"一处一目录"）比省一层目录值钱 ——
+以后往这一页里加子组件不用搬文件，只多一个同目录的 import。这与 §7.33 的样式分层判据同源
+（"只有这一页在用就跟着组件走"）。
+
+**`panes/` → `pages/` 只动源码目录，不动 DOM 与 CSS**：`index.html` 的 `id="pane-dashboard"` 与全局表
+的 `.pane { … }` 是**布局概念**（页面容器靠 `visibility` 互斥，见 7.6），不是目录名的投影 —— 改它们
+要动一整套选择器与好几条自检，收益只是个名字。所以"源码在 `pages/`、DOM 上叫 `.pane`"是**故意的**。
+
+**这一步顺带把自检与目录结构解耦**（比搬文件本身重要）：`test/repo.ts` 原来把目录名写死
+（`vueDirs = ['panes', 'shell']`），`test/checks/*` 里散着约 20 处
+`path.join(rendererDir, 'panes', 'X.vue')` —— 等于"每搬一次目录都要改自检"。现在：
+
+- `repo.vueFiles` **递归扫** `src/renderer/**/*.vue`（按 `path` 排序）；`repo.vuePath('EnvGate.vue')`
+  按**文件名**取绝对路径，**重名或名字拼错当场抛错并列出候选**（这也顺手钉住了"组件不许重名"）；
+- 「渲染层：每个 .vue 组件都被用到」从"拼 `./panes/X.vue` 再在全文里搜"改成**解析 import**：
+  按每个文件的目录把相对说明符规范化成相对 `renderer/` 的路径，再看目标在不在被 import 的集合里 ——
+  同目录、跨目录、根上的挂载清单三种写法自动都对；
+- 「门禁层不是页面」与「dsh 那一路是子组件」两条改成只看**挂载清单里的 import 说明符**。
+  原来那种"整份文本里没有这个名字"的写法（`!/DshTerminal/.test(mountJs)`）会被注释骗到：
+  挂载清单的**注释**里正好点名了 `DshTerminal`（解释"它由宿主渲染"）—— 搬完目录第一次跑自检
+  就在这儿红了，是真踩到。
+
+**哪条自检守着**：「渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）」
+（现在是解析 import 求解），加上 `repo.vuePath()` 的唯一性（重名 / 拼错当场失败）。
+
+**带日期的记录不追改**：`docs/env-wizard-freeze.md`（冻结规格）与 `docs/env-doctor-verification.md`
+（带哈希的验证记录）里的旧路径**保持原样** —— 它们记的是当时那一版的文件清单，改了就失真。
+AGENTS 与 `docs/{env-doctor,plugin-restart,env-wizard}.md` 这类"现在怎么跑"的说明全部改成新路径，
+尚未发布的 `.changeset/*.md` 也一起改（它们会被汇总进 CHANGELOG）。
 
 ## 8. 调试手段
 

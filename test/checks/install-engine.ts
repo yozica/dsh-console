@@ -10,7 +10,6 @@
  */
 
 import fs from 'node:fs';
-import path from 'node:path';
 
 import * as envDoctor from '../../src/main/env-doctor';
 import * as nodeInstaller from '../../src/main/node-installer';
@@ -25,7 +24,6 @@ import { methodSliceOf, stripStrings } from '../text';
 export function runInstallEngine(repo: Repo): void {
   const f = createEnvFixtures(repo);
   const { envCode, envPaneCode, installerCode, gateRaw } = f;
-  const rendererDir = repo.rendererDir;
   const flatIpc = repo.flatIpc;
   const ipcSource = repo.ipcSource;
   const rendererCode = repo.rendererCode;
@@ -380,12 +378,12 @@ export function runInstallEngine(repo: Repo): void {
       const copy =
         [
           gateRaw,
-          fs.readFileSync(path.join(rendererDir, 'shell', 'GateBanner.vue'), 'utf8'),
-          fs.readFileSync(path.join(rendererDir, 'shell', 'TopBar.vue'), 'utf8'),
+          fs.readFileSync(repo.vuePath('GateBanner.vue'), 'utf8'),
+          fs.readFileSync(repo.vuePath('TopBar.vue'), 'utf8'),
         ]
           .map(templateOf)
           .join('\n') +
-        templateOf(fs.readFileSync(path.join(rendererDir, 'panes', 'EnvPane.vue'), 'utf8')) +
+        templateOf(fs.readFileSync(repo.vuePath('EnvPane.vue'), 'utf8')) +
         html.replace(/<!--[\s\S]*?-->/g, '');
       const forbidden = [
         'EnvCheckId',

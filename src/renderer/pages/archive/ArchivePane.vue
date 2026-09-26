@@ -11,8 +11,8 @@
  * （一次回答跨多个 step 时会拆成多条 assistant/message，气泡会碎成一墙卡片）。
  */
 import { computed, onMounted, ref } from 'vue';
-import { renderMarkdown } from '../lib/markdown.js';
-import type { ArchivedSessionSummary, ConversationReadResult } from '../../shared/ipc.js';
+import { renderMarkdown } from '../../lib/markdown.js';
+import type { ArchivedSessionSummary, ConversationReadResult } from '../../../shared/ipc.js';
 
 const api = window.dshConsole;
 

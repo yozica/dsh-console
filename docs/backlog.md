@@ -2,6 +2,28 @@
 
 不是路线图，只是一份"说好了以后做"的清单，免得只留在对话里。每条都写清**为什么**、**从哪开始**。
 
+## 0. 渲染层的目录结构：一处一目录 —— ✅ 已做完（t67，2026-09-26）
+
+**结果**：`src/renderer/` 从「`shell/` 15 个文件平铺 + `panes/` 13 个文件平铺」改成按处收：
+
+```
+lib/          纯逻辑（不动）        gate/        首启门禁那一层：EnvGate + 9 个子件 + GateBanner
+components/   通用组件（今天为空）  shell/       应用外壳：RailNav / TopBar / StatusBar / CloseDialog
+pages/        一处一目录：dashboard / terminal / ui / usage / archive / plugin / env / settings
+```
+
+判据与取舍写在 **AGENTS §7.37**：先问"被两处以上真的 import 吗"（→ `components/`，今天 28 个 `.vue`
+里一个都没有）、再问"是一页 / 一个特性用的吗"（→ `pages/<一处>/`、`gate/`、`shell/`）、最后问
+"是纯逻辑吗"（→ `lib/`）。单文件的目录也照建（规则统一，以后加子件不用搬文件）。
+
+**顺带做掉的（比搬文件本身重要）**：自检与目录结构解耦 —— `test/repo.ts` 递归扫 `.vue` 并给了
+`vuePath('EnvGate.vue')`（重名 / 拼错当场抛错），`test/checks/*` 里约 20 处写死的
+`path.join(rendererDir, 'panes', 'X.vue')` 全换成它；「每个 .vue 都被用到」从拼字符串改成**解析 import**。
+
+**验证**：`npm test` 315/315，且输出与改动前**逐行比对只有 2 行不同**（都在预期内：一条断言标题里的
+"panes 清单"改成"页面清单"、一条提示里的路径）—— 这是"纯搬文件"最硬的判据；机械等价 577 → 577、
+`build` / `lint` / `format:check` / `typecheck` / 沙箱门禁全绿。
+
 ## 2. 大文件拆成模块（模块化） —— ✅ 已做完（t49~t65，2026-09-26）
 
 **结果**：起点是"每个文件的行数太多"这一句，先拆自检、再按行数拆源码，PR 从 **#47 一直到 #70**（24 个，其中 #63 是行数口径修正、其余 23 个是拆分），
@@ -106,12 +128,12 @@ headless Chrome 像素对比（**13 段夹具**逐像素一致）、跨层自检
 | 全局 | `styles.css`（或拆成 `styles/`） | CSS 变量/主题、html/body 状态、跨组件布局骨架（rail / panes / overlay / z-index 预算） |
 | 局部 | 组件 `<style scoped>`            | 表单行、卡片内部排版、只在组件内成立的微调                                             |
 
-**从哪开始**：先挑一个"自成一体的页面组件"试点（例如 `panes/SettingsPane.vue` 的表单行 ——
+**从哪开始**：先挑一个"自成一体的页面组件"试点（例如 `pages/settings/SettingsPane.vue` 的表单行 ——
 它样式多、跨组件依赖少），把它的局部规则搬进 `<style scoped>`，**同时**把自检拆成两类：
 读全局表的留在原处、局部样式改成读 `.vue` 的 style 块；那条"class 都有样式"的断言要跨两层继续成立。
 试点跑通后再按页面推。
 
-**进展（t48，设置页试点已合并）**：`panes/SettingsPane.vue` 的 `<style scoped>` 收下了这一页私有的规则
+**进展（t48，设置页试点已合并）**：`pages/settings/SettingsPane.vue` 的 `<style scoped>` 收下了这一页私有的规则
 （`.settings` / `.form-row` / `.input-suffix` / `.update-*` + 「聚焦蒙层」的 `.spotlight`），
 全局表 4502 → 4329 行；`.check` 与 `.panel-block > .hint` 是共享件，留在全局表。
 判据、两个后果（scoped 会让特异性 +1；自检必须跨两层看）与三道验收（`选择器 → 声明` 多重集的
@@ -139,7 +161,7 @@ contains 会误判）；② 产物里的媒体查询被压成现代区间语法�
 `RailNav.vue` 里的 `{ id: 'plugin' }` 字符串、别处注释里的 `.plugin-tag` 也算成了使用者 ——
 **要按标记里的 class 核**（`grep 'class="[^"]*\b类名\b'`）。
 
-**第六批（首启环境向导与入口门禁，已合并）**：98 个条目搬进 `shell/EnvGate.vue`（全局表
+**第六批（首启环境向导与入口门禁，已合并）**：98 个条目搬进 `gate/EnvGate.vue`（全局表
 2649 → 1944）；与环境自检详情层共用的 42 条（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` /
 `.wizard-*`）留在全局表。这一轮抓到一个搬运脚本的坑：**注释里的 `{` / `}` 会把朴素的花括号计数带偏**，
 切出"半条注释 + 半条规则"，机械等价立刻报账（丢 1 / 多 3）—— 改成先掩码注释再数括号。

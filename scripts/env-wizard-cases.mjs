@@ -2059,20 +2059,22 @@ const CSS_FILE = process.env.ENV_WIZARD_CSS_FILE
 /**
  * 各页面组件里的 `<style scoped>` 块（t48 样式分层之后，"页面自己的规则"不再堆在全局表里）。
  * 拼接顺序 = 全局表 + 组件块，和真实级联一致（组件块在后），`cssValueOf` 取最后一条也因此仍然对。
+ * **递归扫** `src/renderer/**\/*.vue`（t67）：组件按「一处一目录」散在 `pages/*` / `gate/` /
+ * `shell/` 下，把目录名写死在这里就等于"每搬一次目录都要改这个脚本"。
  */
 function componentStyles() {
-  const dirs = [
-    path.join(repoRoot, 'src', 'renderer', 'panes'),
-    path.join(repoRoot, 'src', 'renderer', 'shell'),
-  ];
   const out = [];
-  for (const dir of dirs) {
-    if (!fs.existsSync(dir)) continue;
-    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.vue'))) {
-      const text = fs.readFileSync(path.join(dir, name), 'utf8');
-      for (const m of text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) out.push(m[1]);
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.vue')) {
+        const text = fs.readFileSync(full, 'utf8');
+        for (const m of text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) out.push(m[1]);
+      }
     }
-  }
+  };
+  walk(path.join(repoRoot, 'src', 'renderer'));
   return out.join('\n');
 }
 // `ENV_WIZARD_CSS_FILE` 是给**变异实验**用的后门：它替换的是"整份样式"，所以指定它时**只读它**

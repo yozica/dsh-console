@@ -2,7 +2,7 @@
 'dsh-console': patch
 ---
 
-环境自检页拆出更新确认区：`EnvPane.vue` 1501 → 1205 行，新增 `panes/EnvUpdateConfirm.vue`（362 行）
+环境自检页拆出更新确认区：`EnvPane.vue` 1501 → 1205 行，新增 `pages/env/EnvUpdateConfirm.vue`（362 行）
 
 确认区那一整块（更新 Node / pnpm 的"将要执行"：版本档位控件、归属与下载来源的事实表、跨档说明、
 以及"开始 / 取消 / 换档 / 换源"）搬进子组件。**它不持有状态**：计划、档位、忙位、报告里的归属都由

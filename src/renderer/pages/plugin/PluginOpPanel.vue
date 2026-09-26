@@ -6,7 +6,7 @@
  * 与门禁的 `GateOutput.vue` 同一套做法：折叠开关、四行读数、那一颗「插进我的层」的意图
  * 都归父级 —— 它们与"谁发起的这次操作"绑在一起，放在这里只会变成两个真源。
  */
-import type { PluginLayerEditAction } from '../../shared/ipc.js';
+import type { PluginLayerEditAction } from '../../../shared/ipc.js';
 
 defineProps<{
   /** 有操作在跑：中断按钮与「插进我的层」都要看它 */

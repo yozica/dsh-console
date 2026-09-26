@@ -162,12 +162,9 @@ export function runStyles(repo: Repo): void {
   // 查"规则在不在"要先剥注释：两张表里都有解释性注释点名这些 class（"设置页那一族（.settings…）"），
   // 拿原文去 match 会把注释当成定义 —— 这正是这类检查最容易骗过自己的地方。
   const cssRules = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  // 页面组件在 `panes/`、外壳组件在 `shell/` —— 两处都找（EnvGate / CloseDialog 这类在外壳里）
+  // 组件按「一处一目录」散在 `pages/*` / `gate/` / `shell/` 下 —— 按**文件名**找（重名当场抛错）
   const readScoped = (file: string): string => {
-    const found = ['panes', 'shell']
-      .map((dir) => path.join(rendererDir, dir, file))
-      .find((candidate) => fs.existsSync(candidate));
-    const text = fs.readFileSync(found ?? path.join(rendererDir, 'panes', file), 'utf8');
+    const text = fs.readFileSync(repo.vuePath(file), 'utf8');
     // **行首锚定**：组件里的注释会引用这个标签（"这些规则原来在 …… 里"），不锚定就会从注释
     // 那一处开始吞、把 script 与 template 都算成块内容。
     const body = text.match(/^<style[^>]*scoped[^>]*>([\s\S]*?)^<\/style>/m)?.[1] ?? '';
@@ -443,8 +440,7 @@ export function runStyles(repo: Repo): void {
   // 清单，少了 16px。现在这条规则在全局表，并有这条自检守着。
   // 只看**自成一条规则**的选择器：带上下文的（`.close-card .btn-row`）本来就是"只在本组件内部生效"
   // 的覆盖，跨组件复用同一个 class 是正常的。`@media` 里的规则会被算成带上下文（保守，不误报）。
-  const readVue = (dir: string, name: string): string =>
-    fs.readFileSync(path.join(rendererDir, dir, name), 'utf8');
+  const readVue = (rel: string): string => fs.readFileSync(path.join(rendererDir, rel), 'utf8');
   const templateClasses = (text: string): Set<string> => {
     const tpl = text.match(/<template>([\s\S]*)<\/template>/)?.[1] ?? '';
     const names = new Set<string>();
@@ -458,17 +454,17 @@ export function runStyles(repo: Repo): void {
     return names;
   };
   const usedBy = new Map<string, string[]>();
-  for (const { dir, name } of repo.vueFiles) {
-    for (const cls of templateClasses(readVue(dir, name))) {
-      usedBy.set(cls, [...(usedBy.get(cls) ?? []), name]);
+  for (const file of repo.vueFiles) {
+    for (const cls of templateClasses(readVue(file.path))) {
+      usedBy.set(cls, [...(usedBy.get(cls) ?? []), file.name]);
     }
   }
   const deadScoped: string[] = [];
-  for (const { dir, name } of repo.vueFiles) {
+  for (const { path: rel, name } of repo.vueFiles) {
     // **行首锚定**切块：`.vue` 里的说明性注释常引用这个标签（"这些规则原来在 …… 里"），
     // 不锚定的话，注释里那一处会被当成开始标记、把整份文件都算成块内容 —— 真踩过：
     // 注入回那个 bug 之后这条检查反而报了 PASS，因为块内容从注释一直吞到真正的 `</style>`。
-    const blocks = readVue(dir, name).match(/^<style[^>]*scoped[^>]*>([\s\S]*?)^<\/style>/gm) ?? [];
+    const blocks = readVue(rel).match(/^<style[^>]*scoped[^>]*>([\s\S]*?)^<\/style>/gm) ?? [];
     const bare = new Set<string>();
     for (const block of blocks) {
       const body = block
@@ -505,7 +501,7 @@ export function runStyles(repo: Repo): void {
   check(
     '主题：左下角开关与设置项都存在',
     markup.includes('id="theme-switch"') && markup.includes('id="s-themeMode"'),
-    '开关在 shell/RailNav.vue，主题下拉框在 panes/SettingsPane.vue',
+    '开关在 shell/RailNav.vue，主题下拉框在 pages/settings/SettingsPane.vue',
   );
 
   // 启动锁必须是单向状态机（idle → waiting → done）。
@@ -688,7 +684,7 @@ export function runStyles(repo: Repo): void {
     (name) =>
       !new RegExp(
         `restartThenOpenHarness\\(api, \\(\\) => dsh\\.value, '(plugin|dashboard|env|ui)'`,
-      ).test(fs.readFileSync(path.join(rendererDir, 'panes', `${name}.vue`), 'utf8')),
+      ).test(fs.readFileSync(repo.vuePath(`${name}.vue`), 'utf8')),
   );
   check(
     '重启后进 Harness：四个入口都走同一条流程（插件页 / 控制台 / 环境自检 / 重启为受管实例）',
@@ -696,21 +692,16 @@ export function runStyles(repo: Repo): void {
       // 页面里不许再有人自己调 restartFlow —— 那条路已经收进编排层 lib/restart-flow.ts
       // （编排层自己当然要用它，所以这里只查四个页面，不查 rendererCode 合集）
       !entryFiles.some((name) =>
-        /restartFlow\(/.test(
-          fs.readFileSync(path.join(rendererDir, 'panes', `${name}.vue`), 'utf8'),
-        ),
+        /restartFlow\(/.test(fs.readFileSync(repo.vuePath(`${name}.vue`), 'utf8')),
       ) &&
       /restartThenOpenHarness/.test(rendererCode),
     entryMissing.length ? `缺：${entryMissing.join(', ')}` : `${entryFiles.length} 个入口`,
   );
   // t46：这两份源码要用在下面几条钉子里（黄条四态、到达提示）。`uiPaneSource` 后面第 12 节
   // 还要再用一次，所以在这儿声明一次就够（放在它们之前，别在下面重复声明）。
-  const mergedPluginSource = fs.readFileSync(
-    path.join(rendererDir, 'panes', 'PluginPane.vue'),
-    'utf8',
-  );
+  const mergedPluginSource = fs.readFileSync(repo.vuePath('PluginPane.vue'), 'utf8');
   const restartNavCode = fs.readFileSync(path.join(rendererDir, 'lib', 'restart-nav.ts'), 'utf8');
-  const topBarSource = fs.readFileSync(path.join(rendererDir, 'shell', 'TopBar.vue'), 'utf8');
+  const topBarSource = fs.readFileSync(repo.vuePath('TopBar.vue'), 'utf8');
   const stylesCode = fs.readFileSync(path.join(rendererDir, 'styles.css'), 'utf8');
   // t46：黄条的四态 + Harness 页那条到达提示（可关闭）
   check(
