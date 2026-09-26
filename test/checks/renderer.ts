@@ -230,6 +230,20 @@ export function runRenderer(repo: Repo): void {
   // 这条检查看的是"有没有把 module 改回 classic"的构建插件，以及入口有没有动态 import
   // （动态 import 会切出第二个 chunk，跨 chunk 就必须用模块语法）。
   const viteConfig = fs.readFileSync(path.join(root, 'vite.config.mts'), 'utf8');
+  // 编辑器按"最近的 tsconfig.json"选项目，而仓库里的三份配置都不叫这个名字 —— 少了根这一份，
+  // 编辑器只能按"推断项目"看单个文件，`src/renderer/env.d.ts` 里的 `window.dshConsole` 就看不见
+  // （真机上报 TS2551）。**它不影响 CI 与打包**：命令一律显式 `-p`（实测加与不加，
+  // `dist/renderer` 的产物逐字节一致）。
+  const rootTsconfig = JSON.parse(fs.readFileSync(path.join(root, 'tsconfig.json'), 'utf8')) as {
+    extends?: string;
+    include?: string[];
+  };
+  check(
+    '配置：根 tsconfig.json 指向渲染层项目（编辑器找得到项目；命令仍显式 -p）',
+    rootTsconfig.extends === './tsconfig.renderer.json' &&
+      (rootTsconfig.include ?? []).includes('src/renderer'),
+    rootTsconfig.extends ?? '（没有根配置：编辑器会按推断项目看单个文件）',
+  );
   check(
     '构建：产物走普通脚本（file:// 兼容）',
     /type="module" crossorigin /.test(viteConfig) && /classicScriptPlugin/.test(viteConfig),
