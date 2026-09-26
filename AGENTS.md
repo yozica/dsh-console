@@ -107,7 +107,8 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30；PluginPane = 装配层，
-                         它的层栈视图与操作输出是 PluginStackView / PluginOpPanel 两个子组件，见 7.36）
+                         它的层栈视图与操作输出是 PluginStackView / PluginOpPanel 两个子组件，
+                         EnvPane 的更新确认区是 EnvUpdateConfirm，见 7.36）
 test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（314 项，`npm test`）
 test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
 test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
@@ -1386,9 +1387,31 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 187 → 197、`styleLayers` 15 个页面 77 条 → 17 个页面 86 条）、沙箱门禁 32/32 + 185/185、
 `lint` / `format:check` / `typecheck` / `build` 全绿。
 
-**还没做的**（后续 PR）：`EnvPane.vue`（1502 行）与 `PluginPane.vue` 剩下的三块（救援条、生效配置
-视图、安装行）、以及纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；模板与样式一起搬的
-那些照上面这套来（`.verify/gate-split/{equiv,pixel}.py` 可以直接改用）。
+**第四步（t60，2026-09-26）：环境自检页的更新确认区**
+
+`panes/EnvPane.vue` 1501 → 1205 行，拆出 `panes/EnvUpdateConfirm.vue`（362 行）：**更新 Node / pnpm
+的确认区**（版本档位控件、归属与下载来源的事实表、跨档说明、以及"开始 / 取消 / 换档 / 换源"）。
+
+同样是"子组件哑、状态留父级"：计划、档位、忙位、报告里的归属都由父级拿着（父级那一行本身也在读
+同一份计划画读数态与更新按钮），子组件只做"计划 → 人话"与"按钮 → 事件"。**这一步的模板几乎是逐字
+搬的**：两段各自的 `updateOpen === … && check.id === …` 合成 `kind` 一个开关、`planFor('install-pnpm')`
+换成 `pnpmPlan` 这个 prop，其余连文案带 `cancelUpdate` 这些名字都没动（子组件里是同名的本地转发
+函数）。八个只给确认区用的派生值（`nodeCurrentText` / `nodeTargetText` / `nodeChannelUnknown` /
+`nodeChannelPickedText` / `nodeUpdateOwnerText` / `nodeSwitchNotice` / `nodeUpdateNoop` /
+`nodeUpdateActionLabel`）跟着组件走 —— 它们的口径本来就是"这份计划想说什么"。
+`nodeAffectsDshText` 例外：父级的进行中 / 结果区也要用同一句，所以留在父级按 prop 传下去。
+
+样式：`.env-channel` 只有这一块在用 → 进子组件的 `<style scoped>`；`.env-confirm*` 与
+`.env-confirm .btn-row`（父组件的"一键修复"确认区也画）→ 收进全局表；`styleLayers` 表改成两行。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/envpane-split/`）、
+`npm test` 314/314（4 行计数口径变化：`.vue` 覆盖 19 → 20、组件数 19 → 20、全局表花括号
+197 → 202、`styleLayers` 17 个页面 → 18 个页面、私有规则条数 86 不变）、沙箱门禁 32/32 + 185/185、
+`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+**还没做的**（后续 PR）：`EnvGate.vue`（2153 行）还能再拆（救援 / 结果两块）、`PluginPane.vue`
+剩下的三块（救援条、生效配置视图、安装行）、以及纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；
+模板与样式一起搬的那些照上面这套来（`.verify/{gate,plugin,envpane}-split/{equiv,pixel}.py` 直接用）。
 
 **第四个：`plugin-manager.ts`（t54，1322 → 318 行 + 四个叶子）**
 

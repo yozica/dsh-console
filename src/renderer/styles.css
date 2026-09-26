@@ -1141,6 +1141,51 @@ body[data-immersive='true'] .webview-wrap {
    （`.env-row*` / `.env-scope` / `.env-confirm*` / `.env-source*` …）已经搬进
    `panes/EnvPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
+/* t60：环境自检页把"更新 Node / pnpm 的确认区"拆成 `panes/EnvUpdateConfirm.vue` 之后，
+   下面几条同时落在父组件（一键修复的确认区）与子组件上，按 §7.33 的判据收进全局表。 */
+/* 确认区：整行铺开（父级是 flex-wrap 的一行），把命令原文与目标目录都摆在按钮之前 */
+.env-confirm {
+  flex: 1 1 100%;
+  margin-top: 2px;
+  padding: 11px 13px;
+  border: 1px solid var(--hairline-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-panel);
+  background: var(--well);
+}
+
+.env-confirm-title {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.env-confirm-cmd {
+  display: block;
+  margin-top: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.env-confirm-line {
+  margin: 6px 0 0;
+  color: var(--ink-dim);
+  font-size: var(--t-xs);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.env-confirm .btn-row {
+  margin-top: 10px;
+}
+
 /* ============================================================ 环境自检（共享部分）
    这里其实只剩 `.env-*` 那批与环境向导共用的；`.env` 外层与 `.env > .bar`
    只有环境自检页用，搬进 `panes/EnvPane.vue`。 */

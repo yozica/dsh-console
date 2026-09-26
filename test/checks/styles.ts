@@ -300,18 +300,26 @@ export function runStyles(repo: Repo): void {
     },
     {
       pane: 'EnvPane.vue',
+      // t60 起"更新 Node / pnpm 的确认区"是 panes/EnvUpdateConfirm.vue：`.env-channel` 跟着它走了，
+      // `.env-confirm*` 因为这一页的"一键修复"确认区也画，收进了全局表（见下一行）。
       scoped: [
         '.env',
         '.env-scope',
         '.env-list',
         '.env-row',
         '.env-main',
-        '.env-confirm',
         '.env-source',
         '.env-skip',
       ],
       // 与别处共用的：`.env-actions`（设置页「运行环境」卡也画）、`.env-op*`（环境向导的执行输出面板同形）
       staysGlobal: ['.env-actions', '.env-op'],
+    },
+    {
+      // t60：环境自检页拆出来的"更新 Node / pnpm 的确认区"
+      pane: 'EnvUpdateConfirm.vue',
+      scoped: ['.env-channel'],
+      // 与父组件的"一键修复"确认区共用同一套确认区零件 → 进全局表（t60 收进去的）
+      staysGlobal: ['.env-confirm', '.env-confirm-title', '.env-confirm-cmd', '.env-confirm-line'],
     },
     {
       pane: 'DashboardPane.vue',
