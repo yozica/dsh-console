@@ -99,6 +99,8 @@ import { copyToClipboard } from '../lib/clipboard.js';
 import { say } from '../lib/status-message.js';
 import GateNodeConfirm from './GateNodeConfirm.vue';
 import GateOutput from './GateOutput.vue';
+import GateActions from './GateActions.vue';
+import GateFixConfirm from './GateFixConfirm.vue';
 import GateNodeChoice from './GateNodeChoice.vue';
 import GateResult from './GateResult.vue';
 import { formatBytes } from '../lib/format.js';
@@ -153,6 +155,9 @@ const detailsFor = ref<EnvWizardStepId | null>(null);
 const outputOpen = ref(false);
 /** 确认区子组件：父级只借它一个方法 —— 确认区打开时把焦点交给那里的主按钮 */
 const confirmRef = ref<InstanceType<typeof GateNodeConfirm> | null>(null);
+/** 一键修复确认区 / 操作行：父级只借它们一个方法 —— 打开或需要落点时把焦点交过去 */
+const fixRef = ref<InstanceType<typeof GateFixConfirm> | null>(null);
+const actionsRef = ref<InstanceType<typeof GateActions> | null>(null);
 
 /** 用户**显式点名**的那条路（只在三个例外里给值：归属判不出来、拒绝管理员权限之后、提权态下
  *  nvm 不可用）；`null` = 省略方法字段 = **跟随这份 Node 的真实归属**（需求 §7.8）。
@@ -175,8 +180,6 @@ const activeFlow = ref<'node' | 'fix' | null>(null);
 
 const escapeRef = ref<HTMLButtonElement | null>(null);
 const primaryRef = ref<HTMLButtonElement | null>(null);
-/** 「一键修复」确认区的主按钮（Node 那条路的确认区拆出去之后，这个 ref 只服务它） */
-const startRef = ref<HTMLButtonElement | null>(null);
 const enterRef = ref<HTMLButtonElement | null>(null);
 
 /** 触发确认区的那个按钮：收起确认区时把焦点还给它（交互 §11.3） */
@@ -661,10 +664,12 @@ async function focusDefault(): Promise<void> {
     confirmRef.value?.focusStart();
     return;
   }
-  if (fixConfirmAction.value !== null || skipConfirmOpen.value) {
-    startRef.value?.focus();
+  if (fixConfirmAction.value !== null) {
+    fixRef.value?.focusStart();
     return;
   }
+  // 跳过那条确认里没有 ref 的主按钮：原样什么都不聚焦，只是不再往下走到操作行
+  if (skipConfirmOpen.value) return;
   if (screen.value === 'released') {
     enterRef.value?.focus();
     return;
@@ -673,7 +678,9 @@ async function focusDefault(): Promise<void> {
     escapeRef.value?.focus();
     return;
   }
-  primaryRef.value?.focus();
+  // 门禁屏上唯一的强调色按钮：回看卡在时是「回到当前步骤」，否则是操作行的「安装」
+  if (reviewStep.value) primaryRef.value?.focus();
+  else actionsRef.value?.focusStart();
 }
 
 /** 逃生口：收起门禁层 —— 不写盘、不改判定、不依赖任何安装动作成功（冻结 §1 R-16） */
@@ -1025,7 +1032,7 @@ watch(nodeConfirmOpen, (open) => {
 });
 
 watch(fixConfirmAction, (action) => {
-  if (action) void nextTick(() => startRef.value?.focus());
+  if (action) void nextTick(() => fixRef.value?.focusStart());
 });
 </script>
 
@@ -1217,65 +1224,19 @@ watch(fixConfirmAction, (action) => {
               </div>
             </template>
 
-            <!-- 操作行：一屏只有一处强调色实底 -->
-            <div v-if="!stepRunning && !stepSettled" class="btn-row gate-actions">
-              <template v-if="currentStep.id === 'node'">
-                <button
-                  ref="primaryRef"
-                  class="btn primary"
-                  :disabled="busy || methodNeedsPick"
-                  :title="
-                    methodNeedsPick
-                      ? '请先在「版本档位」下面选一条：直接安装官方版本 / 用版本管理器安装'
-                      : busy
-                        ? BUSY_HINT
-                        : undefined
-                  "
-                  @click="openNodeConfirm"
-                >
-                  安装
-                </button>
-                <button class="btn" @click="openDownloadPage">我想自己去官网下载安装</button>
-              </template>
-              <template v-else-if="currentStep.id === 'pnpm'">
-                <button
-                  v-if="!npmMissing"
-                  ref="primaryRef"
-                  class="btn primary"
-                  :disabled="busy"
-                  :title="busy ? BUSY_HINT : undefined"
-                  @click="openFixConfirm('install-pnpm')"
-                >
-                  安装
-                </button>
-                <button
-                  class="btn"
-                  :disabled="busy"
-                  :title="busy ? BUSY_HINT : undefined"
-                  @click="openSkipConfirm"
-                >
-                  先跳过这一步
-                </button>
-              </template>
-              <template v-else>
-                <button
-                  ref="primaryRef"
-                  class="btn primary"
-                  :disabled="busy"
-                  :title="busy ? BUSY_HINT : undefined"
-                  @click="openFixConfirm('install-dsh')"
-                >
-                  安装
-                </button>
-              </template>
-            </div>
-
-            <p
-              v-if="currentStep.id === 'pnpm' && !stepRunning && !stepSettled"
-              class="gate-option-hint"
-            >
-              跳过之后，插件页的装 / 卸 / 升级仍然用不了（以后随时可以回来补上）。
-            </p>
+            <!-- 操作行：一屏只有一处强调色实底（t62 起是 shell/GateActions.vue） -->
+            <GateActions
+              v-if="!stepRunning && !stepSettled"
+              ref="actionsRef"
+              :step-id="currentStep.id"
+              :busy="busy"
+              :method-needs-pick="methodNeedsPick"
+              :npm-missing="npmMissing"
+              @open-node-confirm="openNodeConfirm"
+              @open-download="openDownloadPage"
+              @open-fix-confirm="openFixConfirm"
+              @open-skip-confirm="openSkipConfirm"
+            />
 
             <!-- 「展开看详情」排在两个操作**之后**：交互 §11.1 / §11.4 的 Tab 顺序是
                  单选项 → 主操作 → 次操作 → 展开详情 → 重新检测 → 逃生口。
@@ -1322,47 +1283,17 @@ watch(fixConfirmAction, (action) => {
               @open-download="openDownloadPage"
             />
 
-            <!-- 一键修复（pnpm / dsh）的确认区：命令原文与目标目录都来自主进程的计划 -->
-            <div v-if="fixConfirmPlan" class="gate-confirm">
-              <div class="gate-confirm-title">将要执行</div>
-              <code class="gate-confirm-cmd">{{ fixConfirmPlan.display }}</code>
-              <div class="gate-confirm-table">
-                <div class="gate-confirm-row">
-                  <span class="gate-confirm-key">下载来源</span>
-                  <span class="gate-confirm-val">{{ fixSourceText }}</span>
-                </div>
-                <div class="gate-confirm-row">
-                  <span class="gate-confirm-key">会装到哪里</span>
-                  <span class="gate-confirm-val gate-confirm-mono">
-                    {{ fixConfirmPlan.target || '（全局 npm 目录）' }}
-                  </span>
-                </div>
-                <div class="gate-confirm-row">
-                  <span class="gate-confirm-key">要不要联网</span>
-                  <span class="gate-confirm-val">是</span>
-                </div>
-                <div class="gate-confirm-row">
-                  <span class="gate-confirm-key">要不要管理员权限</span>
-                  <span class="gate-confirm-val">不需要</span>
-                </div>
-                <div class="gate-confirm-row">
-                  <span class="gate-confirm-key">会改什么</span>
-                  <span class="gate-confirm-val">{{ fixConfirmPlan.note }}</span>
-                </div>
-              </div>
-              <div class="btn-row">
-                <button
-                  ref="startRef"
-                  class="btn small primary"
-                  :disabled="busy"
-                  :title="busy ? BUSY_HINT : undefined"
-                  @click="startFix"
-                >
-                  开始
-                </button>
-                <button class="btn small" @click="closeFixConfirm">取消</button>
-              </div>
-            </div>
+            <!-- 一键修复（pnpm / dsh）的确认区：命令原文与目标目录都来自主进程的计划。
+                 t62 起是 shell/GateFixConfirm.vue（焦点由它自己暴露的 focusStart 收）。 -->
+            <GateFixConfirm
+              v-if="fixConfirmPlan"
+              ref="fixRef"
+              :plan="fixConfirmPlan"
+              :source-text="fixSourceText"
+              :busy="busy"
+              @start="startFix"
+              @close="closeFixConfirm"
+            />
 
             <!-- 跳过是一次确认，不是静默操作（交互 §5.4） -->
             <div v-if="skipConfirmOpen" class="wizard-decide">
@@ -1888,10 +1819,6 @@ watch(fixConfirmAction, (action) => {
   font-family: var(--mono);
   overflow-wrap: anywhere;
   user-select: text;
-}
-
-.gate-actions {
-  margin-top: 16px;
 }
 
 /* 提醒行 + 重新检测：都在卡片之下，右对齐的是那条次操作 */

@@ -103,7 +103,8 @@ src/
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
                         ＋ clipboard / status-message（复制与状态栏那句话，t58 从 EnvGate 提出来）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
-                        ＋ GateNodeConfirm / GateOutput（门禁层的两块子组件，t58 拆开，见 7.36）
+                        ＋ EnvGate 的子组件：GateNodeConfirm / GateOutput（t58）、GateNodeChoice / GateResult（t61）、
+                          GateActions / GateFixConfirm（t62）—— 见 7.36
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30；PluginPane = 装配层，
@@ -1433,7 +1434,30 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 口径变化：`.vue` 覆盖与组件数 20 → 22、`styleLayers` 18 个页面 86 条 → 20 个页面 91 条）、
 沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
 
-**还没做的**（后续 PR）：`EnvGate.vue`（2065 行）还能再拆（救援条、一键修复 / 跳过的确认区、安装行）、
+**第六步（t62，2026-09-26）：门禁的操作行与一键修复确认区**
+
+`shell/EnvGate.vue` 1989 → 1916 行，拆出两块：
+
+| 文件                       | 行数 | 装什么                                                                               | 拿什么                                                              |
+| -------------------------- | ---- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `shell/GateActions.vue`    | 126  | 操作行：一屏唯一一处强调色实底 + 一条次操作（三步各一套）+ pnpm 那句"跳过之后会怎样" | 4 个 props（哪一步 / 忙位 / 两条路都没预选 / npm 不可用）+ 4 个事件 |
+| `shell/GateFixConfirm.vue` | 77   | 一键修复（pnpm / dsh）的确认区：命令原文 + 目标目录 + 两个按钮                       | 计划 / 来源那句话 / 忙位 + `start` / `close`                        |
+
+**这一步多出来的一条经验：焦点也要跟着搬。** 这两块里原来各有一个 `ref`（`primaryRef` /
+`startRef`）被父级的 `focusDefault()` 与 `watch(fixConfirmAction)` 直接 `.focus()` —— 搬走之后
+父级够不到子组件的元素了，做法与 `GateNodeConfirm` 那次一致：子组件 `defineExpose({ focusStart })`，
+父级持一个模板 ref 调它。**"哪个按钮是这一屏的落点"这件事留在父级**（它知道有没有确认区打开、
+是不是在看回看卡），子组件只提供"我这一块的主按钮"这一个动作。
+
+风格上仍然照旧：模板逐字搬（`stepId` 取代 3 处 `currentStep.id`、`plan` 取代 `fixConfirmPlan`），
+`.gate-actions` 进 `GateActions` 的 scoped 块（`.gate-confirm*` 那批早已在全局表，这次没有规则进全局表）。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/gate3-split/`，夹具画了
+三步的操作行 + pnpm 那句说明 + 一键修复确认区）、`npm test` 314/314（**3** 行计数口径变化：
+`.vue` 覆盖与组件数 22 → 24、`styleLayers` 20 个页面 91 条 → 21 个页面 92 条）、沙箱门禁 32/32 + 185/185、
+`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+**还没做的**（后续 PR）：`EnvGate.vue`（1916 行）还能再拆（事实行 / 进行中进度、展开详情、跳过确认、顶栏与底条）、
 `PluginPane.vue` 剩下的三块（救援条、生效配置视图、安装行）、`SettingsPane.vue`（842）、
 `ArchivePane.vue`（769）、以及纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；
 模板与样式一起搬的那些照上面这套来（`.verify/{gate,gate2,plugin,envpane}-split/{equiv,pixel}.py` 直接用）。
