@@ -108,7 +108,9 @@ src/
                         （GateNodeConfirm / GateOutput（t58）、GateNodeChoice / GateResult（t61）、
                         GateActions / GateFixConfirm（t62）、GateFacts（t63）、GateDetails / GateSkipConfirm（t65））
                         ＋ 常驻横幅 GateBanner —— 见 7.36
-    shell/              应用外壳：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）
+    layout/             应用外壳（窗口框架，t68 起叫 `layout/`）：RailNav / TopBar / StatusBar /
+                        CloseDialog（自己 Teleport 到 body）—— 不叫 `shell/`，免得跟终端页的
+                        「本地 Shell」混在一起（见 7.37）
     pages/              **一处一目录**（t67，见 7.37）：dashboard / terminal / ui / usage / archive /
                         plugin / env / settings 八个目录，页面本体与它自己的子组件同目录：
                         - `terminal/`：TerminalPane（终端：一条会话条带 dsh 终端与各本地 Shell）+ 子组件 DshTerminal
@@ -145,7 +147,7 @@ eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 - **渲染层由 Vite 打包成单个自包含的普通脚本**（见下）。
 - **共享状态只有一份**：`lib/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
 - **门禁层是一个覆盖层，不是第 8 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
-- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/**`；渲染层 = `renderer/{pages/**,gate/**,shell/**,components/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
+- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/**`；渲染层 = `renderer/{pages/**,gate/**,layout/**,components/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
 
 **一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。启动后 1.5 秒另有一轮**只读**的运行环境自检在后台跑（`main/env-doctor.ts`，见 7.20）：它不参与启动、不碰 dsh 进程，结果由渲染层 `envCheck()` 拉取。
 
@@ -619,7 +621,7 @@ EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局
 用 contains 会把它误判成没搬干净。
 
 **外壳四件** —— 「骨架」里左栏 / 顶栏 / 底栏自己的 29 个条目 + 「指示灯」里按状态着色的 5 条 +
-「关闭确认卡片」整节 7 条搬进 `shell/{RailNav,TopBar,StatusBar,CloseDialog}.vue`（全局表 1944 → 1651）。
+「关闭确认卡片」整节 7 条搬进 `layout/{RailNav,TopBar,StatusBar,CloseDialog}.vue`（全局表 1944 → 1651）。
 **跨组件的布局契约留在全局表**：`.app` / `.workspace` / `.pane`（两列网格、页面用 `visibility` 互斥、
 挂载点 `display: contents`）与 `html`/`body` 上的状态开关（macOS 红绿灯留白、系统全屏撤回、应用内全屏）
 —— 判据里因此要把 `html` / `body` / `:root` 开头的规则**先排除**，它们天生不属于任何组件。
@@ -699,7 +701,7 @@ Prettier**，不然 `format:check` 会红（这一轮又踩了一次）。
 会把"没搬干净"和"共享变体还在"混为一谈（这一轮两条假红就是这么来的）。
 
 自检里那张表的 `readScoped(file)` 按**文件名**找组件（`repo.vuePath()`，t67 起）：组件散在
-`pages/*` / `gate/` / `shell/` 下，把目录名写死在自检里就等于"每搬一次目录都要改自检"；
+`pages/*` / `gate/` / `layout/` 下，把目录名写死在自检里就等于"每搬一次目录都要改自检"；
 按文件名找还顺带钉住"组件不许重名"，拼错名字会当场抛错并列出所有同名候选（见 7.37）。
 
 搬完一页就往自检里那张 `styleLayers` 表加一行（「样式分层：页面私有的规则搬进组件的
@@ -765,7 +767,7 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 ### 7.13 静态检查只看代码、不看注释
 
 自检里的 id / class / api / webview 检查扫描 `index.html` ＋**全部** `.vue`（递归扫 `pages/` /
-`gate/` / `shell/` / `components/`）＋ `lib/*.ts` 的合集，并**先剥掉注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、`#000` 这类示意写法举例，当真值去查会误报。class 检查要认得动态绑定（`:class="{ active: 条件 }"` 的键名算用到的 class）。新增页面时记得同步挂载清单、样式与（如需要）preload 暴露的 API —— 自检「样式：标记用到的 class 都有对应样式（HTML + .vue）」已经挡住过两次真问题。
+`gate/` / `layout/` / `components/`）＋ `lib/*.ts` 的合集，并**先剥掉注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、`#000` 这类示意写法举例，当真值去查会误报。class 检查要认得动态绑定（`:class="{ active: 条件 }"` 的键名算用到的 class）。新增页面时记得同步挂载清单、样式与（如需要）preload 暴露的 API —— 自检「样式：标记用到的 class 都有对应样式（HTML + .vue）」已经挡住过两次真问题。
 
 ### 7.14 设置页网格：`min-height: 0` 会吃掉溢出内容
 
@@ -899,7 +901,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 **现在的做法**（`main.ts` 的 `wireCloseBehavior` / `askCloseAction` / `hideToTray` / `ensureTray`）：
 
 - 设置项 `closeAction` 三态：`ask`（默认，问一次）/ `tray`（直接收起）/ `quit`（直接退出）。设置页那一行**只在 Windows / Linux 显示**（`v-if="!isMac"`）—— macOS 上这个二选一根本不存在，摆一个不生效的开关比不摆更糟（早先的写法是留着它、只在说明里写一句"macOS 不适用"）。
-- `ask` 时问「收起到托盘 / 退出应用 / 取消」，带「记住我的选择，以后不再询问」；勾了就写回 `closeAction`。**问的那张卡片是渲染层自己画的**（`shell/CloseDialog.vue` + `CloseDialog` 挂载点），不是原生弹窗：原生 `dialog.showMessageBox` 的长相改不了（字体、配色、间距、动画全归系统），是全应用唯一一个不像这个应用的面孔；自己画还顺带能把真实状态写进去（哪个 dsh 会被停掉、PID 多少、是不是外部实例）。
+- `ask` 时问「收起到托盘 / 退出应用 / 取消」，带「记住我的选择，以后不再询问」；勾了就写回 `closeAction`。**问的那张卡片是渲染层自己画的**（`layout/CloseDialog.vue` + `CloseDialog` 挂载点），不是原生弹窗：原生 `dialog.showMessageBox` 的长相改不了（字体、配色、间距、动画全归系统），是全应用唯一一个不像这个应用的面孔；自己画还顺带能把真实状态写进去（哪个 dsh 会被停掉、PID 多少、是不是外部实例）。
 - 主进程与渲染层之间是**一问一答**：`app:close-request`（带 `CloseRequest` 那几项事实）→ `app:close-ack`（"卡片已经显示了"）→ `app:close-answer`（`{ action, remember }`，动作只认 tray/quit/cancel，认不出来当取消）。原生弹窗没有被删掉，`askCloseActionNative` 是兜底。
 - 「收起」= `win.hide()` + 托盘图标；托盘菜单是「显示主界面 / 退出 DSH Console」，单击图标也叫回窗口。
 - 托盘图标**随应用一起建**（`bootstrap()` 里调 `ensureTray()`，仅 Windows / Linux）—— 它不只是"收起的落点"，也是**叫回窗口与退出的入口**；等第一次收起才建的话，用户在那之前根本不知道有这东西。`ensureTray()` 幂等，收起时再调一次只是兜底。
@@ -1658,7 +1660,7 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 ### 7.37 渲染层的目录结构：一处一目录（t67）
 
-**为什么改**（用户看目录树时提的）：`shell/` 里外壳的 6 件与门禁的 10 件平铺在一起、`panes/` 里
+**为什么改**（用户看目录树时提的）：`layout/` 里外壳的 6 件与门禁的 10 件平铺在一起、`panes/` 里
 8 个页面与 5 个页面私有的子件平铺在一起 —— 看目录看不出"哪几个文件是一处的"。
 
 **现在的结构**：
@@ -1669,10 +1671,14 @@ renderer/
   components/   通用组件：被**两处以上**真的 import 的 `.vue` 才放这里（今天一个都没有，
                 规则写在 `components/README.md`）
   gate/         首启门禁那一层（覆盖层，不是页面）：EnvGate + 9 个子件 + 常驻横幅 GateBanner
-  shell/        应用外壳：RailNav / TopBar / StatusBar / CloseDialog
+  layout/       应用外壳（窗口框架）：RailNav / TopBar / StatusBar / CloseDialog
   pages/<一处>/ 一个页面 / 一个特性一个目录，页面本体与它自己的子件同目录
                 （dashboard / terminal / ui / usage / archive / plugin / env / settings）
 ```
+
+**目录名的两个决定**：① 外壳这一层叫 `layout/` 而不是 `shell/`（t68，用户提的）：仓库里 "shell"
+已经被「本地 Shell」（终端页那一路 zsh / pwsh）占了，两个意思撞在一个词上；② `pages/` 是页面、
+`gate/` 是覆盖层、`lib/` 是纯逻辑 —— 名字与 §7.33 的样式分层判据一一对应。
 
 **判据，按顺序问三条**：
 
@@ -1680,7 +1686,7 @@ renderer/
    14 个只有一个父级。`GateOutput` 一度看着像（`PluginOpPanel.vue` 的注释里点了它的名），但它只被
    `gate/EnvGate.vue` import —— 两边只是"同一套做法"，不是同一个组件。
 2. 是**一页 / 一个特性**用的吗？→ 放进那一处的目录：页面进 `pages/<一处>/`，门禁层进 `gate/`，
-   外壳进 `shell/`。
+   外壳进 `layout/`。
 3. 是**纯逻辑**吗？→ `lib/`，不进组件目录。
 
 **单文件的目录为什么也建**（`pages/dashboard/` 等 5 个）：规则统一（"一处一目录"）比省一层目录值钱 ——

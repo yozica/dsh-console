@@ -4,16 +4,19 @@
 
 ## 0. 渲染层的目录结构：一处一目录 —— ✅ 已做完（t67，2026-09-26）
 
-**结果**：`src/renderer/` 从「`shell/` 15 个文件平铺 + `panes/` 13 个文件平铺」改成按处收：
+**结果**：`src/renderer/` 从「`layout/` 15 个文件平铺 + `panes/` 13 个文件平铺」改成按处收：
 
 ```
 lib/          纯逻辑（不动）        gate/        首启门禁那一层：EnvGate + 9 个子件 + GateBanner
-components/   通用组件（今天为空）  shell/       应用外壳：RailNav / TopBar / StatusBar / CloseDialog
+components/   通用组件（今天为空）  layout/      应用外壳：RailNav / TopBar / StatusBar / CloseDialog
 pages/        一处一目录：dashboard / terminal / ui / usage / archive / plugin / env / settings
 ```
 
+**外壳那一层叫 `layout/`**（t68）：原来叫 `shell/`，跟终端页的「本地 Shell」（zsh / pwsh 那一路）
+撞在一个词上，改成通用的叫法（纯改名，只动 import 与文档指针）。
+
 判据与取舍写在 **AGENTS §7.37**：先问"被两处以上真的 import 吗"（→ `components/`，今天 28 个 `.vue`
-里一个都没有）、再问"是一页 / 一个特性用的吗"（→ `pages/<一处>/`、`gate/`、`shell/`）、最后问
+里一个都没有）、再问"是一页 / 一个特性用的吗"（→ `pages/<一处>/`、`gate/`、`layout/`）、最后问
 "是纯逻辑吗"（→ `lib/`）。单文件的目录也照建（规则统一，以后加子件不用搬文件）。
 
 **顺带做掉的（比搬文件本身重要）**：自检与目录结构解耦 —— `test/repo.ts` 递归扫 `.vue` 并给了
@@ -167,7 +170,7 @@ contains 会误判）；② 产物里的媒体查询被压成现代区间语法�
 切出"半条注释 + 半条规则"，机械等价立刻报账（丢 1 / 多 3）—— 改成先掩码注释再数括号。
 
 **第七批（外壳四件，已合并）**：左栏 / 顶栏 / 底栏自己的 29 条（`骨架` 一节）＋ 按状态着色的 5 条
-（`指示灯`）＋ 关闭确认卡片整节 7 条，分别搬进 `shell/{RailNav,TopBar,StatusBar,CloseDialog}.vue`
+（`指示灯`）＋ 关闭确认卡片整节 7 条，分别搬进 `layout/{RailNav,TopBar,StatusBar,CloseDialog}.vue`
 （全局表 1944 → 1651）。跨组件布局契约（`.app` / `.workspace` / `.pane`）与 `html`/`body` 状态规则
 留在全局表；判据要先排除 `html`/`body`/`:root` 开头的规则。
 

@@ -93,7 +93,7 @@ export interface DshConsoleApi {
   confirm: (payload: ConfirmRequest) => Promise<boolean>;
 
   /**
-   * 主进程问「关窗要怎么办」时进来（渲染层弹自己的确认卡片，见 shell/CloseDialog.vue）。
+   * 主进程问「关窗要怎么办」时进来（渲染层弹自己的确认卡片，见 layout/CloseDialog.vue）。
    * 传 `null` 表示**这次不问了** —— 渲染层没能确认接住，主进程已经退回原生的兜底弹窗，
    * 界面要把卡片收起来，别让两个弹窗同时挂着。
    */

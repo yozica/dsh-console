@@ -55,7 +55,7 @@ const api: DshConsoleApi = {
   revealUserData: () => ipcRenderer.invoke('app:revealUserData'),
   confirm: (payload) => ipcRenderer.invoke('app:confirm', payload),
 
-  // 关闭确认：主进程问、渲染层答（卡片在渲染层，见 shell/CloseDialog.vue）
+  // 关闭确认：主进程问、渲染层答（卡片在渲染层，见 layout/CloseDialog.vue）
   // ack 是"卡片已经显示了"：主进程收到它才撤掉兜底时限，之后等用户慢慢选
   onCloseRequest: (handler) => subscribe('app:close-request', handler),
   ackClose: () => ipcRenderer.invoke('app:close-ack'),

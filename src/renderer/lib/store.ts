@@ -54,7 +54,7 @@ export const uiLoadable = computed(() => Boolean(dsh.value?.uiUrl) || owned.valu
 
 /**
  * 自动更新状态：主进程（main/updater.ts）是唯一状态机，这里只是镜像 ——
- * 底栏（shell/StatusBar.vue）与设置页读同一份。
+ * 底栏（layout/StatusBar.vue）与设置页读同一份。
  * 初始 idle 只是"快照还没到"的占位；startStore() 会用快照里的 update 覆盖它。
  */
 export const update = ref<UpdateState>({
