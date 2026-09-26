@@ -2,6 +2,39 @@
 
 不是路线图，只是一份"说好了以后做"的清单，免得只留在对话里。每条都写清**为什么**、**从哪开始**。
 
+## 2. 大文件拆成模块（模块化） —— ✅ 已做完（t49~t65，2026-09-26）
+
+**结果**：起点是"每个文件的行数太多"这一句，先拆自检、再按行数拆源码，PR 从 **#47 一直到 #70**（24 个，其中 #63 是行数口径修正、其余 23 个是拆分），
+每一步都保证行为等价 + 可机械核对，并且**每一步的判据都写进了 AGENTS**（§7.34 自检、§7.35 主进程 barrel、
+§7.36 渲染层）。现在的规模：
+
+| 文件                | 起点 | 现在     | 拆成什么                                                                                                                                                |
+| ------------------- | ---- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/selftest.ts`  | 6591 | **55**   | `test/harness.ts` + `test/repo.ts` + `test/text.ts` + `test/env-fixtures.ts` + `test/checks/*`（8 个主题）                                              |
+| `main.ts`           | 1798 | **865**  | `main-ipc*`（6 个）+ `main-{theme,embedded,menu,crash,url}.ts`                                                                                          |
+| `EnvGate.vue`       | 2648 | **1768** | `GateNodeConfirm` / `GateOutput` / `GateNodeChoice` / `GateResult` / `GateActions` / `GateFixConfirm` / `GateFacts` / `GateDetails` / `GateSkipConfirm` |
+| `PluginPane.vue`    | 2052 | **1152** | `PluginStackView` / `PluginOpPanel` / `PluginConfigView`                                                                                                |
+| `EnvPane.vue`       | 1546 | **1205** | `EnvUpdateConfirm`                                                                                                                                      |
+| `node-installer.ts` | 4169 | **2509** | `node-*.ts`（8 个叶子；类与 `buildPlan`/`transferPhase` 按硬约束留下）                                                                                  |
+| `env-doctor.ts`     | 2907 | **605**  | `env-*.ts`（6 个叶子；两个有状态的类留下）                                                                                                              |
+| `process-utils.ts`  | 1347 | **68**   | `process-*.ts`（8 个叶子）                                                                                                                              |
+| `plugin-manager.ts` | 1322 | **318**  | `plugin-*.ts`（4 个叶子；三个类留下）                                                                                                                   |
+| `shared/ipc.ts`     | 1143 | **22**   | `ipc-*.ts`（8 个主题模块）                                                                                                                              |
+| `styles.css`        | ——   | 1723     | **不拆**（见第 1 条）                                                                                                                                   |
+
+**每一步都跑同一套**：`npm test`（314 项，输出与改动前逐行比对，计数口径变化逐条披露）、沙箱门禁
+（32/32 + 185/185）、`lint` / `format:check` / `typecheck` / `build`；**搬模板或样式的那些另加 §7.33 的
+三道**（机械等价：「全局表 + 组件块」的 `选择器 → 声明` 多重集必须零丢失零多出；逐像素：同一段夹具
+用改动前后的样式各渲染一次 2x 截图；跨层自检）。脚本留在 `.verify/*-split/{equiv,pixel}.py`，可以复用。
+
+**有意不拆的**：`node-installer.ts` 的类（`buildPlan` 与 `transferPhase` 必须同文件，反例脚本按这对锚点
+切源码）、`env-doctor.ts` 与 `plugin-manager.ts` 的有状态类、`styles.css`（第 1 条）、900 行以下的页面组件。
+理由是"一个类里的阶段顺序"换成"几个类之间的时序"只会更难改（AGENTS §7.35 有记录）。
+
+**还欠一次真机翻看**：这一阶段动了主进程启动路径（IPC 注册层那一轮）与四五个页面的模板，而 Electron
+在沙箱里起不来 —— 判据只到"自检 + 机械等价 + 逐像素"，`npm start` 那一遍请自己走一次（清单在每轮
+PR 的说明里）。
+
 ## 1. 样式分层：单表 → 「全局骨架 + 组件 scoped」 —— ✅ 已做完（t48，八批，2026-09-26）
 
 **结果**：`src/renderer/styles.css` **4502 → 1497 行（−67%）**，0 个 `.vue` 带 `<style>` 变成 14 个组件各有

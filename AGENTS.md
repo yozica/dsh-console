@@ -1473,6 +1473,23 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 `.vue` 覆盖与组件数 24 → 25、全局表花括号 202 → 204、`styleLayers` 21 个页面 92 条 → 22 个页面 96 条）、
 沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
 
+**第九步（t65，2026-09-26）：门禁的最后两个小件**
+
+`shell/EnvGate.vue` 1781 → 1768 行，拆出 `shell/GateDetails.vue`（54 行，「展开看详情」）与
+`shell/GateSkipConfirm.vue`（26 行，「先跳过 pnpm」的二次确认）。两块用的都是**全局零件**
+（`.gate-fact-more` / `.gate-detail*` / `.wizard-decide`），所以这一步**一条样式都没搬** ——
+自检里"全局表花括号"与 `styleLayers` 那两行数字不动，也因此没做像素夹具（没有可比的样式改动）。
+
+**这一阶段（t49~t65）的总结**：PR #47 ~ #70（24 个，其中 #63 是行数口径修正）把 10 个大文件拆成了 60 多个模块 ——
+自检 6591 → 55、`main.ts` 1798 → 865、`EnvGate.vue` 2648 → 1768、`PluginPane.vue` 2052 → 1152、
+`EnvPane.vue` 1546 → 1205、`node-installer` 4169 → 2509、`env-doctor` 2907 → 605、
+`process-utils` 1347 → 68、`plugin-manager` 1322 → 318、`shared/ipc.ts` 1143 → 22。
+每一步的判据都是**同一套**：`npm test` 输出逐行比对（计数口径变化逐条披露）+ 沙箱门禁 +
+`lint` / `format:check` / `typecheck` / `build`；搬模板 / 样式的那些另加 §7.33 的三道
+（机械等价 577 → 577 零丢失零多出、逐像素一致、跨层自检）。**有意不拆的**：几个有状态的类
+（`NodeInstaller` / `EnvDoctor` / `EnvFixRunner` / `Plugin*`，理由见 §7.35）、`styles.css`（§7.33 的结论）、
+900 行以下的页面组件。汇总与"还欠一次真机翻看"记在 `docs/backlog.md` 第 2 条。
+
 **第八步（t64，2026-09-26）：插件页的生效配置视图**
 
 `panes/PluginPane.vue` 1462 → 1152 行，拆出 `panes/PluginConfigView.vue`（423 行）：组合出来的条目按层
