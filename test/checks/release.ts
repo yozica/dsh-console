@@ -231,7 +231,7 @@ export async function runRelease(repo: Repo): Promise<void> {
       !/^import\s*\{[^}]*\}\s*from\s*'electron-updater'/m.test(updaterSource),
   );
 
-  // 关闭询问改成渲染层自己画的卡片（`shell/CloseDialog.vue`）之后，多了两处**只会静默坏掉**的点：
+  // 关闭询问改成渲染层自己画的卡片（`layout/CloseDialog.vue`）之后，多了两处**只会静默坏掉**的点：
   //   1. 渲染层没接住时必须退回原生弹窗 —— 不然渲染层一卡，窗口就再也关不掉了。
   //      注意**只给握手设时限**：卡片显示出来之后就不能再计时，否则用户多想两秒都会被判成
   //      "卡住"，系统弹窗自己冒出来（第一版就是这么错的）；

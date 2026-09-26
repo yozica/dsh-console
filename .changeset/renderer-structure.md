@@ -2,16 +2,16 @@
 'dsh-console': patch
 ---
 
-渲染层目录整理：一处一目录（`pages/<一处>/` + `gate/` + `shell/` + `components/`），并把自检与目录结构解耦
+渲染层目录整理：一处一目录（`pages/<一处>/` + `gate/` + `layout/` + `components/`），并把自检与目录结构解耦
 
-原来 `shell/` 里外壳的 6 件与门禁的 10 件平铺在一起、`panes/` 里 8 个页面与 5 个页面私有的子件平铺
+原来 `layout/` 里外壳的 6 件与门禁的 10 件平铺在一起、`panes/` 里 8 个页面与 5 个页面私有的子件平铺
 在一起，看目录看不出"哪几个文件是一处的"。现在：
 
 | 目录            | 装什么                                                                                                                             |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `pages/<一处>/` | 一个页面 / 一个特性一个目录，页面本体与它自己的子件同目录（dashboard / terminal / ui / usage / archive / plugin / env / settings） |
 | `gate/`         | 首启门禁那一层（覆盖层）：EnvGate + 9 个子件 + 常驻横幅 GateBanner                                                                 |
-| `shell/`        | 应用外壳：RailNav / TopBar / StatusBar / CloseDialog                                                                               |
+| `layout/`       | 应用外壳：RailNav / TopBar / StatusBar / CloseDialog                                                                               |
 | `components/`   | 通用组件：**被两处以上真的 import** 的才放这里（今天一个都没有，规则写在它的 README 里）                                           |
 | `lib/`          | 纯逻辑（不动）                                                                                                                     |
 

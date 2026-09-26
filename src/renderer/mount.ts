@@ -23,10 +23,10 @@ import SettingsPane from './pages/settings/SettingsPane.vue';
 import TerminalPane from './pages/terminal/TerminalPane.vue';
 import UiPane from './pages/ui/UiPane.vue';
 import UsagePane from './pages/usage/UsagePane.vue';
-import CloseDialog from './shell/CloseDialog.vue';
-import RailNav from './shell/RailNav.vue';
-import StatusBar from './shell/StatusBar.vue';
-import TopBar from './shell/TopBar.vue';
+import CloseDialog from './layout/CloseDialog.vue';
+import RailNav from './layout/RailNav.vue';
+import StatusBar from './layout/StatusBar.vue';
+import TopBar from './layout/TopBar.vue';
 
 type MountEntry = readonly [string, Component];
 

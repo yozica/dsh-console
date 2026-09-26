@@ -274,7 +274,7 @@ export function registerAppIpc(ctx: IpcContext): void {
   ipcMain.handle('app:update-install', (): boolean => updater.install());
 
   // ---------------------------------------------------------------- 关闭确认
-  // 询问卡片在渲染层（shell/CloseDialog.vue）：主进程把"哪个 dsh 会受影响"这几项事实给它，
+  // 询问卡片在渲染层（layout/CloseDialog.vue）：主进程把"哪个 dsh 会受影响"这几项事实给它，
   // 它先回一条"卡片显示了"（撤掉握手时限），再把用户的选择答回来。
   // 没有进行中的询问时（例如已经被兜底或已回答过）两个 handler 都返回 false。
   ipcMain.handle('app:close-ack', (): boolean => {

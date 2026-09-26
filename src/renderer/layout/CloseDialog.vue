@@ -104,7 +104,7 @@ async function answer(action: CloseAnswerAction): Promise<void> {
 
    关窗时问"收起还是退出"。**有意不用原生 `dialog.showMessageBox`** —— 系统弹窗的长相
    改不了（字体、配色、间距、动画），是全应用唯一一个不像这个应用的面孔；自己画还顺带
-   能把"哪个 dsh 会被停掉、PID 是多少"写进去（见 shell/CloseDialog.vue）。
+   能把"哪个 dsh 会被停掉、PID 是多少"写进去（见 layout/CloseDialog.vue）。
    与上面的聚焦蒙层相反：**这层是模态的**，要挡住点击 —— 不选就不该操作后面的界面。 */
 
 .close-dialog {

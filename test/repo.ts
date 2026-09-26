@@ -108,7 +108,7 @@ export function createRepo(): Repo {
   const rendererDir = path.join(srcDir, 'renderer');
 
   // 界面已经逐页迁到 Vue 单文件组件，所以**标记与脚本都要把 .vue 一起算进来**
-  // （`pages/<一处>/` 是页面与页面私有的子件，`gate/` 是门禁层，`shell/` 是外壳，
+  // （`pages/<一处>/` 是页面与页面私有的子件，`gate/` 是门禁层，`layout/` 是外壳，
   // `components/` 是通用件），否则迁走的部分会悄悄脱离这些检查的覆盖。
   // **递归扫**（t67）：目录结构是活的（按"一处一目录"整理过），把目录名写死在自检里
   // 就等于"每搬一次目录都要改自检"—— 这里只认扩展名，路径一律走下面的 `vuePath()`。

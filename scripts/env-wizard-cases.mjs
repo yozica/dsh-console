@@ -2060,7 +2060,7 @@ const CSS_FILE = process.env.ENV_WIZARD_CSS_FILE
  * 各页面组件里的 `<style scoped>` 块（t48 样式分层之后，"页面自己的规则"不再堆在全局表里）。
  * 拼接顺序 = 全局表 + 组件块，和真实级联一致（组件块在后），`cssValueOf` 取最后一条也因此仍然对。
  * **递归扫** `src/renderer/**\/*.vue`（t67）：组件按「一处一目录」散在 `pages/*` / `gate/` /
- * `shell/` 下，把目录名写死在这里就等于"每搬一次目录都要改这个脚本"。
+ * `layout/` 下，把目录名写死在这里就等于"每搬一次目录都要改这个脚本"。
  */
 function componentStyles() {
   const out = [];

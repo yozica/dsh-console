@@ -293,7 +293,7 @@ main:focus-visible {
 /* ============================================================ 骨架（全局部分）
    `.app` / `.workspace` / `.pane` 是**跨组件的布局契约**（两列网格、页面用 visibility 互斥、
    挂载点 display: contents），留在全局表；左栏 / 顶栏 / 底栏自己的零件已经搬进
-   `shell/RailNav.vue` / `TopBar.vue` / `StatusBar.vue` 的 `<style scoped>`，
+   `layout/RailNav.vue` / `TopBar.vue` / `StatusBar.vue` 的 `<style scoped>`，
    `html`/`body` 那几个状态开关（macOS 红绿灯留白、系统全屏撤回、应用内全屏）也留在这一层
    —— 判据见 AGENTS §7.33。 */
 
@@ -402,7 +402,7 @@ main {
 
 /* ============================================================ 指示灯（共享部分）
    `.lamp` 基础形状与 `#hero-dot`（看板上的大圆点）是多处在用的；按状态着色的那几条
-   跟着各自的组件走（`.rail-service[…] .lamp` 在 `shell/RailNav.vue`、
+   跟着各自的组件走（`.rail-service[…] .lamp` 在 `layout/RailNav.vue`、
    `.lamp-lg` 在 `pages/dashboard/DashboardPane.vue`）。 */
 
 /* ============================================================ 指示灯 */
@@ -823,7 +823,7 @@ main {
 
 /* ============================================================ 内嵌界面（共享部分）
    `.webview-wrap` / `.embedded-view` 两个内嵌页共用；`.ui-paste*` 与 `.immersive-only` /
-   `.topbar-note.lit` 分别搬进 `pages/ui/UiPane.vue` 与 `shell/TopBar.vue`；
+   `.topbar-note.lit` 分别搬进 `pages/ui/UiPane.vue` 与 `layout/TopBar.vue`；
    `body[data-immersive]` 那几条状态规则留在这一层。 */
 
 /* ============================================================ 内嵌界面 */
@@ -950,7 +950,7 @@ body[data-immersive='true'] .webview-wrap {
   margin-top: 12px;
 }
 
-/* 关闭确认卡片（`.close-*`）整节搬进 `shell/CloseDialog.vue` 的 `<style scoped>`
+/* 关闭确认卡片（`.close-*`）整节搬进 `layout/CloseDialog.vue` 的 `<style scoped>`
    —— 见 AGENTS §7.33。`.close-card .check` 因为 `.check` 是多页共用件而留在全局表。 */
 
 .close-card .check {

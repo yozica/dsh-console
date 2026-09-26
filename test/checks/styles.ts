@@ -162,7 +162,7 @@ export function runStyles(repo: Repo): void {
   // 查"规则在不在"要先剥注释：两张表里都有解释性注释点名这些 class（"设置页那一族（.settings…）"），
   // 拿原文去 match 会把注释当成定义 —— 这正是这类检查最容易骗过自己的地方。
   const cssRules = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  // 组件按「一处一目录」散在 `pages/*` / `gate/` / `shell/` 下 —— 按**文件名**找（重名当场抛错）
+  // 组件按「一处一目录」散在 `pages/*` / `gate/` / `layout/` 下 —— 按**文件名**找（重名当场抛错）
   const readScoped = (file: string): string => {
     const text = fs.readFileSync(repo.vuePath(file), 'utf8');
     // **行首锚定**：组件里的注释会引用这个标签（"这些规则原来在 …… 里"），不锚定就会从注释
@@ -248,7 +248,7 @@ export function runStyles(repo: Repo): void {
       ],
     },
     {
-      // t58：向导的确认区拆成 shell/GateNodeConfirm.vue（只读的"将要执行"卡片）。
+      // t58：向导的确认区拆成 gate/GateNodeConfirm.vue（只读的"将要执行"卡片）。
       // 它只带走了那条"加载中"的说明行；确认区的零件与父组件、自检页共用 → 进全局表。
       pane: 'GateNodeConfirm.vue',
       scoped: ['.gate-confirm-loading'],
@@ -329,7 +329,7 @@ export function runStyles(repo: Repo): void {
     },
     {
       pane: 'EnvPane.vue',
-      // t60 起"更新 Node / pnpm 的确认区"是 panes/EnvUpdateConfirm.vue：`.env-channel` 跟着它走了，
+      // t60 起"更新 Node / pnpm 的确认区"是 pages/env/EnvUpdateConfirm.vue：`.env-channel` 跟着它走了，
       // `.env-confirm*` 因为这一页的"一键修复"确认区也画，收进了全局表（见下一行）。
       scoped: [
         '.env',
@@ -501,7 +501,7 @@ export function runStyles(repo: Repo): void {
   check(
     '主题：左下角开关与设置项都存在',
     markup.includes('id="theme-switch"') && markup.includes('id="s-themeMode"'),
-    '开关在 shell/RailNav.vue，主题下拉框在 pages/settings/SettingsPane.vue',
+    '开关在 layout/RailNav.vue，主题下拉框在 pages/settings/SettingsPane.vue',
   );
 
   // 启动锁必须是单向状态机（idle → waiting → done）。
@@ -744,7 +744,7 @@ export function runStyles(repo: Repo): void {
       // 文案要短（那一格宽度有限）；长解释留在插件页那条黄条里
       /plugin: '✓ 装配层改动已加载'/.test(restartNavCode) &&
       // 样式：只给状态槽加一层绿色底；浮层/胶囊那套已经删掉
-      // `.topbar-note.lit` t48 起在 `shell/TopBar.vue` 的 <style scoped> 里
+      // `.topbar-note.lit` t48 起在 `layout/TopBar.vue` 的 <style scoped> 里
       /\.topbar-note\.lit \{[\s\S]*?color: var\(--run\);[\s\S]*?background: var\(--run-soft\);[\s\S]*?\}/.test(
         allCss,
       ) &&
