@@ -227,8 +227,9 @@ export function runStyles(repo: Repo): void {
     },
     {
       pane: 'StatusBar.vue',
-      scoped: ['.statusbar', '.kbd-hint', '.update-hint'],
-      staysGlobal: ['.spacer'],
+      scoped: ['.statusbar', '.kbd-hint'],
+      // `.update-hint` t72 起顶栏也在用（应用内全屏时底栏被藏起来）→ 必须留在全局表
+      staysGlobal: ['.spacer', '.update-hint'],
     },
     {
       pane: 'CloseDialog.vue',

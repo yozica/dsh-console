@@ -11,10 +11,23 @@
 
 import { ref } from 'vue';
 
+import { currentTab, immersive } from './store.js';
+
 /** 请求号。0 = 还没有人请求过（所以设置页可以直接 watch，不必先判断初次） */
 export const updateCardFocus = ref(0);
 
 /** 请求聚焦设置页的更新卡片 */
 export function requestUpdateCardFocus(): void {
   updateCardFocus.value += 1;
+}
+
+/**
+ * 「有更新」被点之后做什么：**先退出应用内全屏**（全屏时左栏是藏着的，直接切到设置页会让人
+ * 找不到北），再切到设置页，最后把「关于」里的更新卡片滚进视野并亮一次。
+ * 底栏那条提示与顶栏那格（全屏时可用的那一处）共用这一份。
+ */
+export function openUpdateSettings(): void {
+  immersive.value = false;
+  currentTab.value = 'settings';
+  requestUpdateCardFocus();
 }

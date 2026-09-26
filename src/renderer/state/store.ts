@@ -40,6 +40,18 @@ export const dsh = computed<DshSnapshot | null>(() => snapshot.value?.dsh || nul
 export const resolvedTheme = computed<'light' | 'dark'>(() =>
   snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark',
 );
+
+/**
+ * 「有更新」那一句（没有更新时是空串）。**只在这里拼一次**：底栏那条提示与顶栏那格
+ * （应用内全屏时底栏被藏起来，见 7.17）读的是同一个来源。
+ */
+export const updateHint = computed(() => {
+  if (update.value.phase === 'available') {
+    return `发现新版本 ${update.value.version || ''}，点此查看`;
+  }
+  if (update.value.phase === 'downloaded') return '新版本已下载，点此查看';
+  return '';
+});
 /** 快照还没到时给空对象：读不到的设置项就是 undefined，各页按默认值兜 */
 const EMPTY_SETTINGS = {} as SettingsValues;
 export const settings = computed<SettingsValues>(() => snapshot.value?.settings || EMPTY_SETTINGS);

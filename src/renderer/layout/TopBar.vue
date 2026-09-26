@@ -15,7 +15,8 @@ import { computed } from 'vue';
 import { gateVisible } from '../state/env-wizard.js';
 import { envDetailOpen } from '../state/env-layer.js';
 import { harnessArrivalNotice } from '../state/restart-nav.js';
-import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../state/store.js';
+import { currentTab, dsh, immersive, owned, phase, phaseInfo, updateHint } from '../state/store.js';
+import { openUpdateSettings } from '../state/update-anchor.js';
 
 const PAGE_TITLES = {
   dashboard: '控制台',
@@ -93,6 +94,16 @@ const note = computed(() => harnessArrivalNotice.value || contextNote.value);
       :class="{ lit: harnessArrivalNotice }"
       >{{ note }}</span
     >
+
+    <!-- 应用内全屏时底栏被藏起来，更新提示得在这格旁边也有一份（见 §7.17） -->
+    <button
+      v-if="immersive && updateHint"
+      id="btn-topbar-update"
+      class="update-hint"
+      @click="openUpdateSettings"
+    >
+      {{ updateHint }}
+    </button>
     <button
       v-if="!gateVisible"
       id="btn-exit-immersive"
