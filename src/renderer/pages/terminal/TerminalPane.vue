@@ -22,7 +22,7 @@ import {
   TERM_THEMES,
 } from './xterm.js';
 import { useTabActivation } from '../../composables/use-tab-activation.js';
-import { snapshot, startStore } from '../../state/store.js';
+import { resolvedTheme, snapshot, startStore } from '../../state/store.js';
 import DshTerminal from './DshTerminal.vue';
 import { isMac } from '../../utils/platform.js';
 import type { TerminalEntry } from './xterm.js';
@@ -68,10 +68,6 @@ const emptyHint = computed(() =>
     ? '开一个 zsh / bash 会话用来手工排查，它和 dsh 进程互不干扰。'
     : '开一个 pwsh 或 cmd 会话用来手工排查，它和 dsh 进程互不干扰。',
 );
-
-function resolvedTheme() {
-  return snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark';
-}
 
 function setPaneEl(id: string, el: Element | { $el?: unknown } | null): void {
   if (el instanceof HTMLElement) paneEls.set(id, el);
@@ -123,7 +119,7 @@ async function attachSession(session: ShellSession): Promise<void> {
   await nextTick();
   const el = paneEls.get(session.id);
   if (!el) return;
-  const entry = attachTerminal(el, resolvedTheme());
+  const entry = attachTerminal(el, resolvedTheme.value);
   // 按存下的行列建终端：尺寸一致时第一次 fit 就是空操作，不会白白触发一次 PTY resize
   const { cols, rows } = session;
   if (cols && cols > 0 && rows && rows > 0) entry.term.resize(cols, rows);
@@ -274,8 +270,8 @@ useTabActivation(
 watch(
   () => snapshot.value?.theme?.resolved,
   () => {
-    applyTerminalSurface(host.value, resolvedTheme());
-    const theme = { ...TERM_THEMES[resolvedTheme()] };
+    applyTerminalSurface(host.value, resolvedTheme.value);
+    const theme = { ...TERM_THEMES[resolvedTheme.value] };
     for (const entry of terminals.values()) entry.term.options.theme = { ...theme };
   },
 );
