@@ -98,6 +98,8 @@ import { say } from '../lib/status-message.js';
 import GateNodeConfirm from './GateNodeConfirm.vue';
 import GateOutput from './GateOutput.vue';
 import GateActions from './GateActions.vue';
+import GateDetails from './GateDetails.vue';
+import GateSkipConfirm from './GateSkipConfirm.vue';
 import GateFacts from './GateFacts.vue';
 import GateFixConfirm from './GateFixConfirm.vue';
 import GateNodeChoice from './GateNodeChoice.vue';
@@ -1206,28 +1208,16 @@ watch(fixConfirmAction, (action) => {
               @open-skip-confirm="openSkipConfirm"
             />
 
-            <!-- 「展开看详情」排在两个操作**之后**：交互 §11.1 / §11.4 的 Tab 顺序是
-                 单选项 → 主操作 → 次操作 → 展开详情 → 重新检测 → 逃生口。
-                 它原来是跟在事实行后面的（视觉 §5.0 A 把展开器画在事实行右端），那会让它排在
-                 两个操作之前 —— 评审 T11-C 指出的正是这条冲突。两份规格在这里只能满足一个：
-                 交互给的是**逐项枚举**、视觉那里只是一张排布示意，所以按交互定稿（Tab 与它一致），
-                 视觉上的代价是展开器不再画在事实行右端。若要改判回原位置，回退动作就是把这一个
-                 `div.gate-fact-more` 移回上方事实行之后，并在 `docs/env-wizard-interaction.md`
-                 §11.1 显式记下这次偏离（冻结 §9 的留痕规则）—— 两处都可查。 -->
-            <div v-if="!stepRunning && currentChecks.length" class="gate-fact-more">
-              <button class="btn tiny ghost" @click="toggleDetails(currentStep.id)">
-                {{ detailsFor === currentStep.id ? '收起详情' : '展开看详情' }}
-              </button>
-              <dl v-if="detailsFor === currentStep.id" class="gate-detail">
-                <div v-for="check in currentChecks" :key="check.id" class="gate-detail-row">
-                  <dt class="gate-detail-key">{{ CHECK_TITLES[check.id] }}</dt>
-                  <dd class="gate-detail-val">
-                    {{ check.detail }}
-                    <code v-if="check.fixHint" class="gate-detail-cmd">{{ check.fixHint }}</code>
-                  </dd>
-                </div>
-              </dl>
-            </div>
+            <!-- 「展开看详情」排在两个操作**之后**（交互 §11.1 / §11.4 的 Tab 顺序）。
+                 t65 起是 shell/GateDetails.vue：这一层只把检查项与"展开着哪一步"递下去。 -->
+            <GateDetails
+              v-if="!stepRunning && currentChecks.length"
+              :step-id="currentStep.id"
+              :step-running="stepRunning"
+              :checks="currentChecks"
+              :details-for="detailsFor"
+              @toggle="toggleDetails"
+            />
 
             <!-- 确认区：原地展开，不弹原生对话框、不跳页（交互 §3.2）。
                  t58 起它是 shell/GateNodeConfirm.vue：这一层只把计划与选择递下去、"开始 / 取消 /
@@ -1263,15 +1253,12 @@ watch(fixConfirmAction, (action) => {
               @close="closeFixConfirm"
             />
 
-            <!-- 跳过是一次确认，不是静默操作（交互 §5.4） -->
-            <div v-if="skipConfirmOpen" class="wizard-decide">
-              确定先跳过 pnpm 这一步吗？跳过之后，插件页的装 / 卸 /
-              升级仍然用不了（以后随时可以回来补上）。
-              <div class="btn-row">
-                <button class="btn small" @click="confirmSkip">确定跳过</button>
-                <button class="btn small" @click="closeSkipConfirm">取消</button>
-              </div>
-            </div>
+            <!-- 跳过是一次确认，不是静默操作（交互 §5.4）—— t65 起是 shell/GateSkipConfirm.vue -->
+            <GateSkipConfirm
+              v-if="skipConfirmOpen"
+              @confirm="confirmSkip"
+              @close="closeSkipConfirm"
+            />
 
             <!-- 结果行：与事实行同一个槽位，失败不换地方、不弹窗、不整屏红（t61 起是
                  shell/GateResult.vue：点色 / 结论 / 说明 / 那排出路都由这一层递下去） -->
