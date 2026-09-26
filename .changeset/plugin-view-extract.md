@@ -2,10 +2,10 @@
 'dsh-console': patch
 ---
 
-「插件」页的纯展示判据进 `lib/plugin-view.ts`（`PluginPane.vue` 2052 → 1915 行）
+「插件」页的纯展示判据进 `pages/plugin/plugin-view.ts`（`PluginPane.vue` 2052 → 1915 行）
 
 `pages/plugin/PluginPane.vue` 里那些**一条 DOM 都不碰**却和 `ref` / `computed` 混在一起的规则搬进
-`lib/plugin-view.ts`（205 行）：层名（`home` 换 `~`）、算不算"你自己的层"、`kind` 的中文、
+`pages/plugin/plugin-view.ts`（205 行）：层名（`home` 换 `~`）、算不算"你自己的层"、`kind` 的中文、
 "没贡献"的三种情况（未创建 / 没匹配上 / 空 `[]`）、`include:` 前缀、运行中条目的索引与差额、
 运行状态词、巡检分档与"能不能删 / 卸 / 放回"、以及生效配置视图的分组过滤。
 组件里只剩一层薄包装（把 `data` / `problems` 这些响应式来源喂进去）与三个"点一下就走"的动作。

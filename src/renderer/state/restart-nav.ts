@@ -13,12 +13,12 @@
  * （不等健康检查），相位很快会从 `running` 跳到 `stopping` / `stopped` / `starting`；等 IPC
  * 回来再立意图，那 5 秒上锁窗口早就过去了 —— 锁永远不会出现。
  *
- * **这一份只管状态，不碰 DOM、也不碰重启动作**（那两个在 `lib/restart-flow.ts`）：自检要
+ * **这一份只管状态，不碰 DOM、也不碰重启动作**（那两个在 `state/restart-flow.ts`）：自检要
  * 直接 import 它来钉"就绪判据"这个纯函数，而自检的编译图（`tsconfig.node.json`）里没有
  * DOM 类型 —— 一旦这里出现 `window` / `alert`，`npm test` 就先红在类型上。分层是：
  *
- *   lib/restart-nav.ts    状态 + 纯判据 + 文案（无 DOM，可被自检直接 import）
- *   lib/restart-flow.ts   编排：立意图 → 重启 → 失败说实话（有 alert，谁也别 import 它）
+ *   state/restart-nav.ts    状态 + 纯判据 + 文案（无 DOM，可被自检直接 import）
+ *   state/restart-flow.ts   编排：立意图 → 重启 → 失败说实话（有 alert，谁也别 import 它）
  *   app.ts                等就绪 / 超时 / 收尾，并在就绪那一刻切页 + 发状态栏消息
  */
 

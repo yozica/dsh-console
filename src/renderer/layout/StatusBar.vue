@@ -8,9 +8,9 @@
  * 也不会被下一次响应式更新抹掉。
  */
 import { computed, onUnmounted, ref } from 'vue';
-import { currentTab, dsh, phaseInfo, snapshot, update } from '../lib/store.js';
-import { shortcutLabel } from '../lib/platform.js';
-import { requestUpdateCardFocus } from '../lib/update-anchor.js';
+import { currentTab, dsh, phaseInfo, snapshot, update } from '../state/store.js';
+import { shortcutLabel } from '../utils/platform.js';
+import { requestUpdateCardFocus } from '../state/update-anchor.js';
 
 const MESSAGE_MS = 6000;
 

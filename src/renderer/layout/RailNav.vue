@@ -10,7 +10,7 @@
  * 由 app.ts 与各页自己的 watch 处理。
  */
 import { computed } from 'vue';
-import { closeEnvDetailOnTabChange } from '../lib/env-layer.js';
+import { closeEnvDetailOnTabChange } from '../state/env-layer.js';
 import {
   currentTab,
   dsh,
@@ -20,8 +20,8 @@ import {
   setThemeMode,
   snapshot,
   type TabId,
-} from '../lib/store.js';
-import { formatUptime } from '../lib/format.js';
+} from '../state/store.js';
+import { formatUptime } from '../utils/format.js';
 
 interface NavTab {
   id: TabId;

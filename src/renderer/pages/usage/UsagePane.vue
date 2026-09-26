@@ -10,8 +10,8 @@
  * 那部分留在 onMounted 里，用 onUnmounted 配平 —— 这正是用组件表达生命周期的好处。
  */
 import { onMounted, ref, watch } from 'vue';
-import { currentTab, settings } from '../../lib/store.js';
-import type { WebviewElement, WebviewFailLoadEvent } from '../../lib/webview.js';
+import { currentTab, settings } from '../../state/store.js';
+import type { WebviewElement, WebviewFailLoadEvent } from '../../utils/webview.js';
 
 const api = window.dshConsole;
 

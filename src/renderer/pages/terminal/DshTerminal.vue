@@ -16,9 +16,9 @@ import {
   fitAndSync,
   passAppShortcutsThrough,
   TERM_THEMES,
-} from '../../lib/xterm.js';
-import { currentTab, dsh, phaseInfo, snapshot } from '../../lib/store.js';
-import type { TerminalEntry } from '../../lib/xterm.js';
+} from './xterm.js';
+import { currentTab, dsh, phaseInfo, snapshot } from '../../state/store.js';
+import type { TerminalEntry } from './xterm.js';
 
 const api = window.dshConsole;
 

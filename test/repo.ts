@@ -35,7 +35,6 @@ export interface Repo {
   // ---- 源码文本：自检里大量断言是"读源码文本"的，集中读一次 ----
   srcDir: string;
   rendererDir: string;
-  libDir: string;
   /** `index.html` 原文 */
   html: string;
   /**
@@ -47,13 +46,18 @@ export interface Repo {
   vuePath(name: string): string;
   /** 所有 `.vue` 的全文拼接 */
   vueSource: string;
-  /** `lib/` 下所有 `.ts` 的拼接 */
-  libSource: string;
-  /** 渲染层脚本的两处来源：`app.ts` + `lib/` */
+  /**
+   * 渲染层**全部** `.ts`（递归：`app.ts` / `utils/` / `state/` / `shared/` / 各特性目录）的拼接。
+   * 分层是活的（t69 把 `lib/` 拆成三层），所以这里只认扩展名、不认目录名。
+   */
+  rendererTs: string;
+  /** 按文件名找渲染层的 `.ts` 模块（`tsPath('xterm.ts')` → 绝对路径）；拼错或重名当场抛错 */
+  tsPath(name: string): string;
+  /** 渲染层脚本（= `rendererTs`，t69 前是 `app.ts` + `lib/`） */
   rendererJs: string;
   /** 标记的两处来源：静态 HTML + `.vue` 模板 */
   markup: string;
-  /** 渲染层脚本：`app.ts` + `lib/` + `.vue` */
+  /** 渲染层脚本：全部 `.ts` + `.vue` */
   rendererAll: string;
   /** `rendererAll` 去掉注释（注释里常拿没实现的写法举例，当真引用去查会误报） */
   rendererCode: string;
@@ -143,15 +147,33 @@ export function createRepo(): Repo {
   const vueSource = vueFiles.map(({ path: rel }) => vueText.get(rel) ?? '').join('\n');
 
   const html = fs.readFileSync(path.join(rendererDir, 'index.html'), 'utf8');
-  const libDir = path.join(rendererDir, 'lib');
-  const libSource = fs.existsSync(libDir)
-    ? fs
-        .readdirSync(libDir)
-        .filter((name) => name.endsWith('.ts'))
-        .map((name) => fs.readFileSync(path.join(libDir, name), 'utf8'))
-        .join('\n')
-    : '';
-  const rendererJs = `${fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8')}\n${libSource}`;
+  // 渲染层的 `.ts` 也**递归扫**（同 vueFiles 的理由：目录结构是活的，别把目录名写死）。
+  // 顺序按路径排序，拼接结果稳定可比。
+  const tsFiles: { path: string; name: string }[] = [];
+  const walkTs = (rel: string): void => {
+    for (const entry of fs.readdirSync(path.join(rendererDir, rel), { withFileTypes: true })) {
+      const next = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walkTs(next);
+      else if (entry.name.endsWith('.ts')) tsFiles.push({ path: next, name: entry.name });
+    }
+  };
+  walkTs('');
+  tsFiles.sort((a, b) => a.path.localeCompare(b.path));
+  const rendererTs = tsFiles
+    .map(({ path: rel }) => fs.readFileSync(path.join(rendererDir, rel), 'utf8'))
+    .join('\n');
+  const tsPath = (name: string): string => {
+    const hits = tsFiles.filter((file) => file.name === name);
+    if (hits.length !== 1) {
+      throw new Error(
+        `渲染层里叫 ${name} 的模块有 ${hits.length} 个（应当唯一）：${
+          hits.map((h) => h.path).join(', ') || '（一个都没有）'
+        }`,
+      );
+    }
+    return path.join(rendererDir, hits[0].path);
+  };
+  const rendererJs = rendererTs;
   const markup = `${html}\n${vueSource}`;
   const rendererAll = `${rendererJs}\n${vueSource}`;
   // 只看代码，不看注释：注释里常拿 `getElementById('btn-xxx')` 这种示意写法举例，
@@ -239,12 +261,12 @@ export function createRepo(): Repo {
     settings,
     srcDir,
     rendererDir,
-    libDir,
     html,
     vueFiles,
     vuePath: findVue,
     vueSource,
-    libSource,
+    rendererTs,
+    tsPath,
     rendererJs,
     markup,
     rendererAll,

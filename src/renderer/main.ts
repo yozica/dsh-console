@@ -17,7 +17,7 @@ import './styles.css';
 import './app.js';
 
 import { installDevDiagnostics } from './dev-diagnostics.js';
-import { snapshot, startStore } from './lib/store.js';
+import { snapshot, startStore } from './state/store.js';
 import { mountAll } from './mount.js';
 
 // 先建立唯一的快照订阅，再挂载（组件一挂上就要读数据）

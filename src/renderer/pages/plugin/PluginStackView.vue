@@ -3,7 +3,7 @@
  * 插件页的**层栈视图**（t59 从 `PluginPane.vue` 拆出来）：左边是层、右边是选中那一层的详情。
  *
  * 领域的心智模型就是层叠（bundle 层 → 你的 patch 层 → 机器级 patch 层），顺序本身有语义 ——
- * 所以这一块只画"有哪些层、谁覆盖了谁、这一层做了什么"，判定全在 `lib/plugin-view.ts` 里
+ * 所以这一块只画"有哪些层、谁覆盖了谁、这一层做了什么"，判定全在 `pages/plugin/plugin-view.ts` 里
  * （这一层不自己认归属，也不自己数条目）。
  *
  * **它不持有状态**：选中哪一层、操作忙不忙、数据是哪一份，都由父级拿着 —— 父级那边还有
@@ -16,7 +16,7 @@ import {
   layerName as viewLayerName,
   ownLayerTag as viewOwnLayerTag,
   ownLayerWhy as viewOwnLayerWhy,
-} from '../../lib/plugin-view.js';
+} from './plugin-view.js';
 
 const props = defineProps<{
   /** 这一屏读的那份装配信息（基线视图里是内置层的结果，见父级的 `activeData`） */
@@ -57,7 +57,7 @@ function editBundle(action: 'suspend', name: string): void {
   emit('edit-bundle', action, name);
 }
 
-// —— 展示判据都在 `lib/plugin-view.ts` 里；这里只把 props 喂进去（AGENTS §7.36）
+// —— 展示判据都在 `pages/plugin/plugin-view.ts` 里；这里只把 props 喂进去（AGENTS §7.36）
 const layerName = (layer: PluginLayer): string => viewLayerName(layer, props.data.home || '');
 const ownLayerTag = (layer: PluginLayer): string =>
   viewOwnLayerTag(layer, props.data.problems || []);

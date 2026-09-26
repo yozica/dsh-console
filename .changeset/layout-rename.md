@@ -5,7 +5,7 @@
 渲染层的外壳目录改名：`shell/` → `layout/`（跟终端页的「本地 Shell」不再撞名）
 
 仓库里 "shell" 有两个意思：**窗口外壳**（目录名）与**本地 shell 进程**（终端页那一路 zsh / pwsh，
-在 `pages/terminal/`、逻辑在 `lib/xterm.ts`）。看目录树时容易混，所以按通用的叫法把外壳这一层
+在 `pages/terminal/`、逻辑在 `pages/terminal/xterm.ts`）。看目录树时容易混，所以按通用的叫法把外壳这一层
 改名成 `layout/`：
 
 | 旧                                   | 新                                    |

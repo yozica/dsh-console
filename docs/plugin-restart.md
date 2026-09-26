@@ -78,7 +78,7 @@ ready = phase === 'running' && Boolean(dsh.uiUrl);
 
 > 「不等了」是唯一会**取消**跳转的路径：它表达的是"别替我做主"，那就只解除等待，不再抢页面。
 
-**两个"必须先看见"的前置条件**（都是真机上踩出来的，落在 `lib/restart-nav.ts`）：
+**两个"必须先看见"的前置条件**（都是真机上踩出来的，落在 `state/restart-nav.ts`）：
 
 - **就绪**要先看见旧实例被停过（`leftRunning`，或带令牌地址确实换了）。少了它，立意图那一刻旧实例
   还是 `running` + 带着旧令牌，"就绪"当场成立 —— 页面瞬间切走、锁根本没出现（实测：点完 600ms
@@ -115,9 +115,9 @@ ready = phase === 'running' && Boolean(dsh.uiUrl);
 
 | 文件                                             | 做什么                                                                                       |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `src/renderer/lib/restart-nav.ts`（新）          | 意图 / 结果 / 到达提示的共享状态；`isRestartReady()` 纯判据；`restartThenOpenHarness()` 编排 |
+| `src/renderer/state/restart-nav.ts`（新）        | 意图 / 结果 / 到达提示的共享状态；`isRestartReady()` 纯判据；`restartThenOpenHarness()` 编排 |
 | `src/renderer/app.ts`                            | 显式开 `afterRestart` 回合 + 就绪 / 异常 / 超时的收尾 + 锁文案按回合分开                     |
-| `src/renderer/lib/dsh-actions.ts`                | `restartFlow` 返回结果（`ok` / `error` / `cancelled`），供编排判断"要不要谈生效"             |
+| `src/renderer/pages/dashboard/dsh-actions.ts`    | `restartFlow` 返回结果（`ok` / `error` / `cancelled`），供编排判断"要不要谈生效"             |
 | `src/renderer/pages/plugin/PluginPane.vue`       | 黄条改成四种状态（进行中 / 失败 / 未就绪 / 已生效），按钮走共享流程                          |
 | `src/renderer/pages/dashboard/DashboardPane.vue` | 「重启」走共享流程                                                                           |
 | `src/renderer/pages/env/EnvPane.vue`             | 「重新启动 dsh」走共享流程                                                                   |

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 环境自检的**详情视图**（t45 起：它不是左栏的一项，而是设置页「运行环境」卡的详情，
- * 由 `lib/env-layer.ts` 的 `openEnvDetail()` 打开，见 AGENTS 7.30）。
+ * 由 `state/env-layer.ts` 的 `openEnvDetail()` 打开，见 AGENTS 7.30）。
  *
  * 回答的是"打开 DSH 时这台机器到底行不行"：外部 node 在不在、版本够不够、npm / pnpm /
  * dsh 本体能不能用、应用自带的运行时是什么、本地 Shell 能不能起。八项都由主进程实测
@@ -22,10 +22,10 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
-import { envFocus } from '../../lib/env-anchor.js';
-import { detailSegments } from '../../lib/env-detail.js';
-import { closeEnvDetail } from '../../lib/env-layer.js';
-import { restartThenOpenHarness } from '../../lib/restart-flow.js';
+import { envFocus } from '../../state/env-anchor.js';
+import { detailSegments } from './env-detail.js';
+import { closeEnvDetail } from '../../state/env-layer.js';
+import { restartThenOpenHarness } from '../../state/restart-flow.js';
 import EnvUpdateConfirm from './EnvUpdateConfirm.vue';
 import {
   cancelEnvFix,
@@ -38,7 +38,7 @@ import {
   loadEnvReport,
   runEnvFix,
   wireEnvDoctor,
-} from '../../lib/env-doctor.js';
+} from '../../state/env-doctor.js';
 import {
   anyoneBusy,
   install,
@@ -48,17 +48,17 @@ import {
   skipStep,
   stopNodeInstall,
   wizard,
-} from '../../lib/env-wizard.js';
-import { installRunning, installSettled } from '../../lib/env-install-phase.js';
-import { formatAgo, formatBytes } from '../../lib/format.js';
+} from '../../state/env-wizard.js';
+import { installRunning, installSettled } from '../../shared/env-install-phase.js';
+import { formatAgo, formatBytes } from '../../utils/format.js';
 import {
   BUSY_HINT,
   CHANNEL_SHORT,
   NODE_DOWNLOAD_URL,
   versionWithChannel,
-} from '../../lib/gate-copy.js';
-import { platform } from '../../lib/platform.js';
-import { currentTab, dsh, phase, settings } from '../../lib/store.js';
+} from '../../shared/gate-copy.js';
+import { platform } from '../../utils/platform.js';
+import { currentTab, dsh, phase, settings } from '../../state/store.js';
 import type {
   EnvCheck,
   EnvCheckId,
@@ -214,7 +214,7 @@ function nodeUpdateRefused(check: EnvCheck): boolean {
  * 发生的按钮）。"目标版本"只有计划算得出来，所以报告一到就取一次更新计划；取不到（离线 /
  * 主进程给不出）就退回按钮 —— 不让这一行消失。
  *
- * 为什么等 `wizard.value` 到了才取：`lib/env-wizard.ts` 的 `loadNodePlan` 失败时会写
+ * 为什么等 `wizard.value` 到了才取：`state/env-wizard.ts` 的 `loadNodePlan` 失败时会写
  * `wizardError`，而那条错误显示在门禁的"检查中"那一屏上 —— 一次后台读数不该把它误报成
  * "上一轮检查没能完成"。
  */
@@ -621,7 +621,7 @@ watch(envFixOutput, () => {
 
 /**
  * 锚点：插件页 / 控制台页把人带过来时，滚到那一行；带 action 时连确认区一起展开。
- * 请求号是递增的（见 lib/env-anchor.ts）：连点两次各走一遍，不会"点了没反应"。
+ * 请求号是递增的（见 state/env-anchor.ts）：连点两次各走一遍，不会"点了没反应"。
  */
 watch(
   () => envFocus.value.seq,
@@ -729,7 +729,7 @@ onUnmounted(() => {
               <span class="env-state">{{ STATUS_TEXT[check.status] }}</span>
             </div>
             <!-- 说明里常有两条长路径（node 的入口 + dsh 的 bin.js）：按路径分隔符切开、片段之间
-                 插一个 <wbr>，折行才会落在分隔符上而不是路径中间（见 lib/env-detail.ts）。
+                 插一个 <wbr>，折行才会落在分隔符上而不是路径中间（见 pages/env/env-detail.ts）。
                  不用 v-html —— 这段文字里有用户机器上的真实路径，当标记解析就是一条注入面。
                  <wbr> 与插值之间不能留空格，所以它们写在同一行（片段本身不许再断：见 .env-seg）。 -->
             <p class="env-detail">

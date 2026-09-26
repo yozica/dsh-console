@@ -15,8 +15,8 @@ import { Terminal, type ITerminalOptions } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
-import { isAppModifier, isMac } from './platform.js';
-import type { ResolvedTheme } from '../../shared/ipc';
+import { isAppModifier, isMac } from '../../utils/platform.js';
+import type { ResolvedTheme } from '../../../shared/ipc';
 
 /** 一个终端实例 + 它的 fit addon（页面自己保管，卸载时 dispose） */
 export interface TerminalEntry {

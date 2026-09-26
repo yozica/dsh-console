@@ -13,14 +13,14 @@
  *   - 输出：操作结果用 `dsh:status-message` 事件交给底栏显示
  */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { phaseText } from '../../lib/phase-text.js';
-import { formatDurationMs, formatUptime } from '../../lib/format.js';
-import { forceStopFlow, openUiExternally, stopFlow } from '../../lib/dsh-actions.js';
-import { restartThenOpenHarness } from '../../lib/restart-flow.js';
-import { requestEnvFocus } from '../../lib/env-anchor.js';
-import { envReport } from '../../lib/env-doctor.js';
-import { openEnvDetail } from '../../lib/env-layer.js';
-import { dsh, snapshot, startStore } from '../../lib/store.js';
+import { phaseText } from '../../shared/phase-text.js';
+import { formatDurationMs, formatUptime } from '../../utils/format.js';
+import { forceStopFlow, openUiExternally, stopFlow } from './dsh-actions.js';
+import { restartThenOpenHarness } from '../../state/restart-flow.js';
+import { requestEnvFocus } from '../../state/env-anchor.js';
+import { envReport } from '../../state/env-doctor.js';
+import { openEnvDetail } from '../../state/env-layer.js';
+import { dsh, snapshot, startStore } from '../../state/store.js';
 import type { DshLogEntry } from '../../../shared/ipc.js';
 
 const api = window.dshConsole;

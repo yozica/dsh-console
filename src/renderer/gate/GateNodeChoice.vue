@@ -4,9 +4,14 @@
  *
  * 它**不持有选择**：方法 / 档位由父级拿着 —— 确认区（`GateNodeConfirm.vue`）读的是同一份状态，
  * 而且"两条路都没预选时不给开始"那条禁用判据也落在父级的操作行上。这里只把点击报回去，
- * 方法事实行与"要不要列两条路"由父级算好递下来（判据在 `lib/gate-copy.ts` 与父级的计划读取里）。
+ * 方法事实行与"要不要列两条路"由父级算好递下来（判据在 `shared/gate-copy.ts` 与父级的计划读取里）。
  */
-import { CHANNEL_OPTIONS, CHANNEL_TITLES, METHOD_OPTIONS, METHOD_RISK } from '../lib/gate-copy.js';
+import {
+  CHANNEL_OPTIONS,
+  CHANNEL_TITLES,
+  METHOD_OPTIONS,
+  METHOD_RISK,
+} from '../shared/gate-copy.js';
 import type { EnvNodeChannel, EnvNodeMethod, EnvWizardStepId } from '../../shared/ipc.js';
 
 defineProps<{

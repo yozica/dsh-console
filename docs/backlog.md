@@ -12,6 +12,11 @@ components/   通用组件（今天为空）  layout/      应用外壳：RailNa
 pages/        一处一目录：dashboard / terminal / ui / usage / archive / plugin / env / settings
 ```
 
+**`lib/` 拆成三层**（t69）：`utils/`（纯工具）/ `state/`（跨页共享状态）/ `shared/`（跨特性逻辑），
+只有一处用的跟回那一处（`gate/wizard-view.ts`、`pages/{dashboard/dsh-actions,env/env-detail,plugin/plugin-view,terminal/xterm}.ts`）。
+判据写在 AGENTS §7.37；顺带把自检改成递归扫 + 按文件名找（`repo.vuePath` / `repo.tsPath`），
+以后再搬目录不用改自检。**待定**：状态层是否换成 Pinia（见 §0 末尾的问题）。
+
 **外壳那一层叫 `layout/`**（t68）：原来叫 `shell/`，跟终端页的「本地 Shell」（zsh / pwsh 那一路）
 撞在一个词上，改成通用的叫法（纯改名，只动 import 与文档指针）。
 

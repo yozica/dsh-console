@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import * as envDoctor from '../../src/main/env-doctor';
-import * as wizardView from '../../src/renderer/lib/wizard-view';
+import * as wizardView from '../../src/renderer/gate/wizard-view.js';
 import type {
   EnvCheckId,
   EnvCheckStatus,
@@ -62,12 +62,8 @@ export function runEnvWizard(repo: Repo): void {
   // ---------------------------------------------------------- 17. 首启环境向导（门禁）
   //    冻结文档 §3.8 里归"契约与编排"的那些断言。判定是纯函数，所以全部是夹具 + 静态文本检查：
   //    不装 Node、不起任何进程、不碰网络。
-  const wizardSource = stripComments(
-    fs.readFileSync(path.join(rendererDir, 'lib', 'env-wizard.ts'), 'utf8'),
-  );
-  const bootLockSource = stripComments(
-    fs.readFileSync(path.join(rendererDir, 'lib', 'boot-lock.ts'), 'utf8'),
-  );
+  const wizardSource = stripComments(fs.readFileSync(repo.tsPath('env-wizard.ts'), 'utf8'));
+  const bootLockSource = stripComments(fs.readFileSync(repo.tsPath('boot-lock.ts'), 'utf8'));
   const preloadCode = stripComments(
     fs.readFileSync(path.join(srcDir, 'preload', 'preload.ts'), 'utf8'),
   );
@@ -78,7 +74,7 @@ export function runEnvWizard(repo: Repo): void {
   //    （`env:wizard`）。少了这一步，用户装完 pnpm 之后第二步仍然停在「待办」上，只能重开应用。
   check(
     '环境自检（VM-07）：复检报告一到，渲染层就重拉一次门禁结论（不必重开应用）',
-    // 盯的是共享状态 `envFix`（由 lib/env-doctor.ts 那一个订阅者写），而不是自己再订一次 IPC
+    // 盯的是共享状态 `envFix`（由 state/env-doctor.ts 那一个订阅者写），而不是自己再订一次 IPC
     /watch\(envFix, \(state\) => \{[\s\S]{0,200}?if \(!state\.report\) return;[\s\S]{0,120}?void loadWizard\(\);/.test(
       wizardSource,
     ) &&
@@ -503,7 +499,7 @@ export function runEnvWizard(repo: Repo): void {
             preloadCode.includes(`subscribe('${channel}'`) &&
             envMainCode.includes(`sendToRenderer('${channel}'`),
         ) &&
-        // 渲染层不许绕开 preload：lib/** 与 app.ts 里没有 ipcRenderer
+        // 渲染层不许绕开 preload：utils/ state/ shared/ 与 app.ts 里都没有 ipcRenderer
         !/ipcRenderer/.test(rendererCode)
       );
     })(),
@@ -844,7 +840,7 @@ export function runEnvWizard(repo: Repo): void {
         stripComments(fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8')),
       );
       const wizardCopy = copyLiteralsOf(
-        stripComments(fs.readFileSync(path.join(rendererDir, 'lib', 'env-wizard.ts'), 'utf8')),
+        stripComments(fs.readFileSync(repo.tsPath('env-wizard.ts'), 'utf8')),
       );
       // 安装引擎那边只算"界面会显示的字段"里的值：`NVM_HOME` / `SHASUMS256.txt` 这类
       // 环境变量键名与 URL 不上界面（它们出现在别的语句里，不该被这条断言误伤）
@@ -1242,7 +1238,7 @@ export function runEnvWizard(repo: Repo): void {
   // ---------------------------------------------------------- 18a. 向导的视图相位（t43）
   //    冻结 §0.3 的 R-28 ~ R-31：左轨走过的节点可点（回看）、正文画"正在看哪一步"、
   //    判定前进不推人、用户显式重开的那一轮判成 open 也显示放行页。
-  //    纯规则在 `lib/wizard-view.ts`（直接测），接线与"回看卡里没有动作"在 EnvGate.vue / env-wizard.ts。
+  //    纯规则在 `gate/wizard-view.ts`（直接测），接线与"回看卡里没有动作"在 EnvGate.vue / env-wizard.ts。
   const stepOf = (id: EnvWizardStepId, status: EnvStepStatus): EnvWizardStep => ({
     id,
     status,

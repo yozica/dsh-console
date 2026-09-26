@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { DEFAULTS } from '../../src/main/settings';
-import * as restartNav from '../../src/renderer/lib/restart-nav';
+import * as restartNav from '../../src/renderer/state/restart-nav.js';
 
 import { check } from '../harness';
 import type { Repo } from '../repo';
@@ -655,10 +655,7 @@ export function runStyles(repo: Repo): void {
       ).size === 4,
   );
   // t46：意图必须在调 restart 之前立 —— `start()` 一 spawn 就返回，晚立就错过那 5 秒上锁窗口
-  const restartFlowSource = fs.readFileSync(
-    path.join(rendererDir, 'lib', 'restart-flow.ts'),
-    'utf8',
-  );
+  const restartFlowSource = fs.readFileSync(repo.tsPath('restart-flow.ts'), 'utf8');
   const restartFlowBody =
     restartFlowSource
       .replace(/\/\/[^\n]*/g, '')
@@ -689,7 +686,7 @@ export function runStyles(repo: Repo): void {
   check(
     '重启后进 Harness：四个入口都走同一条流程（插件页 / 控制台 / 环境自检 / 重启为受管实例）',
     entryMissing.length === 0 &&
-      // 页面里不许再有人自己调 restartFlow —— 那条路已经收进编排层 lib/restart-flow.ts
+      // 页面里不许再有人自己调 restartFlow —— 那条路已经收进编排层 state/restart-flow.ts
       // （编排层自己当然要用它，所以这里只查四个页面，不查 rendererCode 合集）
       !entryFiles.some((name) =>
         /restartFlow\(/.test(fs.readFileSync(repo.vuePath(`${name}.vue`), 'utf8')),
@@ -700,14 +697,14 @@ export function runStyles(repo: Repo): void {
   // t46：这两份源码要用在下面几条钉子里（黄条四态、到达提示）。`uiPaneSource` 后面第 12 节
   // 还要再用一次，所以在这儿声明一次就够（放在它们之前，别在下面重复声明）。
   const mergedPluginSource = fs.readFileSync(repo.vuePath('PluginPane.vue'), 'utf8');
-  const restartNavCode = fs.readFileSync(path.join(rendererDir, 'lib', 'restart-nav.ts'), 'utf8');
+  const restartNavCode = fs.readFileSync(repo.tsPath('restart-nav.ts'), 'utf8');
   const topBarSource = fs.readFileSync(repo.vuePath('TopBar.vue'), 'utf8');
   const stylesCode = fs.readFileSync(path.join(rendererDir, 'styles.css'), 'utf8');
   // t46：黄条的四态 + Harness 页那条到达提示（可关闭）
   check(
     '重启后进 Harness：新一轮开始时收掉上一条到达提示（它说的是"上一轮已生效"）',
     /harnessArrivalNotice\.value = null;/.test(
-      fs.readFileSync(path.join(rendererDir, 'lib', 'restart-nav.ts'), 'utf8'),
+      fs.readFileSync(repo.tsPath('restart-nav.ts'), 'utf8'),
     ) &&
       restartNav.beginRestartNav('plugin') === undefined &&
       restartNav.restartNav.value.outcome === 'pending' &&
@@ -732,7 +729,7 @@ export function runStyles(repo: Repo): void {
       /id="topbar-note"/.test(topBarSource) &&
       /harnessArrivalNotice\.value \|\| contextNote\.value/.test(topBarSource) &&
       /:class="\{ lit: harnessArrivalNotice \}"/.test(topBarSource) &&
-      /import \{ harnessArrivalNotice \} from '\.\.\/lib\/restart-nav\.js';/.test(topBarSource) &&
+      /import \{ harnessArrivalNotice \} from '[^']*restart-nav\.js';/.test(topBarSource) &&
       !/harnessArrivalNotice/.test(uiPaneSource) &&
       !/id="ui-arrival"/.test(uiPaneSource) &&
       !/class="toast"/.test(uiPaneSource) &&

@@ -20,7 +20,7 @@ import * as envDoctor from '../../src/main/env-doctor';
 import * as pluginManager from '../../src/main/plugin-manager';
 import * as processUtils from '../../src/main/process-utils';
 import { DEFAULTS } from '../../src/main/settings';
-import * as envDetail from '../../src/renderer/lib/env-detail';
+import * as envDetail from '../../src/renderer/pages/env/env-detail.js';
 
 import { createEnvFixtures } from '../env-fixtures';
 import { check, skip, IS_WINDOWS } from '../harness';

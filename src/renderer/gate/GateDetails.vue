@@ -7,7 +7,7 @@
  *
  * **它不持有状态**：展开的是哪一步（`detailsFor`）归父级 —— 同一份状态在"收起详情"与切步骤时都要用。
  */
-import { CHECK_TITLES } from '../lib/gate-copy.js';
+import { CHECK_TITLES } from '../shared/gate-copy.js';
 import type { EnvCheck, EnvWizardStepId } from '../../shared/ipc.js';
 
 defineProps<{

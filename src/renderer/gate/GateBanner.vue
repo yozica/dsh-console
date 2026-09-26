@@ -20,7 +20,7 @@ import {
   reopenGate,
   wizard,
   wizardError,
-} from '../lib/env-wizard.js';
+} from '../state/env-wizard.js';
 
 /** 环境明确缺东西（有证据） */
 const blocked = computed(() => wizard.value !== null && wizard.value.gate === 'blocked');

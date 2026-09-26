@@ -11,7 +11,7 @@
  * （一次回答跨多个 step 时会拆成多条 assistant/message，气泡会碎成一墙卡片）。
  */
 import { computed, onMounted, ref } from 'vue';
-import { renderMarkdown } from '../../lib/markdown.js';
+import { renderMarkdown } from '../../utils/markdown.js';
 import type { ArchivedSessionSummary, ConversationReadResult } from '../../../shared/ipc.js';
 
 const api = window.dshConsole;
@@ -593,7 +593,7 @@ onMounted(() => {
   font-size: var(--t-xs);
 }
 
-/* 正文里的 Markdown 渲染结果（元素由 lib/markdown.js 生成，只出安全标签） */
+/* 正文里的 Markdown 渲染结果（元素由 `utils/markdown.ts` 生成，只出安全标签） */
 .archive-turn-body {
   min-width: 0;
   color: var(--ink);

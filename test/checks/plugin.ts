@@ -316,11 +316,11 @@ export function runPlugin(repo: Repo): void {
 
   // ── t45：左栏 9 → 7（终端合并、环境自检挪进设置）。四条钉子盯住"合并之后不许两头都在"。
   const railSource = fs.readFileSync(repo.vuePath('RailNav.vue'), 'utf8');
-  const railStoreSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
+  const railStoreSource = fs.readFileSync(repo.tsPath('store.ts'), 'utf8');
   const appSource = fs.readFileSync(path.join(rendererDir, 'app.ts'), 'utf8');
   const mergedTermSource = fs.readFileSync(repo.vuePath('TerminalPane.vue'), 'utf8');
   const railSettingsSource = fs.readFileSync(repo.vuePath('SettingsPane.vue'), 'utf8');
-  const envLayerSource = fs.readFileSync(path.join(rendererDir, 'lib', 'env-layer.ts'), 'utf8');
+  const envLayerSource = fs.readFileSync(repo.tsPath('env-layer.ts'), 'utf8');
   const htmlCode = html.replace(/<!--[\s\S]*?-->/g, '');
   const tabIdUnion = /export type TabId =([\s\S]*?);/.exec(railStoreSource)?.[1] ?? '';
   const tabIds = [...tabIdUnion.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
@@ -335,7 +335,7 @@ export function runPlugin(repo: Repo): void {
       // 快捷键顺序里也不许再出现这两个 id（不再是"至少 8 项"，这一轮就是 7 项）
       !/TAB_ORDER[\s\S]{0,220}?'(shell|env)'/.test(appSource) &&
       // 快捷键正则也不能再放行 8 / 9
-      /\^\[1-7\]\$/.test(fs.readFileSync(path.join(rendererDir, 'lib', 'xterm.ts'), 'utf8')),
+      /\^\[1-7\]\$/.test(fs.readFileSync(repo.tsPath('xterm.ts'), 'utf8')),
     `TabId = ${tabIds.join(', ')}`,
   );
   check(
@@ -972,7 +972,7 @@ export function runPlugin(repo: Repo): void {
   // 在层栈详情里点「临时停用」的人，dsh 明明好好的，于是界面上再也找不到"放回去"。
   check(
     '救援：「放回层里」不依赖救援条 —— 巡检那行里也有，黄条上也有（停用之后回得去）',
-    // t53 起"哪条能放回 / 那一档叫什么"这些判据住在 lib/plugin-view.ts，所以要读整份渲染层源码
+    // t53 起"哪条能放回 / 那一档叫什么"这些判据住在 pages/plugin/plugin-view.ts，所以要读整份渲染层源码
     /if \(kind === 'suspended-bundle'\) return '掉出了层列表'/.test(rendererAll) &&
       /function canRestore\(item: PluginProblem\): boolean/.test(rendererAll) &&
       /restoreProblem\(item\)/.test(vueSource) &&

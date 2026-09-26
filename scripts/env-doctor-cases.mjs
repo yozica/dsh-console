@@ -577,7 +577,7 @@ check(
 
 // ---------------------------------------------------------------- Q. 渲染层只递 action
 const rendererEnvLib = fs.readFileSync(
-  path.join(repoRoot, 'src', 'renderer', 'lib', 'env-doctor.ts'),
+  path.join(repoRoot, 'src', 'renderer', 'state', 'env-doctor.ts'),
   'utf8',
 );
 const rendererFiles = [];
@@ -597,8 +597,8 @@ const callSites = rendererFiles.filter((file) =>
 check(
   'Q 渲染层只递 action：api.envFix 全仓库只有一处调用点，且参数是 { action }',
   /api\.envFix\(\{\s*action\s*\}\)/.test(rendererEnvLib) && callSites.length === 0,
-  `lib/env-doctor.ts 里传 { action }=${/api\.envFix\(\{\s*action\s*\}\)/.test(rendererEnvLib)}；其它渲染层文件里的调用点 ${callSites.length} 个`,
-  '唯一调用点 = lib/env-doctor.ts 的 runEnvFix',
+  `state/env-doctor.ts 里传 { action }=${/api\.envFix\(\{\s*action\s*\}\)/.test(rendererEnvLib)}；其它渲染层文件里的调用点 ${callSites.length} 个`,
+  '唯一调用点 = state/env-doctor.ts 的 runEnvFix',
 );
 
 // ---------------------------------------------------------------- R. 可执行性：裸名 shim 不算可执行目标

@@ -4,7 +4,7 @@
  *     摘要 / 发布说明签名 / 失败分类（A~F 段），以及"安装结果只能由复检事实给出"（J 段）；
  *   - 门禁判定（`src/main/env-doctor.ts` 的 `judgeWizard`）：三步状态 / 门禁三态 / currentStepId /
  *     跳过规则 / 快速探测 / 畸形输入（I 段）；
- *   - 门禁放行与**逃生口**（`src/renderer/lib/env-wizard.ts` 的**真状态机**）：K 段把渲染层那份
+ *   - 门禁放行与**逃生口**（`src/renderer/state/env-wizard.ts` 的**真状态机**）：K 段把渲染层那份
  *     相位机编成 CJS、只把 `window.dshConsole` 换成桩，所以在沙箱里也能证明
  *     「安装引擎坏了 / 网络断了也放得进去」这条硬要求。
  *   - 另有 **O 段**（t4 独立验证加的）：`EnvNodeOwner` 的四类输入（nvm v2 shim / v1 link / 系统直装 /
@@ -1405,14 +1405,14 @@ const PERMISSION_REASON = {
  * **为什么必须跑起来**：逃生口是"安装引擎坏了 / 网络断了 / 探测卡住了，用户还能不能进主界面"
  * 这条硬要求。静态检查只能证明"代码里没写别的分支"，证明不了"真到那一步它放行"。
  *
- * 做法：把 `src/renderer/lib/env-wizard.ts` 单独编一份 CJS（`.verify/env-wizard-renderer-build`），
+ * 做法：把 `src/renderer/state/env-wizard.ts` 单独编一份 CJS（`.verify/env-wizard-renderer-build`），
  * 在 Node 里 require —— `window.dshConsole` 用桩（渲染层与主进程的边界就是这个对象），
  * **状态机本身是产品源码**：相位、三条 disjunct 的可见性判定、逃生口、单向性都是它自己算的。
  * 每个场景重新 require（清 require.cache），因为那些相位位是模块级的。
  */
 const RENDERER_BUILD = path.join(repoRoot, '.verify', 'env-wizard-renderer-build');
 function resolveRendererBuild() {
-  const built = path.join(RENDERER_BUILD, 'renderer', 'lib', 'env-wizard.js');
+  const built = path.join(RENDERER_BUILD, 'renderer', 'state', 'env-wizard.js');
   if (fs.existsSync(built) && fs.statSync(built).mtimeMs >= newestSourceMs()) return RENDERER_BUILD;
   console.log('（渲染层状态机没有可用的编译产物 → 现场 tsc 到 .verify/env-wizard-renderer-build）');
   const result = spawnSync(
@@ -1432,7 +1432,7 @@ function resolveRendererBuild() {
       '--rootDir',
       'src',
       'src/renderer/env.d.ts',
-      'src/renderer/lib/env-wizard.ts',
+      'src/renderer/state/env-wizard.ts',
     ],
     { cwd: repoRoot, stdio: 'inherit' },
   );
@@ -1450,9 +1450,9 @@ function loadWizardModule(stub) {
     if (key.replace(/\\/g, '/').includes('.verify/env-wizard-renderer-build'))
       delete require.cache[key];
   }
-  return require(path.join(rendererBuild, 'renderer', 'lib', 'env-wizard.js'));
+  return require(path.join(rendererBuild, 'renderer', 'state', 'env-wizard.js'));
 }
-const loadBootLock = () => require(path.join(rendererBuild, 'renderer', 'lib', 'boot-lock.js'));
+const loadBootLock = () => require(path.join(rendererBuild, 'renderer', 'state', 'boot-lock.js'));
 const gateState = (gate) => ({
   report: {
     checkedAt: 1758000000002,

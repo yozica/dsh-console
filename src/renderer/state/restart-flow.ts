@@ -10,11 +10,11 @@
  * 那 5 秒上锁窗口早就过去了 —— 锁永远不会出现，用户又回到"点了没反应"。
  *
  * 为什么单独一个文件：这里会 `alert()`，也 import `dsh-actions`（那里有 `alert` / `confirm`），
- * 而 `lib/restart-nav.ts` 要能被自检直接 import（自检的编译图没有 DOM 类型）。见那边的文件头。
+ * 而 `state/restart-nav.ts` 要能被自检直接 import（自检的编译图没有 DOM 类型）。见那边的文件头。
  */
 
 import type { DshConsoleApi, DshSnapshot } from '../../shared/ipc';
-import { restartFlow } from './dsh-actions.js';
+import { restartFlow } from '../pages/dashboard/dsh-actions.js';
 import {
   beginRestartNav,
   clearRestartNav,

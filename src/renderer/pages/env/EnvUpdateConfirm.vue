@@ -13,7 +13,7 @@
  */
 import { computed } from 'vue';
 
-import { CHANNEL_SHORT, versionWithChannel } from '../../lib/gate-copy.js';
+import { CHANNEL_SHORT, versionWithChannel } from '../../shared/gate-copy.js';
 import type {
   EnvCheck,
   EnvFixPlan,

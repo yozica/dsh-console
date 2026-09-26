@@ -77,7 +77,7 @@
   --rail: #0e1117;
 
   /* 终端面板的底色与前景色：真正的值由 JS 按 xterm 主题写在容器上
-     （见 lib/xterm.js 的 applyTerminalSurface），这里是首帧兜底，
+     （见 `pages/terminal/xterm.ts` 的 applyTerminalSurface），这里是首帧兜底，
      免得 JS 还没跑时闪一下错误的颜色。数值与 TERM_THEMES 对应。 */
   --term-bg: #0b0e13;
   --term-fg: #e6e9ef;

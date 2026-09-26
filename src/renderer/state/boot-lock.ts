@@ -6,7 +6,7 @@
  * 所以门禁层的显示条件里必须能读到"锁在不在显示中"。
  *
  * 谁写：`src/renderer/app.ts` 的 `setBootLock()`（它才是启动锁状态机的持有者）；
- * 谁读：`lib/env-wizard.ts` 的 `gateVisible`。两个组件各自猜"锁显示没有"一定会漂。
+ * 谁读：`state/env-wizard.ts` 的 `gateVisible`。两个组件各自猜"锁显示没有"一定会漂。
  */
 
 import { ref, type Ref } from 'vue';

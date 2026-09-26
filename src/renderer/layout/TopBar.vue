@@ -8,14 +8,14 @@
  * 门禁层显示期间（冻结 §1 R-03）：标题换成「运行环境准备」，右侧与页面相关的控件
  * **收起**（不是禁用 —— 禁用会留下一个说不清用途的空槽）。四条约束：顶栏高度、
  * 标题左边缘、可拖动区域不变；收起不留空槽、不加过渡动画；门禁收起后同一帧恢复；
- * 取值只有一个来源 —— `lib/env-wizard.ts` 的 `gateVisible`（自检盯着这一条）。
+ * 取值只有一个来源 —— `state/env-wizard.ts` 的 `gateVisible`（自检盯着这一条）。
  */
 import { computed } from 'vue';
 
-import { gateVisible } from '../lib/env-wizard.js';
-import { envDetailOpen } from '../lib/env-layer.js';
-import { harnessArrivalNotice } from '../lib/restart-nav.js';
-import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../lib/store.js';
+import { gateVisible } from '../state/env-wizard.js';
+import { envDetailOpen } from '../state/env-layer.js';
+import { harnessArrivalNotice } from '../state/restart-nav.js';
+import { currentTab, dsh, immersive, owned, phase, phaseInfo } from '../state/store.js';
 
 const PAGE_TITLES = {
   dashboard: '控制台',
