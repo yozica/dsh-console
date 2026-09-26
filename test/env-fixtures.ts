@@ -67,8 +67,19 @@ export function createEnvFixtures(repo: Repo): EnvFixtures {
     .join('\n');
   const envCode = stripComments(envSource);
   const envJudgeBody = stripComments(functionBodyOf(envSource, 'judgeEnvironment'));
+  // t57 起 main.ts 的 registerIpc() 拆成了 main-ipc*.ts —— "读源码文本"的断言要看整份。
   const envMainCode = stripComments(
-    fs.readFileSync(path.join(repo.root, 'src', 'main', 'main.ts'), 'utf8'),
+    [
+      'main',
+      'main-ipc',
+      'main-ipc-shared',
+      'main-ipc-app',
+      'main-ipc-archive',
+      'main-ipc-plugin',
+      'main-ipc-env',
+    ]
+      .map((stem) => fs.readFileSync(path.join(repo.srcDir, 'main', `${stem}.ts`), 'utf8'))
+      .join('\n'),
   );
   const envPaneCode = stripComments(
     fs.readFileSync(path.join(repo.rendererDir, 'panes', 'EnvPane.vue'), 'utf8'),

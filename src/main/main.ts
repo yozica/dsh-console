@@ -13,17 +13,14 @@ import {
   BrowserWindow,
   Menu,
   Tray,
-  ipcMain,
-  shell,
   dialog,
   nativeTheme,
   type BrowserWindowConstructorOptions,
-  type IpcMainInvokeEvent,
   type MessageBoxOptions,
   type WebContents,
 } from 'electron';
 
-import { Settings, type SettingsPatch, type SettingsValues } from './settings';
+import { Settings } from './settings';
 import { PtySessions } from './pty-sessions';
 import { DshManager } from './dsh-manager';
 import { SessionArchiveManager } from './session-archive';
@@ -34,9 +31,6 @@ import {
   collectBootProbe,
   judgeEnvironment,
   judgeWizard,
-  WIZARD_STEP_IDS,
-  WIZARD_STEP_LABEL,
-  WIZARD_STEP_SKIPPABLE,
 } from './env-doctor';
 import { NodeInstaller } from './node-installer';
 import { createUpdater, type Updater } from './updater';
@@ -51,42 +45,19 @@ import { applyDockIcon, installApplicationMenu, makeIcon } from './main-menu';
 import { installCrashGuards } from './main-crash';
 import { createExternalOpener } from './main-url';
 import { createThemeTools } from './main-theme';
+import { registerIpc, messageOf, bundledVersions, wizardSkips, type CloseAsk } from './main-ipc';
 import * as processUtils from './process-utils';
 import type {
-  AppSnapshot,
-  ArchiveListResult,
-  ArchiveReadResult,
-  ArchiveRemoveResult,
-  ArchiveUnarchiveResult,
   CloseAction,
   CloseAnswer,
-  CloseAnswerAction,
   CloseRequest,
-  ConfirmRequest,
-  CreateShellResult,
-  DshActionResult,
   DshExitEvent,
   DshLogEntry,
   DshOutputEvent,
-  EnvFixAction,
   EnvFixState,
-  EnvInfo,
   EnvInstallState,
-  EnvNodePlan,
-  EnvNodeRequest,
-  EnvWizardState,
-  EnvWizardStepId,
-  PluginBundleEditResult,
-  PluginInspectResult,
-  PluginLayerEditAction,
-  PluginLayerEditResult,
-  PluginRescueResult,
-  PluginOpAction,
-  PluginOpResult,
-  RenameSessionResult,
   SessionExitEvent,
   SessionOutputEvent,
-  ThemeInfo,
   UpdateState,
 } from '../shared/ipc';
 
@@ -150,14 +121,6 @@ let tray: Tray | null = null;
 let isQuitting = false;
 /** 关闭询问框是不是已经在显示：连点 X 不该叠出第二个对话框 */
 let closeDialogOpen = false;
-/**
- * 一次"问渲染层要怎么关闭"的进行中状态。
- * `ack` = 卡片已经显示了（撤掉握手时限）；`answer` = 用户选完了（传 null 表示问不到）。
- */
-interface CloseAsk {
-  ack: () => void;
-  answer: (answer: CloseAnswer | null) => void;
-}
 /** 正在等渲染层的那次关闭询问；null = 没人在等 */
 let pendingCloseAsk: CloseAsk | null = null;
 /**
@@ -624,631 +587,6 @@ function wireCloseBehavior(win: BrowserWindow): void {
   });
 }
 
-/**
- * 应用自带的运行时版本（快照的 `env.versions`，也是自检里「应用自带运行时」那一项的事实来源）。
- * 刻意只有这一处：两处各读一遍 `process.versions` 迟早会漂移，而这一项的价值就是"记录事实"。
- */
-function bundledVersions(): { electron: string; node: string; chrome: string } {
-  return {
-    electron: String(process.versions.electron ?? ''),
-    node: String(process.versions.node ?? ''),
-    chrome: String(process.versions.chrome ?? ''),
-  };
-}
-
-// ---------------------------------------------------------------- 首启环境向导（门禁）的编排件
-
-/**
- * 全局忙位：两个会动系统的入口共用**一把**锁（冻结 §4.4 / R-06）。
- * 既有的一键修复（改全局 npm 包）与安装通道（装 / 更新 Node）同时只能有一个在跑 ——
- * 两个动作一起改一台机器，结果不可预期。`detached`（我们不等了、但安装可能还在后台跑）
- * 仍然算忙：那是 `nodeInstaller.busy()` 自己的语义（R-06）。
- */
-function anyoneBusy(): boolean {
-  return envFixRunner.busy || nodeInstaller.busy();
-}
-
-/** 忙的时候那句统一的回话（与交互 §2.9 里按钮 `title` 的那句**同一句**） */
-const BUSY_MESSAGE = '正在执行上一步的操作，完成后按钮会自动恢复';
-
-/**
- * 安装 / 更新的请求解析：**只认这三个字段**（冻结 §3.2.1 的形状 `{ mode, method?, channel? }`）。
- *
- * 渲染层只递选择，地址、版本、sha256 全部由主进程现场重算（与 `env:fix` 只收 action 同一条原则）——
- * 线缆上多出来的字段一概不看，写在这里就不会有人"顺手"采信渲染层递回来的 URL。
- *
- * `method` / `channel` **省略是合法的**：省略 = 跟随归属 / 跟随档位（VM-14 与 VM-15 的根治点）。
- * 只有显式给值才是"用户点名的那条路 / 那次换档"。
- */
-function parseNodeRequest(request: unknown): EnvNodeRequest | null {
-  const { method, mode, channel } = (request ?? {}) as {
-    method?: unknown;
-    mode?: unknown;
-    channel?: unknown;
-  };
-  if (mode !== 'install' && mode !== 'update') return null;
-  if (method !== undefined && method !== 'direct' && method !== 'nvm') return null;
-  if (channel !== undefined && channel !== 'lts' && channel !== 'current') return null;
-  const parsed: EnvNodeRequest = { mode };
-  if (method !== undefined) parsed.method = method;
-  if (channel !== undefined) parsed.channel = channel;
-  return parsed;
-}
-
-/** 被拒的回话：业务失败是状态里的 `phase: 'error'` + 一句中文，不抛（照阶段一 `env:fix`） */
-function refusedInstallState(message: string): EnvInstallState {
-  return { ...nodeInstaller.state(), phase: 'error', message };
-}
-
-/**
- * 读设置里的「已跳过的步骤」。
- *
- * 设置文件是**用户手改得动**的：`"envSkips": null`（或写成字符串 / 数字）真的会出现，
- * 而 TS 的类型并不成立在运行期。这里在过线缆之前先把形状收回来 —— 判定函数自己也守着一层
- *（`judgeWizard` 对任何输入都不抛），两层都留着：一层不让坏形状往外走，一层保证结论一定有。
- */
-function wizardSkips(): EnvWizardStepId[] {
-  const value: unknown = settings.get('envSkips');
-  return Array.isArray(value) ? (value as EnvWizardStepId[]) : [];
-}
-
-function registerIpc(): void {
-  ipcMain.handle('app:snapshot', (): AppSnapshot => {
-    if (!rendererConnected) {
-      rendererConnected = true;
-      console.log('[main] 渲染层已连接');
-    }
-    const env: EnvInfo = {
-      platform: process.platform,
-      /** 是否打包运行：渲染层据此决定装不装开发期诊断快捷键 */
-      packaged: app.isPackaged,
-      /** 应用自身版本（设置页显示用） */
-      app: app.getVersion(),
-      /**
-       * 本次是不是"覆盖升级后第一次启动"。
-       * NSIS 在升级时会用 `--updated` 启动应用（见 electron-builder 的 NSIS 模板），
-       * 渲染层据此在状态栏说一句"已更新到 x.y.z"。
-       */
-      updated: process.argv.includes('--updated'),
-      /**
-       * 系统窗口是否处于全屏（macOS 绿灯 / Windows F11）。
-       * 渲染层据此决定要不要给红绿灯留位置 —— 全屏时它会自动隐藏。
-       */
-      nativeFullscreen: Boolean(
-        mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen(),
-      ),
-      versions: bundledVersions(),
-    };
-    return {
-      dsh: dshManager.snapshot(),
-      settings: settings.all(),
-      sessions: ptySessions.list(),
-      launch: dshManager.describeLaunch(),
-      env,
-      update: updater.snapshot(),
-      userData: app.getPath('userData'),
-      theme: theme.themeInfo(),
-    };
-  });
-
-  ipcMain.handle('theme:set', (_event: IpcMainInvokeEvent, mode: unknown): ThemeInfo => {
-    const next = theme.applyThemeSource(mode);
-    settings.patch({ themeMode: next });
-    dshManager.log(
-      'info',
-      `界面主题：${next}${next === 'system' ? `（当前为${nativeTheme.shouldUseDarkColors ? '深色' : '亮色'}）` : ''}`,
-    );
-    return theme.broadcastTheme();
-  });
-
-  ipcMain.handle(
-    'settings:patch',
-    (_event: IpcMainInvokeEvent, patch: SettingsPatch): SettingsValues => {
-      const next = settings.patch(patch);
-      if (patch && 'themeMode' in patch) theme.applyThemeSource(next.themeMode);
-      // 设置页里也能改主题，保持与工具栏开关一致
-      dshManager.syncSettings();
-      // 自动检查更新是开关式的：改完要立刻生效（开 → 排定时器，关 → 停）
-      updater.syncSettings();
-      dshManager.log('info', '设置已保存');
-      theme.broadcastTheme();
-      // 渲染层那份快照是共享状态的唯一真源：主进程写完必须推一次，否则"另一个组件读到旧值"。
-      // 实例：环境自检页改「Node 下载来源」，首启门禁的确认区读的是同一份快照 ——
-      // 不推的话那次保存只有发起方自己知道，门禁区会拿旧源拼计划说明。
-      sendToRenderer('settings:changed', next);
-      // 自检报告缓存要根据这几项失效：它们决定"怎么调 dsh / 在哪跑 / 用哪个 Shell"。
-      // 这里**不主动重跑**（用户此刻在设置页，切到自检页时自然会拿到新结论）。
-      if (patch && ('dshCommand' in patch || 'cwd' in patch || 'shell' in patch)) {
-        envDoctor.invalidate();
-      }
-      return next;
-    },
-  );
-
-  ipcMain.handle('dsh:start', async (): Promise<DshActionResult> => {
-    try {
-      return { ok: true, state: await dshManager.start({ allowAdopt: true }) };
-    } catch (error) {
-      return { ok: false, error: messageOf(error), state: dshManager.snapshot() };
-    }
-  });
-
-  ipcMain.handle(
-    'dsh:stop',
-    async (_event: IpcMainInvokeEvent, options?: { force?: boolean; killExternal?: boolean }) => {
-      try {
-        return {
-          ok: true,
-          state: await dshManager.stop({
-            force: Boolean(options?.force),
-            killExternal: Boolean(options?.killExternal),
-          }),
-        };
-      } catch (error) {
-        return { ok: false, error: messageOf(error), state: dshManager.snapshot() };
-      }
-    },
-  );
-
-  ipcMain.handle('dsh:restart', async (): Promise<DshActionResult> => {
-    try {
-      return { ok: true, state: await dshManager.restart() };
-    } catch (error) {
-      return { ok: false, error: messageOf(error), state: dshManager.snapshot() };
-    }
-  });
-
-  ipcMain.handle('dsh:input', (_event: IpcMainInvokeEvent, data: unknown): boolean => {
-    dshManager.write(String(data ?? ''));
-    return true;
-  });
-
-  ipcMain.handle(
-    'dsh:resize',
-    (_event: IpcMainInvokeEvent, size?: { cols?: number; rows?: number }): boolean => {
-      dshManager.resize(Number(size?.cols), Number(size?.rows));
-      return true;
-    },
-  );
-
-  ipcMain.handle('dsh:replay', (): string => dshManager.replay());
-
-  ipcMain.handle(
-    'shell:create',
-    (_event: IpcMainInvokeEvent, size?: { cols?: number; rows?: number }): CreateShellResult => {
-      const id = `shell-${++shellCounter}`;
-      const target = processUtils.resolveShell(settings.all());
-      const cwd = String(settings.get('cwd') || '') || processUtils.homeDir();
-      // 标题由主进程持有（渲染层只显示），可以重命名；它只活在本次运行里 ——
-      // 本地 Shell 不做任何持久化，下次启动就是全新的一页。
-      const label = `Shell ${shellCounter}`;
-      const cols = Number(size?.cols) || 120;
-      const rows = Number(size?.rows) || 30;
-      try {
-        ptySessions.create({
-          id,
-          file: target.file,
-          args: target.args,
-          cwd,
-          cols,
-          rows,
-          // 行列也带给渲染层：界面重载后重新接上时按同样尺寸建立，
-          // 第一次 fit 就是空操作，不会白触发一次 PTY resize
-          meta: { kind: 'shell', label, command: target.display, cwd, cols, rows },
-        });
-        extraSessions.add(id);
-        return { ok: true, id, label, command: target.display };
-      } catch (error) {
-        return { ok: false, error: messageOf(error) };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'session:input',
-    (_event: IpcMainInvokeEvent, payload?: { id?: string; data?: string }): boolean => {
-      ptySessions.write(String(payload?.id), String(payload?.data ?? ''));
-      return true;
-    },
-  );
-
-  ipcMain.handle(
-    'session:resize',
-    (
-      _event: IpcMainInvokeEvent,
-      payload?: { id?: string; cols?: number; rows?: number },
-    ): boolean => {
-      ptySessions.resize(String(payload?.id), Number(payload?.cols), Number(payload?.rows));
-      return true;
-    },
-  );
-
-  ipcMain.handle('session:kill', (_event: IpcMainInvokeEvent, id: unknown): boolean => {
-    const killed = ptySessions.kill(String(id), true);
-    extraSessions.delete(String(id));
-    return killed;
-  });
-
-  /** 重命名本地 Shell 的标题：只活在本次运行里（终端标题由主进程持有，渲染层只显示） */
-  ipcMain.handle(
-    'session:rename',
-    (
-      _event: IpcMainInvokeEvent,
-      payload?: { id?: string; label?: string },
-    ): RenameSessionResult => {
-      const id = String(payload?.id || '');
-      const label = String(payload?.label || '')
-        .trim()
-        .slice(0, 40);
-      if (!id || !label) return { ok: false, error: '名字不能为空' };
-      ptySessions.rename(id, label);
-      return { ok: true, id, label };
-    },
-  );
-
-  ipcMain.handle('app:openExternal', async (_event: IpcMainInvokeEvent, url?: string) => {
-    const target = url || dshManager.uiUrl || dshManager.origin;
-    await external.openExternalSafely(target, '渲染层');
-    return target;
-  });
-
-  ipcMain.handle('app:revealUserData', () => shell.openPath(app.getPath('userData')));
-
-  ipcMain.handle('app:confirm', async (_event: IpcMainInvokeEvent, payload?: ConfirmRequest) => {
-    const options: MessageBoxOptions = {
-      type: payload?.type || 'question',
-      buttons: payload?.buttons || ['取消', '确定'],
-      defaultId: 1,
-      cancelId: 0,
-      title: payload?.title || '确认',
-      message: payload?.message || '',
-      detail: payload?.detail || '',
-    };
-    // 窗口可能已经关了：那时退化成不带父窗口的对话框（原来的写法也是这么兜的）
-    const result =
-      mainWindow && !mainWindow.isDestroyed()
-        ? await dialog.showMessageBox(mainWindow, options)
-        : await dialog.showMessageBox(options);
-    return result.response === 1;
-  });
-
-  // ---------------------------------------------------------------- 自动更新
-  // 状态机在 main/updater.ts；这里只转发三个动作，状态变化由 updater 广播 app:update。
-  ipcMain.handle('app:update-check', (): Promise<UpdateState> => updater.checkNow());
-
-  ipcMain.handle('app:update-download', (): Promise<UpdateState> => updater.download());
-
-  ipcMain.handle('app:update-install', (): boolean => updater.install());
-
-  // ---------------------------------------------------------------- 关闭确认
-  // 询问卡片在渲染层（shell/CloseDialog.vue）：主进程把"哪个 dsh 会受影响"这几项事实给它，
-  // 它先回一条"卡片显示了"（撤掉握手时限），再把用户的选择答回来。
-  // 没有进行中的询问时（例如已经被兜底或已回答过）两个 handler 都返回 false。
-  ipcMain.handle('app:close-ack', (): boolean => {
-    if (!pendingCloseAsk) return false;
-    pendingCloseAsk.ack();
-    return true;
-  });
-
-  ipcMain.handle(
-    'app:close-answer',
-    (_event: IpcMainInvokeEvent, answer?: CloseAnswer): boolean => {
-      const ask = pendingCloseAsk;
-      if (!ask) return false;
-      // 渲染层传来的形状不可信：只认这三个动作，认不出来的当"取消"
-      const action: CloseAnswerAction =
-        answer &&
-        (answer.action === 'tray' || answer.action === 'quit' || answer.action === 'cancel')
-          ? answer.action
-          : 'cancel';
-      ask.answer({ action, remember: Boolean(answer?.remember) });
-      return true;
-    },
-  );
-
-  // ---------------------------------------------------------------- 归档会话
-  // 这些操作直接读写 DSH 磁盘数据；正在运行的 dsh 会把 workspace.json 读进内存，
-  // 所以改动要等 dsh 重启后才同步到界面里 —— 返回里的 dshRunning 让渲染层据此提示。
-  ipcMain.handle('archive:list', (): ArchiveListResult => {
-    try {
-      return {
-        ok: true,
-        ...archiveManager.homeInfo(),
-        dshRunning: dshManager.sessionAlive,
-        sessions: archiveManager.list(),
-      };
-    } catch (error) {
-      return { ok: false, error: messageOf(error) };
-    }
-  });
-
-  ipcMain.handle('archive:read', (_event: IpcMainInvokeEvent, id: unknown): ArchiveReadResult => {
-    try {
-      return { ok: true, session: archiveManager.read(String(id)) };
-    } catch (error) {
-      return { ok: false, error: messageOf(error) };
-    }
-  });
-
-  ipcMain.handle(
-    'archive:unarchive',
-    (_event: IpcMainInvokeEvent, id: unknown): ArchiveUnarchiveResult => {
-      try {
-        return {
-          ok: true,
-          dshRunning: dshManager.sessionAlive,
-          ...archiveManager.unarchive(String(id)),
-        };
-      } catch (error) {
-        return { ok: false, error: messageOf(error) };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'archive:remove',
-    (_event: IpcMainInvokeEvent, id: unknown): ArchiveRemoveResult => {
-      try {
-        return {
-          ok: true,
-          dshRunning: dshManager.sessionAlive,
-          ...archiveManager.remove(String(id)),
-        };
-      } catch (error) {
-        return { ok: false, error: messageOf(error) };
-      }
-    },
-  );
-
-  ipcMain.handle('plugin:inspect', async (): Promise<PluginInspectResult> => {
-    // ---------------------------------------------------------------- 插件装配层
-    // 只读：读 profile 的 package.json + 跑一次 `dsh web --dump-config`。
-    // dsh 没在跑也要能用 —— 插件把启动打挂时，这一页恰恰是唯一的入口。
-    try {
-      return await pluginManager.inspect();
-    } catch (error) {
-      return { ok: false, error: messageOf(error) };
-    }
-  });
-
-  // 装 / 卸 / 升级：走 `dsh plugin --profile web …`，输出边跑边推给渲染层。
-  // 这三个都改 package.json 与 node_modules，所以做完要重启 dsh 才生效（界面负责提示）。
-  ipcMain.handle(
-    'plugin:run',
-    async (_event: IpcMainInvokeEvent, request: unknown): Promise<PluginOpResult> => {
-      try {
-        const { action, spec } = (request ?? {}) as { action?: PluginOpAction; spec?: string };
-        if (action !== 'add' && action !== 'remove' && action !== 'update') {
-          return { ok: false, error: '不认识的操作' };
-        }
-        return await pluginManager.runOperation(action, String(spec ?? ''), (chunk) =>
-          sendToRenderer('plugin:output', { chunk }),
-        );
-      } catch (error) {
-        return { ok: false, error: messageOf(error) };
-      }
-    },
-  );
-
-  ipcMain.handle('plugin:cancel', (): boolean => pluginManager.cancelOperation());
-
-  // 救援：只看 dsh 自带的组合结果。配置被改坏时 --dump-config 会整条失败，这条通常还能成，
-  ipcMain.handle('plugin:default-config', async (): Promise<PluginInspectResult> => {
-    // 所以它是"插件页在配置坏掉时仍然可用"的兜底（见 §救援流程）。
-    try {
-      return await pluginManager.baseline();
-    } catch (error) {
-      return { ok: false, error: messageOf(error) };
-    }
-  });
-
-  // 救援：把你的补丁层修回可用状态（补空数组 / 列备份 / 从备份恢复）。
-  // 这些是"修"不是"编辑"：能不动就不动，真要动也先备份。
-  ipcMain.handle(
-    'plugin:rescue',
-    (_event: IpcMainInvokeEvent, request: unknown): PluginRescueResult => {
-      try {
-        const { action, backup } = (request ?? {}) as {
-          action?: 'repair-empty' | 'list-backups' | 'restore-backup';
-          backup?: string;
-        };
-        if (action !== 'repair-empty' && action !== 'list-backups' && action !== 'restore-backup') {
-          return { ok: false, error: '不认识的操作' };
-        }
-        const result = pluginManager.rescue(action, backup ? String(backup) : undefined);
-        if (action !== 'list-backups') {
-          dshManager.log(
-            'info',
-            result.changed
-              ? `补丁层已修复：${result.detail ?? action}`
-              : `补丁层未改动：${result.detail ?? action}`,
-          );
-        }
-        return result;
-      } catch (error) {
-        return { ok: false, error: messageOf(error) };
-      }
-    },
-  );
-
-  // 救援：临时停用 / 恢复一个 bundle。改的是 profile 的 package.json（备份 + 原子写），
-  // 而且**要重启 dsh 才生效**（bundle 列表是启动时读的），界面负责说清这一点。
-  ipcMain.handle(
-    'plugin:bundle-edit',
-    (_event: IpcMainInvokeEvent, request: unknown): PluginBundleEditResult => {
-      try {
-        const { action, name, index } = (request ?? {}) as {
-          action?: 'suspend' | 'restore';
-          name?: string;
-          index?: number;
-        };
-        if (action !== 'suspend' && action !== 'restore')
-          return { ok: false, error: '不认识的操作' };
-        const result = pluginManager.editBundle(action, String(name ?? ''), Number(index ?? -1));
-        dshManager.log(
-          'info',
-          result.changed
-            ? `bundle ${action === 'suspend' ? '已临时停用' : '已恢复'}：${result.detail ?? name}`
-            : `bundle 未改动：${result.detail ?? name}`,
-        );
-        return result;
-      } catch (error) {
-        return { ok: false, error: messageOf(error) };
-      }
-    },
-  );
-
-  // 改你自己的补丁层（插入 / 禁用 / 启用 / 移除插入）：只动 profile 的 cordis.patch.yml，
-  // 写之前备份。这一层是 patchReload: live —— 改完即时生效，不用重启 dsh。
-  ipcMain.handle(
-    'plugin:edit-layer',
-    async (_event: IpcMainInvokeEvent, request: unknown): Promise<PluginLayerEditResult> => {
-      try {
-        const { action, id, name } = (request ?? {}) as {
-          action?: PluginLayerEditAction;
-          id?: string;
-          name?: string;
-        };
-        if (
-          action !== 'disable' &&
-          action !== 'enable' &&
-          action !== 'insert' &&
-          action !== 'remove-insert'
-        ) {
-          return { ok: false, error: '不认识的操作' };
-        }
-        const result = await pluginManager.editLayer({ action, id: String(id ?? ''), name });
-        dshManager.log(
-          'info',
-          result.changed
-            ? `补丁层已更新：${result.detail ?? action}（${result.file ?? ''}）`
-            : `补丁层未改动：${result.detail ?? action}`,
-        );
-        return result;
-      } catch (error) {
-        return { ok: false, error: messageOf(error) };
-      }
-    },
-  );
-
-  // ---------------------------------------------------------------- 运行环境自检 + 一键修复
-  // 报告不进快照：探测要起子进程（各 8 秒超时），塞进 app:snapshot 会把它拖成秒级。
-  // 渲染层走 envCheck() 拉一份（有缓存立刻给），修复过程中的复检结果随 env:fix-state 回来。
-  ipcMain.handle(
-    'env:check',
-    async (_event: IpcMainInvokeEvent, options?: { refresh?: boolean }) => {
-      return await envDoctor.report(Boolean(options?.refresh));
-    },
-  );
-
-  // 只接受 action：命令（file / args）由主进程用 fixPlan() 现场重算，
-  // 渲染层递回来的路径一概不采信（与 7.18「救援时渲染层递来的路径不可信」同一条原则）。
-  ipcMain.handle(
-    'env:fix',
-    async (_event: IpcMainInvokeEvent, request: unknown): Promise<EnvFixState> => {
-      const { action } = (request ?? {}) as { action?: EnvFixAction };
-      if (action !== 'install-pnpm' && action !== 'install-dsh') {
-        return { ...envFixRunner.state(), phase: 'error', message: '不认识的修复动作' };
-      }
-      // 与安装通道共用一把锁（冻结 §4.4）：忙则一个字都不写，把当前状态与原因回给界面
-      if (anyoneBusy()) {
-        return { ...envFixRunner.state(), phase: 'error', message: BUSY_MESSAGE };
-      }
-      try {
-        return await envFixRunner.run(action);
-      } catch (error) {
-        const message = `修复没能开始：${messageOf(error)}`;
-        dshManager.log('error', `环境修复失败：${message}`);
-        return { ...envFixRunner.state(), phase: 'error', message };
-      }
-    },
-  );
-
-  ipcMain.handle('env:fix-cancel', (): boolean => envFixRunner.cancel());
-
-  // ---------------------------------------------------------------- 首启环境向导（门禁）
-  // 门禁结论靠 `envWizard` 拉取，**复用既有的报告缓存**（不新增探测路径、不新增报告事件）；
-  // 安装过程照 `env:fix-*` 的做法用事件推（`env:install-state` / `env:install-output`）。
-  ipcMain.handle(
-    'env:wizard',
-    async (
-      _event: IpcMainInvokeEvent,
-      options?: { refresh?: boolean },
-    ): Promise<EnvWizardState> => {
-      const report = await envDoctor.report(Boolean(options?.refresh));
-      return judgeWizard(report, wizardSkips());
-    },
-  );
-
-  ipcMain.handle(
-    'env:wizard-skip',
-    async (_event: IpcMainInvokeEvent, request: unknown): Promise<EnvWizardState> => {
-      const { step, skip } = (request ?? {}) as { step?: EnvWizardStepId; skip?: boolean };
-      if (step !== undefined && WIZARD_STEP_IDS.includes(step) && WIZARD_STEP_SKIPPABLE[step]) {
-        // 未知 step 与不可跳过的 step（node / dsh）都是**幂等忽略**：一个字都不写，返回当前状态。
-        // 反绕过：设置里塞了 node / dsh 也一样不生效（判定函数那边同样忽略）。
-        const next = new Set(wizardSkips());
-        if (skip) next.add(step);
-        else next.delete(step);
-        settings.patch({ envSkips: WIZARD_STEP_IDS.filter((id) => next.has(id)) });
-        dshManager.log(
-          'info',
-          `环境向导：${skip ? '跳过' : '恢复'}「${WIZARD_STEP_LABEL[step]}」（设置项 envSkips）`,
-        );
-        // 设置是主进程写的，渲染层那份快照要跟着刷新（"已跳过"标记在向导、自检页、放行页三处都要一致）
-        sendToRenderer('settings:changed', settings.all());
-      }
-      const report = await envDoctor.report();
-      return judgeWizard(report, wizardSkips());
-    },
-  );
-
-  // ---------------------------------------------------------------- Node 安装 / 更新通道
-  ipcMain.handle(
-    'env:node-plan',
-    async (_event: IpcMainInvokeEvent, request: unknown): Promise<EnvNodePlan | null> => {
-      const parsed = parseNodeRequest(request);
-      if (!parsed) {
-        dshManager.log(
-          'warn',
-          '安装计划：不认识的选择（install|update 必需；method 可省略 = 跟随归属，给值只认 direct|nvm）',
-        );
-        return null;
-      }
-      try {
-        return await nodeInstaller.plan(parsed);
-      } catch (error) {
-        dshManager.log('error', `安装计划没能取到：${messageOf(error)}`);
-        return null;
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'env:node-install',
-    async (_event: IpcMainInvokeEvent, request: unknown): Promise<EnvInstallState> => {
-      const parsed = parseNodeRequest(request);
-      if (!parsed)
-        return refusedInstallState(
-          '不认识的操作：安装只接受 install|update（method 可省略 = 跟随归属）',
-        );
-      if (anyoneBusy()) return refusedInstallState(BUSY_MESSAGE);
-      try {
-        return await nodeInstaller.run(parsed);
-      } catch (error) {
-        // 引擎的业务失败不抛（终态是 phase: 'error'），走到这里说明是意外
-        const message = `安装没能开始：${messageOf(error)}`;
-        dshManager.log('error', `Node 安装失败：${message}`);
-        return refusedInstallState(message);
-      }
-    },
-  );
-
-  ipcMain.handle('env:node-stop', (): EnvInstallState => nodeInstaller.stop());
-  // 停止：下载 / 校验 = 真取消并删临时文件；安装 / 等待 = 只停止等待（**不杀安装器**）。
-  // 这个语义完全由引擎的 EnvInstallState 表达（cancellable / detached），主进程不重复判断。
-}
-
 function wireManagerEvents(): void {
   dshManager.on('state', (snapshot) => sendToRenderer('dsh:state', snapshot));
   dshManager.on('output', (payload: DshOutputEvent) => sendToRenderer('dsh:output', payload));
@@ -1286,11 +624,6 @@ function dropLegacySessionFile(): void {
   } catch {
     // 删不掉也无所谓：没人再读它
   }
-}
-
-/** 统一的"把 unknown 错误取成消息" */
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function bootstrap(): Promise<void> {
@@ -1372,7 +705,32 @@ async function bootstrap(): Promise<void> {
   // 托盘随应用一起出现（Windows / Linux）：它不只是"收起的落点"，也是**叫回窗口与退出的入口** ——
   // 等第一次收起才建的话，用户在那之前根本不知道有这个东西。macOS 上不建（Dock 承担这个角色）。
   ensureTray();
-  registerIpc();
+  // IPC 层只拿"稳定的引用或 getter"：窗口关掉会新建、关闭询问每回合换一个对象、
+  // 渲染层连接位与 Shell 计数器都是可变量（形状见 main-ipc-shared.ts 的 IpcContext）。
+  registerIpc({
+    settings,
+    ptySessions,
+    dshManager,
+    archiveManager,
+    pluginManager,
+    envDoctor,
+    envFixRunner,
+    nodeInstaller,
+    updater,
+    theme,
+    external,
+    send: sendToRenderer,
+    getWindow: () => mainWindow,
+    pendingCloseAsk: () => pendingCloseAsk,
+    renderer: {
+      isConnected: () => rendererConnected,
+      markConnected: () => {
+        rendererConnected = true;
+      },
+    },
+    extraSessions,
+    shells: { next: () => ++shellCounter },
+  });
   embedded.wireEmbeddedRequestDiagnostics();
   embedded.watchRendererForDevReload();
   // updater.start() 放在窗口与 IPC 都就绪之后：它可能立刻广播一次 unsupported 状态
@@ -1422,7 +780,7 @@ async function bootstrap(): Promise<void> {
   let gateBlocked = false;
   try {
     const quickReport = judgeEnvironment(collectBootProbe(settings.all(), envRuntime()));
-    gateBlocked = judgeWizard(quickReport, wizardSkips()).gate === 'blocked';
+    gateBlocked = judgeWizard(quickReport, wizardSkips(settings)).gate === 'blocked';
   } catch (error) {
     // 判定自己出意外时照旧启动：不能因为我们的探测坏了就不给用（逃生口之外的第二道保险）
     dshManager.log('warn', `启动前的快速探测没能完成（照旧自动启动）：${messageOf(error)}`);

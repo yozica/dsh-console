@@ -33,7 +33,13 @@ npm start          # = npm run build && electron .
 ```
 src/
   main/                 Electron 主进程，tsc 编成 CJS 到 dist/main/
-    main.ts             窗口、IPC、生命周期、退出清理、关闭窗口行为（开发工具快捷键；t56 起部分簇已拆出）
+    main.ts             窗口、生命周期、退出清理、关闭窗口行为（开发工具快捷键；IPC 注册层与若干簇已拆出，见 7.35）
+    main-ipc.ts         IPC 注册层 **barrel**：registerIpc(ctx) 把四组通道挂上（t57 拆开，见 7.35）
+    main-ipc-shared.ts  IPC 层公共件：IpcContext / CloseAsk + 首启向导的几个小编排函数
+    main-ipc-app.ts     app / theme / settings / dsh / session / shell 六组通道
+    main-ipc-archive.ts 归档会话通道（archive:*）
+    main-ipc-plugin.ts  插件装配层通道（plugin:*）
+    main-ipc-env.ts     运行环境自检 / 首启门禁 / Node 安装通道（env:*）
     main-theme.ts       主题与系统控件配色（窗口底色 / 标题栏浮层 / themeInfo / broadcastTheme）
     main-embedded.ts    内嵌页诊断（guest console / 加载失败 / 请求失败）与开发期产物变化自动重载
     main-menu.ts        应用图标与应用菜单（Windows/Linux 留空、macOS 最小原生菜单）
@@ -1246,6 +1252,43 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - **同一个正则误伤过一次**：删重复声明时用的 `[\s\S]*?
 (?=…)|\Z` 会一路吃到文件尾，把 `node-io.ts`
   从 480 行砍成 185 行。**教训：按文本块删东西，先 `git show HEAD:<file>` 留一份原文，删完立刻比行数。**
+
+**第四个：`main.ts` 的 IPC 注册层（t57，`registerIpc()` 558 行 → 六个文件）**
+
+`main.ts` 从 1798 行一路拆到 1507（theme / embedded / menu / crash / url 那几个簇，见前几轮的记录），
+t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIpc()`；这一步之后 `main.ts` **895 行**：
+
+| 文件                  | 行数 | 职责                                                                         |
+| --------------------- | ---- | ---------------------------------------------------------------------------- |
+| `main-ipc.ts`         | 25   | **barrel**：`registerIpc(ctx)` 按原顺序调四个叶子，另转发三个公共件          |
+| `main-ipc-shared.ts`  | 134  | `IpcContext` / `CloseAsk` + `bundledVersions` / `messageOf` / 忙位等         |
+| `main-ipc-app.ts`     | 302  | `app:*` / `theme:set` / `settings:patch` / `dsh:*` / `session:*` / `shell:*` |
+| `main-ipc-archive.ts` | 70   | `archive:*`                                                                  |
+| `main-ipc-plugin.ts`  | 152  | `plugin:*`                                                                   |
+| `main-ipc-env.ts`     | 153  | `env:check` / `env:fix*` / `env:wizard*` / `env:node-*`                      |
+
+`main.ts` 只剩"造一个 `IpcContext`、调一次 `registerIpc(ctx)`"。
+
+这一步学到的五条：
+
+- **搬 IPC 层不能照搬"可变单例"，必须先分类**：`settings` / 各 manager / `extraSessions` 这些是**稳定
+  引用**（`bootstrap()` 里建一次就不再换），按值传；而 `mainWindow`（关掉会新建）、`pendingCloseAsk`
+  （每个回合换一个对象）、`rendererConnected`（布尔量）、`shellCounter`（数字）**必须走 getter**，
+  否则拿到的是拆那一刻的快照。四条正好对应 `getWindow()` / `pendingCloseAsk()` /
+  `renderer:{isConnected,markConnected}` / `shells:{next}`。
+- **getter 化之后 TS 不再帮你收窄**：原来 `if (!pendingCloseAsk) return false; pendingCloseAsk.ack();`
+  靠的是"读的是同一个变量"，改成两次调 getter 就报 `Object is possibly 'null'`。写法是**取一次存下来**
+  （`const ask = pendingCloseAsk(); if (!ask) …; ask.ack();`），语义还更准。
+- **搬进去的代码逐字复制、只加一行解构**（`const { settings, dshManager, … } = ctx;`），别用批量替换把
+  `settings` 改成 `ctx.settings` —— 这一层有 557 行、几百处引用，机械替换是在拿行为赌运气（§7.35 开头
+  那次 `if (x && !x.y)` 的教训）。只把四个"可变量"与三个 helper 的签名改掉，其余一个字不动。
+- **读源码文本的钉子要跟着读整份**：`test/repo.ts` 的 `mainSource` 与 `test/env-fixtures.ts` 的
+  `envMainCode` 都加上了 `main-ipc*.ts`（前者给 release 那组"启动早期 / 关窗 / 外链"用，后者给
+  env-wizard 那组用）。三条钉子还要跟着改签名：`anyoneBusy(ctx)` / `refusedInstallState(ctx, …)` /
+  `wizardSkips(settings)`。**其中两条一开始假红，原因是 prettier 把长调用折成了多行** ——
+  `/refusedInstallState\(ctx, '不认识的操作/` 这种"参数紧跟在左括号后"的写法在多行下不成立，
+  改成 `\(\s*ctx,\s*…` 才是它真正想说的（**钉源码形状时，凡是有可能被折行的调用都要留 `\s*`**）。
+- **这一轮的输出零差异**：`npm test` 的 314 行与拆分前**逐行相同**（前面几轮至少还有改名的那两行）。
 
 ### 7.36 渲染层拆模块：纯逻辑进 `lib/`，DOM 与模板留在组件（t53 起）
 
