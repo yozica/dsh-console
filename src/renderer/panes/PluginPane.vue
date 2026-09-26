@@ -27,17 +27,15 @@ import {
   collectStaticIds,
   countEntries,
   entriesOfLayer,
-  isOwnLayer,
-  kindLabel,
   layerName as viewLayerName,
   liveEntriesOnly,
-  ownLayerTag as viewOwnLayerTag,
-  ownLayerWhy as viewOwnLayerWhy,
   problemLabel,
   stateLabel,
   visibleGroupsOf,
 } from '../lib/plugin-view.js';
 import { restartThenOpenHarness } from '../lib/restart-flow.js';
+import PluginOpPanel from './PluginOpPanel.vue';
+import PluginStackView from './PluginStackView.vue';
 import { clearRestartNav, restartNav } from '../lib/restart-nav.js';
 import { currentTab, dsh, phaseInfo, snapshot } from '../lib/store.js';
 import type {
@@ -559,8 +557,6 @@ function isMyLayer(source: string): boolean {
   return myPatchPath.value !== '' && source === myPatchPath.value;
 }
 const layerName = (layer: PluginLayer): string => viewLayerName(layer, data.value?.home || '');
-const ownLayerTag = (layer: PluginLayer): string => viewOwnLayerTag(layer, problems.value);
-const ownLayerWhy = (layer: PluginLayer): string => viewOwnLayerWhy(layer, problems.value);
 const liveById = computed(() => buildLiveIndex(data.value?.live?.entries ?? []));
 const staticIds = computed(() => collectStaticIds(data.value?.treeLayers ?? []));
 const liveOnly = computed(() => liveEntriesOnly(data.value?.live?.entries ?? [], staticIds.value));
@@ -876,149 +872,22 @@ function clearFilters(): void {
         </ul>
       </section>
 
-      <!-- 视图一：装配层栈 -->
-      <div v-if="view === 'stack' && data" class="plugin-body">
-        <section class="panel plugin-side">
-          <header class="panel-head">
-            <h3>层栈</h3>
-            <div class="spacer"></div>
-            <span class="bar-hint">从上到下依次应用</span>
-          </header>
-          <div class="plugin-stack">
-            <p class="plugin-stack-note">
-              从上到下依次应用，后一层按 <code>id</code> 整条覆盖前一层（替换整个
-              <code>config</code>，不是深合并）。最后两行是你自己的 patch 层：profile 级只影响这个
-              profile，机器级影响所有 profile、优先级更高。
-            </p>
-            <div
-              v-for="(layer, i) in layers"
-              :key="layer.name"
-              class="plugin-layer"
-              :class="{ active: i === selectedIndex, own: isOwnLayer(layer) }"
-              :data-kind="layer.kind"
-              @click="selectedIndex = i"
-            >
-              <span class="plugin-layer-order">{{ layer.order ?? '·' }}</span>
-              <div class="plugin-layer-main">
-                <div class="plugin-layer-name">{{ layerName(layer) }}</div>
-                <div class="plugin-layer-meta">
-                  <span class="plugin-tag">{{ kindLabel(layer.kind) }}</span>
-                  <span v-if="layer.version" class="plugin-tag mono">{{ layer.version }}</span>
-                  <span v-if="layer.contributions.inserted" class="plugin-tag">
-                    {{ layer.contributions.inserted }} 条
-                  </span>
-                  <span v-if="layer.contributions.patched" class="plugin-tag">
-                    覆盖 {{ layer.contributions.patched }}
-                  </span>
-                  <span v-if="!layer.present" class="plugin-tag muted">{{
-                    isOwnLayer(layer) ? ownLayerTag(layer) : '没有贡献'
-                  }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel plugin-detail">
-          <header class="panel-head">
-            <h3>{{ selected ? layerName(selected) : '选中一层' }}</h3>
-            <span v-if="selected?.version" class="plugin-tag mono">{{ selected.version }}</span>
-            <div class="spacer"></div>
-            <button
-              v-if="selected && selectedEntries.length"
-              class="btn tiny"
-              @click="jumpToLayer(selected)"
-            >
-              在生效配置里看这 {{ selectedEntries.length }} 条
-            </button>
-          </header>
-
-          <div v-if="selected" class="plugin-detail-body">
-            <dl class="plugin-meta">
-              <dt>类型</dt>
-              <dd>
-                {{ kindLabel(selected.kind) }}
-                <span v-if="selected.order"> · profile 层序第 {{ selected.order }}</span>
-              </dd>
-              <dt>位置</dt>
-              <dd>{{ selected.resolvedPath || '（没解析到）' }}</dd>
-              <dt>来源</dt>
-              <dd>
-                {{ selected.spec || (selected.kind === 'in-box' ? '随 dsh 安装目录解析' : '—') }}
-              </dd>
-              <dt>这一层做了什么</dt>
-              <dd>
-                插入 {{ selected.contributions.inserted }} 条
-                <template v-if="selected.contributions.patched">
-                  · 覆盖下层 {{ selected.contributions.patched }} 条（其中
-                  {{ selected.contributions.patchedDisabled }} 条是把下层关掉）
-                </template>
-              </dd>
-            </dl>
-
-            <div v-if="selectedEntries.length" class="plugin-entries">
-              <div class="block-head">
-                <span>这一层的条目</span>
-                <span class="block-note">最多列 12 条</span>
-              </div>
-              <ul class="plugin-entry-list">
-                <li
-                  v-for="entry in selectedEntries.slice(0, 12)"
-                  :key="entry.id"
-                  class="plugin-entry"
-                >
-                  <span class="plugin-entry-id">{{ entry.id }}</span>
-                  <span class="plugin-entry-name">{{ entry.name }}</span>
-                  <span v-if="entry.disabled" class="plugin-tag muted">disabled</span>
-                </li>
-              </ul>
-              <p v-if="selectedEntries.length > 12" class="hint">
-                还有 {{ selectedEntries.length - 12 }} 条，点右上角在生效配置里看全部。
-              </p>
-            </div>
-            <p v-else class="hint">
-              <template v-if="isOwnLayer(selected)">
-                这一层还没有生效的内容（{{ ownLayerWhy(selected) }}）。它的用途是三件事：按条目 id
-                覆盖下面某一层、插入新条目（官方随包但默认不启用的插件就是靠这个挂进来），或把某条
-                <code>disabled</code> 掉；改完{{
-                  data.patchReload === 'live' ? '即时生效，不用重启 dsh' : '下次启动 dsh 时生效'
-                }}。
-              </template>
-              <template v-else>
-                这一层在生效配置里没有条目。装进来的包如果没声明 <code>dsh.bundle</code>，
-                就只会当普通依赖存在，不形成配置层。
-              </template>
-            </p>
-
-            <!-- 只有树外插件能升级 / 移除：内置的随 dsh 安装目录，动不了也不该动 -->
-            <div v-if="selected.kind === 'out-of-tree'" class="plugin-detail-actions">
-              <button
-                class="btn small"
-                :disabled="opBusy"
-                @click="startOp('update', selected.name)"
-              >
-                升级到最新
-              </button>
-              <span class="spacer"></span>
-              <button
-                class="btn small"
-                :disabled="opBusy"
-                title="从 dsh.profile.bundles 里摘掉它（会先备份），重启 dsh 后生效"
-                @click="editBundle('suspend', selected.name)"
-              >
-                临时停用
-              </button>
-              <button
-                class="btn danger small"
-                :disabled="opBusy"
-                @click="startOp('remove', selected.name)"
-              >
-                移除
-              </button>
-            </div>
-          </div>
-        </section>
-      </div>
+      <!-- 视图一：装配层栈（t59 起是 panes/PluginStackView.vue：这一层只把数据与选中递给它、
+           把"选中哪一层 / 跳转 / 升级 / 移除 / 临时停用"接回来 —— 父级那边还有同一个选中层的
+           生效配置条目与增删改，状态只能有一个真源） -->
+      <PluginStackView
+        v-if="view === 'stack' && data"
+        :data="data"
+        :layers="layers"
+        :selected-index="selectedIndex"
+        :selected="selected"
+        :selected-entries="selectedEntries"
+        :op-busy="opBusy"
+        @select="selectedIndex = $event"
+        @jump-to-layer="jumpToLayer"
+        @start-op="startOp"
+        @edit-bundle="editBundle"
+      />
 
       <!-- 视图二：生效配置 -->
       <section v-else class="panel plugin-config">
@@ -1147,32 +1016,21 @@ function clearFilters(): void {
         </div>
       </section>
 
-      <!-- 操作输出：pnpm 的原始输出原样贴出来，不假装进度条（与 dsh 终端同族） -->
-      <div v-if="opStatus && opOpen" class="plugin-op">
-        <div class="plugin-op-head">
-          <span class="plugin-op-cmd">{{ opTitle }}</span>
-          <span class="plugin-op-state" :data-state="opStatus">{{ opStateLabel }}</span>
-          <span class="spacer"></span>
-          <button v-if="opBusy" class="btn tiny" @click="cancelOp">中断</button>
-          <button v-else class="btn tiny" @click="opOpen = false">收起</button>
-        </div>
-        <pre class="plugin-op-out">{{ opText || '（等待输出…）' }}</pre>
-        <p v-if="opSummary" class="plugin-op-summary">{{ opSummary }}</p>
-        <!-- 内置包被拦下、而且还没启用：就地给一个按钮，不用自己去翻 cordis.patch.yml -->
-        <div v-if="opNeedsEnable" class="plugin-op-actions">
-          <button
-            class="btn small primary"
-            :disabled="opBusy"
-            @click="editLayer('insert', opNeedsEnable.id, opNeedsEnable.name)"
-          >
-            插进我的层
-          </button>
-          <span class="bar-hint">
-            往你的补丁层加一条 insert（id:
-            {{ opNeedsEnable.id }}），写之前备份原文件；这一层即时生效
-          </span>
-        </div>
-      </div>
+      <!-- 操作输出：pnpm 的原始输出原样贴出来，不假装进度条（与 dsh 终端同族）——
+           t59 起是 panes/PluginOpPanel.vue -->
+      <PluginOpPanel
+        v-if="opStatus && opOpen"
+        :op-busy="opBusy"
+        :op-title="opTitle"
+        :op-status="opStatus"
+        :op-state-label="opStateLabel"
+        :op-text="opText"
+        :op-summary="opSummary"
+        :op-needs-enable="opNeedsEnable"
+        @cancel="cancelOp"
+        @collapse="opOpen = false"
+        @insert-layer="editLayer"
+      />
     </template>
   </div>
 </template>
@@ -1283,138 +1141,6 @@ function clearFilters(): void {
   overflow-wrap: anywhere;
 }
 
-/* ---- 视图一：层栈 + 详情 ---- */
-.plugin-body {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  gap: 14px;
-  /* 页面容器的内边距由各页自己给（.pane 只负责定位），这里的值与
-     .archive-body / .settings 一致：左右与底部各 20px，顶部 2px（工具条自己有 10px）。 */
-  padding: 2px 20px 20px;
-}
-
-.plugin-side {
-  width: 300px;
-  flex: 0 0 300px;
-}
-
-.plugin-stack {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-}
-
-/* 层栈顶部的一句说明：顺序语义 + 最后两行是谁（用户问过"下面这两个是什么"） */
-.plugin-stack-note {
-  margin: 0;
-  padding: 10px 16px 12px;
-  border-bottom: 1px solid var(--hairline);
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  line-height: 1.7;
-}
-
-.plugin-layer {
-  position: relative;
-  display: flex;
-  gap: 10px;
-  padding: 10px 14px 10px 12px;
-  border-top: 1px solid var(--hairline);
-}
-
-.plugin-layer:first-child {
-  border-top: 0;
-}
-
-.plugin-layer:hover {
-  background: var(--surface-2);
-}
-
-/* 选中态用伪元素竖线，避免切换时文字左右抖动（归档侧栏踩过这个） */
-.plugin-layer.active {
-  background: var(--accent-soft);
-}
-
-.plugin-layer.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 6px;
-  bottom: 6px;
-  width: 2px;
-  border-radius: 0 2px 2px 0;
-  background: var(--accent);
-}
-
-.plugin-layer-order {
-  flex: 0 0 14px;
-  width: 14px;
-  padding-top: 1px;
-  text-align: right;
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--ink-faint);
-}
-
-.plugin-layer-main {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.plugin-layer-name {
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 内置层是"本来就有的"，比你自己装的东西淡一档 */
-.plugin-layer[data-kind='in-box'] .plugin-layer-name {
-  color: var(--ink-dim);
-}
-
-.plugin-layer.own .plugin-layer-name {
-  color: var(--sky);
-}
-
-.plugin-layer-meta {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  margin-top: 5px;
-}
-
-.plugin-tag {
-  display: inline-flex;
-  align-items: center;
-  height: 17px;
-  padding: 0 6px;
-  border: 1px solid var(--hairline);
-  border-radius: 4px;
-  background: var(--surface-2);
-  color: var(--ink-faint);
-  font-size: 10.5px;
-  white-space: nowrap;
-}
-
-.plugin-tag.mono {
-  font-family: var(--mono);
-}
-
-.plugin-tag.muted {
-  color: var(--ink-faint);
-}
-
-.plugin-tag.warn {
-  border-color: transparent;
-  background: var(--rose-soft);
-  color: var(--rose);
-}
-
 /* ---- 装 / 卸 / 升级 ---- */
 
 /* 安装行：和 Harness 页「粘贴地址」同一形态（输入 + 按钮 + 一行提示），不用弹窗 */
@@ -1446,99 +1172,6 @@ function clearFilters(): void {
 
 .plugin-install-input::placeholder {
   color: var(--ink-faint);
-}
-
-/* 详情里只给树外插件的那两个动作 */
-.plugin-detail-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--hairline);
-}
-
-/* 操作输出：下沉井 + 等宽，和 dsh 终端同族 */
-.plugin-op {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-  margin: 0 20px 20px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-card);
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.plugin-op-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 14px;
-  font-size: var(--t-sm);
-}
-
-.plugin-op-cmd {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--ink-dim);
-  background: var(--well);
-  border: 1px solid var(--hairline);
-  border-radius: 5px;
-  padding: 3px 7px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 62%;
-}
-
-.plugin-op-state {
-  font-size: var(--t-xs);
-  color: var(--ink-faint);
-}
-
-.plugin-op-state[data-state='running'] {
-  color: var(--amber);
-}
-
-.plugin-op-state[data-state='ok'] {
-  color: var(--run);
-}
-
-.plugin-op-state[data-state='failed'] {
-  color: var(--rose);
-}
-
-.plugin-op-out {
-  margin: 0;
-  max-height: 220px;
-  overflow: auto;
-  padding: 12px 14px;
-  border-top: 1px solid var(--hairline);
-  background: var(--well);
-  color: var(--ink-dim);
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  line-height: 1.75;
-  white-space: pre-wrap;
-}
-
-.plugin-op-summary {
-  margin: 0;
-  padding: 10px 14px;
-  border-top: 1px solid var(--hairline);
-  color: var(--rose);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-}
-
-/* 输出区里的动作（内置包被拦下时的「插进我的层」） */
-.plugin-op-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--hairline);
 }
 
 /* 生效配置每行右侧的「禁用 / 启用 / 移除我的插入」：不抢条目宽度，靠右对齐 */
@@ -1598,98 +1231,12 @@ function clearFilters(): void {
   font-size: var(--t-xs);
 }
 
-.plugin-tag.accent {
-  border-color: transparent;
-  background: var(--sky-soft);
-  color: var(--sky);
-}
-
-.plugin-detail {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.plugin-detail-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: 0 0 14px;
-}
-
-.plugin-meta {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 7px 12px;
-  margin: 0;
-  padding: 6px 16px 14px;
-  font-size: var(--t-sm);
-}
-
-.plugin-meta dt {
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-  padding-top: 1px;
-}
-
-.plugin-meta dd {
-  margin: 0;
-  color: var(--ink-dim);
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-  overflow-wrap: anywhere;
-}
-
-.plugin-entries {
-  padding-top: 4px;
-}
-
 /* 详情里每一行都自己带 16px 内边距（条目行要整行 hover / 分隔线，不能靠父级 padding），
    所以这里的说明句必须单独补 —— 漏了就会像"贴到面板边上"那样顶头。 */
 .plugin-entries > .hint,
 .plugin-detail-body > .hint,
 .plugin-config-body > .hint {
   padding: 0 16px;
-}
-
-.plugin-entries .block-head {
-  padding: 0 16px;
-}
-
-.plugin-entry-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.plugin-entry {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 16px;
-  border-top: 1px solid var(--hairline);
-  font-size: var(--t-sm);
-}
-
-.plugin-entry:hover {
-  background: var(--surface-2);
-}
-
-.plugin-entry-id {
-  flex: 0 0 auto;
-  min-width: 176px;
-  font-family: var(--mono);
-  color: var(--ink);
-}
-
-.plugin-entry-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--ink-faint);
 }
 
 /* ---- 视图二：生效配置 ---- */
