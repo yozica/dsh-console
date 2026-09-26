@@ -138,7 +138,20 @@ export function createRepo(): Repo {
   // "读源码文本"的断言要看整份（barrel 里一条 `export function …` 都搜不到）。
   // t56/t57 起 main.ts 拆出了若干簇（主题 / 内嵌页诊断 / 菜单 / 外链 / 崩溃兜底）——
   // "读 main.ts 文本"的断言要看**主进程入口那一组**的全部源码。
-  const mainSource = ['main', 'main-theme', 'main-embedded', 'main-menu', 'main-crash', 'main-url']
+  const mainSource = [
+    'main',
+    'main-theme',
+    'main-embedded',
+    'main-menu',
+    'main-crash',
+    'main-url',
+    'main-ipc',
+    'main-ipc-shared',
+    'main-ipc-app',
+    'main-ipc-archive',
+    'main-ipc-plugin',
+    'main-ipc-env',
+  ]
     .map((stem) => fs.readFileSync(path.join(srcDir, 'main', `${stem}.ts`), 'utf8'))
     .join('\n');
 

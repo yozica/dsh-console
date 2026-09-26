@@ -510,14 +510,16 @@ export function runEnvWizard(repo: Repo): void {
   );
   check(
     '环境向导：全局互斥（env:fix 与 env:node-install 读同一个忙位，两个动作不同时改机器）',
-    /function anyoneBusy\(\): boolean \{[\s\S]{0,120}?return envFixRunner\.busy \|\| nodeInstaller\.busy\(\);/.test(
+    // 忙位本身在 main-ipc-shared.ts（t57 从 main.ts 搬出去），call site 在 main-ipc-env.ts
+    /function anyoneBusy\(ctx: IpcContext\): boolean \{[\s\S]{0,120}?return ctx\.envFixRunner\.busy \|\| ctx\.nodeInstaller\.busy\(\);/.test(
       envMainCode,
     ) &&
-      (envMainCode.match(/envFixRunner\.busy \|\| nodeInstaller\.busy\(\)/g) ?? []).length === 1 &&
-      /if \(anyoneBusy\(\)\) \{[\s\S]{0,160}?phase: 'error', message: BUSY_MESSAGE/.test(
+      (envMainCode.match(/ctx\.envFixRunner\.busy \|\| ctx\.nodeInstaller\.busy\(\)/g) ?? [])
+        .length === 1 &&
+      /if \(anyoneBusy\(ctx\)\) \{[\s\S]{0,160}?phase: 'error', message: BUSY_MESSAGE/.test(
         envMainCode,
       ) &&
-      (envMainCode.match(/if \(anyoneBusy\(\)\)/g) ?? []).length === 2 &&
+      (envMainCode.match(/if \(anyoneBusy\(ctx\)\)/g) ?? []).length === 2 &&
       /const BUSY_MESSAGE = '正在执行上一步的操作，完成后按钮会自动恢复';/.test(envMainCode),
   );
   check(
@@ -571,9 +573,11 @@ export function runEnvWizard(repo: Repo): void {
   check(
     '环境向导：每个编排相位都有终态（请求失败也回 error 状态，不留一个转圈的"正在安装"）',
     // 主进程：两个入口的失败都表达成状态里的 error，而不是抛出去让渲染层干等
-    /catch \(error\) \{[\s\S]{0,400}?return refusedInstallState\(message\);/.test(envMainCode) &&
-      /if \(!parsed\)[\s\S]{0,40}?return refusedInstallState\(/.test(envMainCode) &&
-      /refusedInstallState\(\s*'不认识的操作/.test(envMainCode) &&
+    /catch \(error\) \{[\s\S]{0,400}?return refusedInstallState\(ctx, message\);/.test(
+      envMainCode,
+    ) &&
+      /if \(!parsed\)[\s\S]{0,40}?return refusedInstallState\(\s*ctx,/.test(envMainCode) &&
+      /refusedInstallState\(\s*ctx,\s*'不认识的操作/.test(envMainCode) &&
       // 渲染层：IPC 自己失败时也要落一个终态（不能停在 preparing/downloading 的转圈里）
       /install\.value = \{[\s\S]{0,80}?\.\.\.EMPTY_INSTALL,[\s\S]{0,120}?phase: 'error'/.test(
         wizardSource,
@@ -637,13 +641,16 @@ export function runEnvWizard(repo: Repo): void {
   check(
     '环境向导（F-01 可达路径）：设置里的 envSkips 被手改成 null 也拿得到结论',
     (() => {
-      const guardBody = blockOf(envMainCode, 'function wizardSkips(): EnvWizardStepId[]');
+      const guardBody = blockOf(
+        envMainCode,
+        'function wizardSkips(settings: Settings): EnvWizardStepId[]',
+      );
       return (
         guardBody.length > 40 &&
         /Array\.isArray\(value\) \? \(value as EnvWizardStepId\[\]\) : \[\]/.test(guardBody) &&
         // 只有这一处读设置里的 envSkips（别的调用点都得过这道守卫）
         (envMainCode.match(/settings\.get\('envSkips'\)/g) ?? []).length === 1 &&
-        (envMainCode.match(/wizardSkips\(\)/g) ?? []).length >= 3
+        (envMainCode.match(/wizardSkips\(settings\)/g) ?? []).length >= 3
       );
     })(),
   );
