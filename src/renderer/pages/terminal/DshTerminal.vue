@@ -18,7 +18,7 @@ import {
   TERM_THEMES,
 } from './xterm.js';
 import { useTabActivation } from '../../composables/use-tab-activation.js';
-import { currentTab, dsh, phaseInfo, snapshot } from '../../state/store.js';
+import { currentTab, dsh, phaseInfo, resolvedTheme, snapshot } from '../../state/store.js';
 import type { TerminalEntry } from './xterm.js';
 
 const api = window.dshConsole;
@@ -39,10 +39,6 @@ const note = computed(() => {
 // 说清"为什么打字没反应"，否则这个终端看着像坏了
 const hint = computed(() => (own.value ? 'dsh web 不读键盘输入，Ctrl+C 可以让它退出' : ''));
 const emptyVisible = computed(() => !own.value && !hasContent.value);
-
-function resolvedTheme() {
-  return snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark';
-}
 
 function syncFit() {
   if (!entry || !host.value) return;
@@ -97,7 +93,7 @@ async function startDsh() {
  */
 function ensureTerminal() {
   if (entry || !host.value) return entry;
-  entry = attachTerminal(host.value, resolvedTheme());
+  entry = attachTerminal(host.value, resolvedTheme.value);
   // 让 Ctrl+1~9 与 Ctrl+R 穿过终端交给应用（dsh 终端本来就不读键盘输入）
   passAppShortcutsThrough(entry.term, { includeReload: true });
   entry.term.onData((data) => api.dshInput(data));
@@ -163,8 +159,8 @@ useTabActivation('terminal', () => {
 watch(
   () => snapshot.value?.theme?.resolved,
   () => {
-    applyTerminalSurface(host.value, resolvedTheme());
-    if (entry) entry.term.options.theme = { ...TERM_THEMES[resolvedTheme()] };
+    applyTerminalSurface(host.value, resolvedTheme.value);
+    if (entry) entry.term.options.theme = { ...TERM_THEMES[resolvedTheme.value] };
   },
 );
 </script>

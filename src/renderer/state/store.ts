@@ -31,6 +31,15 @@ export type TabId = 'dashboard' | 'terminal' | 'ui' | 'usage' | 'archive' | 'plu
 export const snapshot = ref<AppSnapshot | null>(null);
 /** 快照里的 dsh 状态（onState 只推这一部分） */
 export const dsh = computed<DshSnapshot | null>(() => snapshot.value?.dsh || null);
+
+/**
+ * 当前该用哪套配色。**只在这里判一次**：xterm 的配色是 JS 选项（不走 CSS 变量），
+ * 终端页那两路各自照着算一遍的话，哪天"跟随系统"的判定变了只会改到其中一处。
+ * 口径与首帧兜底一致：只有明确的 `light` 才算亮色，其余（含还没拿到快照）都按深色。
+ */
+export const resolvedTheme = computed<'light' | 'dark'>(() =>
+  snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark',
+);
 /** 快照还没到时给空对象：读不到的设置项就是 undefined，各页按默认值兜 */
 const EMPTY_SETTINGS = {} as SettingsValues;
 export const settings = computed<SettingsValues>(() => snapshot.value?.settings || EMPTY_SETTINGS);
