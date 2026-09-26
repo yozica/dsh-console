@@ -101,7 +101,9 @@ src/
     mount.ts            挂载清单：外壳三块 + 全部页面 + 门禁层与横幅
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
     lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
+                        ＋ clipboard / status-message（复制与状态栏那句话，t58 从 EnvGate 提出来）
     shell/              外壳组件：RailNav / TopBar / StatusBar / CloseDialog（自己 Teleport 到 body）+ EnvGate（门禁层）/ GateBanner（常驻横幅）
+                        ＋ GateNodeConfirm / GateOutput（门禁层的两块子组件，t58 拆开，见 7.36）
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30）
@@ -1325,9 +1327,46 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
      就得跟着换口径** —— 这是第三次遇到（先是 `styles.css` 的两层，再是主进程两个 barrel）。
    - 要搬**模板或样式**时先看 §7.33 那三道验收（机械等价 / 逐像素 / 自检），并同步改 `styleLayers` 表。
 
-**还没做的**（后续 PR）：组件级拆分（`GateNodeConfirm.vue` / `GateOutput.vue`、`EnvCheckRow.vue` /
-`EnvUpdateConfirm.vue`、`PluginRescue.vue` …）与纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts` /
-`lib/plugin-view.ts`）；模板与样式一起搬的那些必须带 §7.33 的三道验收。
+**第二步（t58，2026-09-26）：模板级拆分 —— 门禁层的两块子组件**
+
+`shell/EnvGate.vue` 2515 → 2153 行，拆出两个子组件：
+
+| 文件                        | 行数 | 装什么                                                                           | 拿什么                                                                                                              |
+| --------------------------- | ---- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `shell/GateNodeConfirm.vue` | 357  | Node 安装 / 更新那条路的**确认区**（"将要执行"卡片 + 未签名 / 未校验那两档确认） | 计划、方法、档位、忙位（props）+ 六个事件（close / start / pick-method / use-direct / open-source / open-download） |
+| `shell/GateOutput.vue`      | 57   | 流式输出面板（原文照贴 + 跟着新片段滚 + 收起）                                   | 四行读数（command / text / state / summary）+ `collapse`                                                            |
+| `lib/status-message.ts`     | 9    | 状态栏那一句话的唯一出口（`say`）                                                | —                                                                                                                   |
+| `lib/clipboard.ts`          | 17   | 复制到剪贴板 + 那句话（父子的"复制"共用一份）                                    | —                                                                                                                   |
+
+这一步学到的五条：
+
+- **子组件做"哑"的（presentational）：状态留在父级**。确认区与**选择区**（同一张卡片上方那两块
+  单选）共用一份 `nodeMethod` / `nodeChannel`，拆成两个组件就只能有一个真源 —— 所以状态一个都不搬，
+  只搬标记与"计划 → 人话"的派生值。搬过去时**props 就按原来的标识符命名**（`nodePlan` / `nodeMethod` /
+  `planLoading` / `busy` …），模板因此能逐字复制，只改三处（`v-if` 交给父级、`currentStep.id !== 'node'`
+  → `host !== 'node'`、`copy()` 换成 lib 那一份）。**读一眼 diff 就能确认没改行为**，这比改名后逐行核对可靠。
+- **scoped 样式不跨组件 —— 但子组件的**根元素**带着父级的 `data-v`**。所以 `.gate-confirm`
+  （子组件根元素的 class）可以不动，而 `.gate-confirm-title` / `.gate-detail*` / `.gate-fact-more` /
+  `.gate-option-risk` / `.gate-choice` / `.gate-confirm .btn-row` 这些**子组件内部**的规则必须搬家，
+  否则它们静默失效（Vue 编译成 `.gate-confirm-title[data-v-父]`，子组件的元素没有这个属性）。
+  搬的时候按 §7.33 的判据分两处：与父组件 / 自检页共用的进**全局表**（12 条），只有确认区自己用的
+  （`.gate-confirm-loading`）进子组件的 `<style scoped>`，并在 `styleLayers` 表里为
+  `GateNodeConfirm.vue` 加一行。
+- **"只搬家"的机械判据是"选择器 → 声明"的多重集**（`.verify/gate-split/equiv.py`）：改动前后把
+  `styles.css` + 全部 `.vue` 的 `<style>` 块并起来、按（选择器，声明）计数，必须**零丢失零多出**
+  （这次 577 → 577）。它比"文件级 diff"强：规则从 scoped 块搬进全局表、或反过来，在并集里都是同一条。
+- **视觉等价用同一段标记渲染两次**（`.verify/gate-split/pixel.py`，照 t48 的 `pixel-diff.py` 改）：
+  夹具把这次动到的 class 全画一遍（选择卡 / 并存风险 / 展开详情 / 确认区 + 里面的按钮行 / 输出面板），
+  两边各出一张 2x 截图逐像素比 —— 这次**完全一致**。这一步回答的是机械等价回答不了的问题：
+  搬家**改了特异性与顺序**，会不会反转某条覆盖关系。
+- **自检输出这次有 4 行不同，全是"计数"**（不是断言结论）：组件数 15 → 17、"JS 引用的 id"那行的
+  `.vue` 覆盖数 15 → 17、全局表花括号 176 → 187（搬进去 11 条规则）、`styleLayers` 14 个页面 76 条
+  私有规则 → 15 个页面 77 条。**四条都属于"改了就该变"的口径**，在 PR 里逐条说明；断言名与通过与否
+  一条都没变。
+
+**还没做的**（后续 PR）：`EnvPane.vue` / `PluginPane.vue` 的同类拆分（`EnvCheckRow.vue` /
+`EnvUpdateConfirm.vue` / `PluginRescue.vue` …）与纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；
+模板与样式一起搬的那些照上面这套来。
 
 **第四个：`plugin-manager.ts`（t54，1322 → 318 行 + 四个叶子）**
 
