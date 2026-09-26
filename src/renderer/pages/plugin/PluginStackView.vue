@@ -364,4 +364,11 @@ const ownLayerWhy = (layer: PluginLayer): string =>
 .plugin-entries .block-head {
   padding: 0 16px;
 }
+
+/* 末尾那句"还有 N 条…"用的是全局零件 `.hint`（它没有左右内边距），而上面每一行条目是
+   `.plugin-entry { padding: 6px 16px }`、小标题也是 16px —— 不补这一条，这句会比上面所有
+   内容左移 16px（真机翻看时被发现）。 */
+.plugin-entries .hint {
+  padding: 0 16px;
+}
 </style>
