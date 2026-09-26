@@ -82,13 +82,9 @@ import {
 } from '../lib/env-wizard.js';
 import {
   BUSY_HINT,
-  CHANNEL_OPTIONS,
-  CHANNEL_TITLES,
   CHECK_TITLES,
   FACT_STATUS_WORDS,
   METHOD_FACTS,
-  METHOD_OPTIONS,
-  METHOD_RISK,
   NODE_DOWNLOAD_URL,
   STEP_CARD_TITLES,
   STEP_LABELS,
@@ -103,6 +99,8 @@ import { copyToClipboard } from '../lib/clipboard.js';
 import { say } from '../lib/status-message.js';
 import GateNodeConfirm from './GateNodeConfirm.vue';
 import GateOutput from './GateOutput.vue';
+import GateNodeChoice from './GateNodeChoice.vue';
+import GateResult from './GateResult.vue';
 import { formatBytes } from '../lib/format.js';
 import { advanceNotice, canViewStep } from '../lib/wizard-view.js';
 import { openEnvDetail } from '../lib/env-layer.js';
@@ -1153,70 +1151,22 @@ watch(fixConfirmAction, (action) => {
             <h3 class="gate-card-title">{{ STEP_CARD_TITLES[currentStep.id] }}</h3>
             <p class="gate-card-why">{{ STEP_WHY[currentStep.id] }}</p>
 
-            <!-- 选择区：步骤 1 的两条安装路径。开始之前随时能改；安装阶段同时不可用 -->
-            <div v-if="currentStep.id === 'node'" class="gate-choice">
-              <!-- 档位：与"方法"**同级**的选择区控件（可聚焦的两选一）。它在未展开确认区时就看得到，
-                   不再藏在确认区里当一行小字按钮 —— 那正是 VM-15 的现场 -->
-              <fieldset class="gate-choice-group">
-                <legend class="gate-choice-legend">版本档位</legend>
-                <div class="gate-choice-row">
-                  <label
-                    v-for="option in CHANNEL_OPTIONS"
-                    :key="option.id"
-                    class="gate-option gate-option-half"
-                    :class="{ selected: nodeChannel === option.id }"
-                  >
-                    <input
-                      type="radio"
-                      name="wizard-node-channel"
-                      :value="option.id"
-                      :checked="nodeChannel === option.id"
-                      :disabled="stepRunning || busy"
-                      @change="pickChannel(option.id)"
-                    />
-                    <span class="gate-option-body">
-                      <span class="gate-option-title">{{ option.title }}</span>
-                      <span class="gate-option-note">{{ option.note }}</span>
-                    </span>
-                  </label>
-                </div>
-                <p class="gate-option-hint">
-                  现在选的是：{{ CHANNEL_TITLES[nodeChannel] }}。装的是哪一档，看这里 ——
-                  安装之前随时能改。
-                </p>
-              </fieldset>
-
-              <!-- 方法：判得出归属就只给一条路；判不出来 / 一份 Node 都没有时两条路都列出来让用户选（需求 §7.8） -->
-              <p class="gate-method-fact">{{ methodFact }}</p>
-              <div v-if="methodChoosable" class="gate-choice-row">
-                <label
-                  v-for="option in METHOD_OPTIONS"
-                  :key="option.id"
-                  class="gate-option"
-                  :class="{ selected: effectiveMethod === option.id }"
-                >
-                  <input
-                    type="radio"
-                    name="wizard-node-method"
-                    :value="option.id"
-                    :checked="effectiveMethod === option.id"
-                    :disabled="stepRunning || busy"
-                    @change="pickMethod(option.id)"
-                  />
-                  <span class="gate-option-body">
-                    <span class="gate-option-title">{{ option.title }}</span>
-                    <span class="gate-option-note">{{ option.note }}</span>
-                    <span v-if="methodRiskShown" class="gate-option-risk">{{ METHOD_RISK }}</span>
-                  </span>
-                </label>
-              </div>
-              <!-- 这条禁用态必须看得到原因（交互 §11.6）：两条路一条都不预选，是用户自己选 -->
-              <p v-if="methodNeedsPick" class="gate-option-hint">
-                两条路都没有替你预选：请先在上面选一条安装方式，再点「安装」。
-              </p>
-              <!-- 装到一半不能换路：禁用必须看得到原因（交互 §4.2） -->
-              <p v-if="stepRunning" class="gate-option-hint">正在安装，请等它结束</p>
-            </div>
+            <!-- 选择区：步骤 1 的两条安装路径。开始之前随时能改；安装阶段同时不可用。
+                 t61 起是 shell/GateNodeChoice.vue：方法与档位仍由这一层持有（确认区读的是同一份）。 -->
+            <GateNodeChoice
+              v-if="currentStep.id === 'node'"
+              :step-id="currentStep.id"
+              :busy="busy"
+              :step-running="stepRunning"
+              :node-channel="nodeChannel"
+              :method-fact="methodFact"
+              :method-choosable="methodChoosable"
+              :effective-method="effectiveMethod"
+              :method-needs-pick="methodNeedsPick"
+              :method-risk-shown="methodRiskShown"
+              @pick-method="pickMethod"
+              @pick-channel="pickChannel"
+            />
 
             <!-- 事实行：进行中时由进度区占同一个槽位（视觉 §5.5） -->
             <template v-if="!stepRunning">
@@ -1424,65 +1374,27 @@ watch(fixConfirmAction, (action) => {
               </div>
             </div>
 
-            <!-- 结果行：与事实行同一个槽位，失败不换地方、不弹窗、不整屏红 -->
-            <div v-if="stepSettled" class="gate-result">
-              <div class="gate-result-line">
-                <span class="gate-result-dot" :data-state="resultDot" aria-hidden="true"></span>
-                <div class="gate-result-main">
-                  <p class="gate-result-title">{{ resultTitle }}</p>
-                  <p v-if="resultNote" class="gate-result-note">{{ resultNote }}</p>
-                  <div class="btn-row">
-                    <template v-if="activeFlow === 'node'">
-                      <template v-if="nodeOutcome === 'detached'">
-                        <button class="btn small" @click="refresh">重新检测</button>
-                        <button class="btn small" @click="openDownloadPage">打开官方下载页</button>
-                        <button class="btn small" @click="confirmInstallFinished">
-                          我确认安装已经结束
-                        </button>
-                      </template>
-                      <template v-else-if="nodeOutcome === 'refused'">
-                        <button class="btn small" @click="switchToNvm">
-                          改用不用管理员权限的方式安装
-                        </button>
-                        <button class="btn small" @click="refresh">重新检测</button>
-                      </template>
-                      <template v-else>
-                        <button class="btn small" @click="refresh">重新检测</button>
-                        <button class="btn small" @click="retryNode">再试一次</button>
-                        <button class="btn small" @click="openDownloadPage">打开官方下载页</button>
-                      </template>
-                    </template>
-                    <template v-else>
-                      <button class="btn small" @click="refresh">重新检测</button>
-                      <button v-if="fixOutcome !== 'done'" class="btn small" @click="retryFix">
-                        再试一次
-                      </button>
-                      <button
-                        v-if="currentStep.id === 'pnpm'"
-                        class="btn small"
-                        @click="openSkipConfirm"
-                      >
-                        先跳过这一步
-                      </button>
-                      <button
-                        v-if="currentStep.id === 'dsh'"
-                        class="btn small"
-                        @click="openNodeSwitch"
-                      >
-                        换一个 Node
-                      </button>
-                      <button
-                        v-if="currentStep.id === 'dsh'"
-                        class="btn small"
-                        @click="openSettings"
-                      >
-                        在设置里写死一条能跑的启动命令
-                      </button>
-                    </template>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <!-- 结果行：与事实行同一个槽位，失败不换地方、不弹窗、不整屏红（t61 起是
+                 shell/GateResult.vue：点色 / 结论 / 说明 / 那排出路都由这一层递下去） -->
+            <GateResult
+              v-if="stepSettled"
+              :current-step-id="currentStep.id"
+              :result-dot="resultDot"
+              :result-title="resultTitle"
+              :result-note="resultNote"
+              :active-flow="activeFlow"
+              :node-outcome="nodeOutcome"
+              :fix-outcome="fixOutcome"
+              @refresh="refresh"
+              @open-download="openDownloadPage"
+              @confirm-install-finished="confirmInstallFinished"
+              @switch-to-nvm="switchToNvm"
+              @retry-node="retryNode"
+              @retry-fix="retryFix"
+              @open-skip-confirm="openSkipConfirm"
+              @open-node-switch="openNodeSwitch"
+              @open-settings="openSettings"
+            />
 
             <!-- 流式输出：默认收起，展开后与自检页的输出区同一套形态（t58 起是 shell/GateOutput.vue） -->
             <GateOutput
@@ -1978,14 +1890,6 @@ watch(fixConfirmAction, (action) => {
   user-select: text;
 }
 
-/* 方法事实行：归属判得出来时**不给单选**，只把方法说出来（交互 §4.1 的 t29 修订 4-a） */
-.gate-method-fact {
-  margin: 12px 0 0;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-}
-
 .gate-actions {
   margin-top: 16px;
 }
@@ -2003,74 +1907,6 @@ watch(fixConfirmAction, (action) => {
   color: var(--ink-faint);
   font-size: var(--t-xs);
   line-height: 1.7;
-}
-
-/* 结果行：成功 / 失败 / 未确定共用同一个槽位（失败不换地方、不弹窗、不整屏红） */
-.gate-result {
-  margin-top: 12px;
-}
-
-.gate-result-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.gate-result-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  margin-top: 6px;
-  border-radius: 50%;
-  background: var(--ink-dim);
-}
-
-.gate-result-dot[data-state='ok'] {
-  background: var(--run);
-  box-shadow: 0 0 0 3px var(--run-soft);
-}
-
-.gate-result-dot[data-state='failed'] {
-  background: var(--rose);
-  box-shadow: 0 0 0 3px var(--rose-soft);
-}
-
-.gate-result-dot[data-state='warn'] {
-  background: transparent;
-  border: 1.5px solid var(--amber);
-}
-
-/* 未标定：空心环 + 墨色。我们不知道的事不给绿也不给红 */
-.gate-result-dot[data-state='unknown'] {
-  background: transparent;
-  border: 1.5px solid var(--ink-dim);
-}
-
-.gate-result-main {
-  min-width: 0;
-}
-
-.gate-result-title {
-  color: var(--ink);
-  font-size: var(--t-lg);
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-  overflow-wrap: anywhere;
-}
-
-.gate-result-note {
-  max-width: var(--wizard-read);
-  margin-top: 4px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
-.gate-result .btn-row {
-  /* 10px → 12px：卡片里"块 → 按钮行"统一 12px（与 .wizard-progress > .btn-row 同一节奏） */
-  margin-top: 12px;
 }
 
 /* 放行页的三行成果：一张卡、**不给阴影**（阴影是"当前要你处理的那一张"的专属） */
