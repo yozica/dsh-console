@@ -295,11 +295,16 @@ export function runStyles(repo: Repo): void {
         '.plugin-problems',
         '.plugin-problem',
         '.plugin-install-input',
-        '.plugin-config',
         '.plugin-rescue',
       ],
       // 与别处共用的：`.btn` / `.panel*` / `.banner` / `.hint` / `.empty` / `.spacer` / `.block-head`
       staysGlobal: ['.panel-block', '.block-head'],
+    },
+    {
+      // t64：PluginPane 拆出来的生效配置视图（搜索 / 过滤 + 分组条目 + 行内改补丁层）
+      pane: 'PluginConfigView.vue',
+      scoped: ['.plugin-config', '.plugin-config-bar', '.plugin-search', '.plugin-group'],
+      staysGlobal: ['.plugin-tag', '.plugin-entry', '.plugin-entry-list'],
     },
     {
       // t59：插件页拆出来的层栈视图（左边列表 + 右边详情）

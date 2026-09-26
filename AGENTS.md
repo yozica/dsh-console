@@ -108,8 +108,8 @@ src/
     panes/              七个页面组件（第二页 TerminalPane = 终端：一条会话条带 dsh 终端与各本地
                          Shell，dsh 那一路是它的子组件 DshTerminal；EnvPane = 环境自检，它不再是
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30；PluginPane = 装配层，
-                         它的层栈视图与操作输出是 PluginStackView / PluginOpPanel 两个子组件，
-                         EnvPane 的更新确认区是 EnvUpdateConfirm，见 7.36）
+                         它的层栈视图 / 操作输出 / 生效配置视图是 PluginStackView / PluginOpPanel /
+                         PluginConfigView 三个子组件，EnvPane 的更新确认区是 EnvUpdateConfirm，见 7.36）
 test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（314 项，`npm test`）
 test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
 test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
@@ -1473,7 +1473,29 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 `.vue` 覆盖与组件数 24 → 25、全局表花括号 202 → 204、`styleLayers` 21 个页面 92 条 → 22 个页面 96 条）、
 沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
 
-**还没做的**（后续 PR）：`EnvGate.vue`（1886 行）还能再拆（展开详情、跳过确认、顶栏与底条、左轨队列）、
+**第八步（t64，2026-09-26）：插件页的生效配置视图**
+
+`panes/PluginPane.vue` 1462 → 1152 行，拆出 `panes/PluginConfigView.vue`（423 行）：组合出来的条目按层
+分组 + 搜索 / 两个过滤开关 + 基线那句"这是 dsh 自带的组合结果" + "运行中但配置里没有"的那几行 + 会话
+插件行数，以及每个条目行内的三个动作（禁用 / 启用 / 移除我的插入）。
+
+**它不持有状态**：搜索词、两个开关、分组、运行中索引、基线与忙位都由父级拿着 —— 同一份数据父级的
+层栈视图与操作输出也在读（`activeData` / `opBusy`），拆开就会变成两个真源。父级只多了一条
+`@update:query="query = $event"` 与两个开关的翻转；模板里只有四处小改（`v-model` 换成
+`:value` + `@input`、两个 `x = !x` 换成事件、根元素的 `v-else` 交给调用方）。
+
+样式这次**整块**搬：生效配置视图那 26 条（`.plugin-config*` / `.plugin-search*` / `.plugin-filter*` /
+`.plugin-group*` / `.plugin-raw*` / `.plugin-scope` / `.plugin-presets` / `.plugin-entry-actions` /
+`.plugin-state*` 与 `.plugin-baseline-note*`）与父级没有任何共用，全部跟着组件走，没有一条进全局表
+（`.plugin-tag*` / `.plugin-entry*` 早在 t59 就进了全局表）。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/plugin2-split/`，夹具画了
+配置条 / 基线那句 / 分组与条目（含三个行内动作与运行状态）/ 运行时挂载 / 会话插件行数 / 原始 dump
+那一支）、`npm test` 314/314（**3** 行计数口径变化：`.vue` 覆盖与组件数 25 → 26、`styleLayers`
+22 个页面 96 条 → 23 个页面 99 条）、沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` /
+`build` 全绿。
+
+**还没做的**（后续 PR）：`EnvGate.vue`（1781 行）还能再拆（展开详情、跳过确认、顶栏与底条、左轨队列）、
 `PluginPane.vue` 剩下的三块（救援条、生效配置视图、安装行）、`SettingsPane.vue`（842）、
 `ArchivePane.vue`（769）、以及纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；
 模板与样式一起搬的那些照上面这套来（`.verify/{gate,gate2,plugin,envpane}-split/{equiv,pixel}.py` 直接用）。
