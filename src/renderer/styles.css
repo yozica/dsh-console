@@ -1345,6 +1345,95 @@ body[data-gate-visible='true'] .rail > * {
   color: var(--code-ink);
 }
 
+/* t58：以下几条原来在 EnvGate 的 <style scoped> 里 —— 向导的确认区拆成 shell/GateNodeConfirm.vue
+   之后它们同时落在父组件与子组件上（`.gate-choice` / `.gate-detail*` / `.gate-fact-more` /
+   `.gate-option-risk` 在"选择区 / 展开看详情"里也画着），按 §7.33 的判据收进全局表。
+   `.gate-confirm-loading` 只有那个子组件在用，跟着它进组件的 scoped 块。 */
+.gate-fact-more {
+  margin-top: 8px;
+}
+
+/* 详情只在用户点开的地方出现：下沉井 + 等宽，技术串看起来像"细节" */
+.gate-detail {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+}
+
+.gate-detail-row {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: var(--t-xs);
+}
+
+.gate-detail-key {
+  flex: 0 0 120px;
+  color: var(--ink-faint);
+}
+
+.gate-detail-val {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-dim);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* 选择区：两张单选卡（步骤 1 的两条安装路径）。选中 = 软底 + 强调边，不加阴影、不加对勾 */
+.gate-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* 归属判不出来时每条路都要带一句并存风险（需求 §7.9 第 4 条）：说清会多出一份 Node */
+.gate-option-risk {
+  display: block;
+  margin-top: 5px;
+  color: var(--amber);
+  font-size: var(--t-xs);
+  line-height: 1.7;
+}
+
+/* 确认区：下沉井 + 左 3px 强调条 + 两列事实表（与既有确认区同一套件） */
+.gate-confirm {
+  margin-top: 12px;
+  padding: 11px 13px;
+  background: var(--well);
+  border: 1px solid var(--hairline-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-panel);
+}
+
+.gate-confirm-title {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.gate-confirm-cmd {
+  display: block;
+  margin-top: 7px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.gate-confirm .btn-row {
+  margin-top: 10px;
+}
+
 /* 两个跨屏复用的小砖：提醒块（软底，不许做成卡）与决策块（要用户明确选一次） */
 .wizard-notice {
   margin-top: 10px;

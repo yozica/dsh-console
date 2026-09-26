@@ -249,6 +249,19 @@ export function runStyles(repo: Repo): void {
       ],
     },
     {
+      // t58：向导的确认区拆成 shell/GateNodeConfirm.vue（只读的"将要执行"卡片）。
+      // 它只带走了那条"加载中"的说明行；确认区的零件与父组件、自检页共用 → 进全局表。
+      pane: 'GateNodeConfirm.vue',
+      scoped: ['.gate-confirm-loading'],
+      staysGlobal: [
+        '.gate-confirm',
+        '.gate-confirm-title',
+        '.gate-confirm-cmd',
+        '.gate-detail',
+        '.gate-fact-more',
+      ],
+    },
+    {
       pane: 'PluginPane.vue',
       scoped: [
         '.plugin',
