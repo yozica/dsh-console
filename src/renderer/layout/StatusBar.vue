@@ -8,9 +8,9 @@
  * 也不会被下一次响应式更新抹掉。
  */
 import { computed, onUnmounted, ref } from 'vue';
-import { currentTab, dsh, phaseInfo, snapshot, update } from '../state/store.js';
+import { dsh, phaseInfo, snapshot, updateHint } from '../state/store.js';
 import { shortcutLabel } from '../utils/platform.js';
-import { requestUpdateCardFocus } from '../state/update-anchor.js';
+import { openUpdateSettings } from '../state/update-anchor.js';
 
 const MESSAGE_MS = 6000;
 
@@ -51,19 +51,6 @@ const tabHint = computed(() => `${shortcutLabel('1~7')} 切换页面`);
  * 有新版本（发现 / 已下载）时在底栏加一句可点的提示，点它去设置页的更新卡片。
  * 只在"需要用户动手"的两个相位出现，其余时间底栏保持原样。
  */
-const updateHint = computed(() => {
-  if (update.value.phase === 'available') {
-    return `发现新版本 ${update.value.version || ''}，点此查看`;
-  }
-  if (update.value.phase === 'downloaded') return '新版本已下载，点此查看';
-  return '';
-});
-
-function openUpdateSettings(): void {
-  currentTab.value = 'settings';
-  // 光切页不够：设置页有好几屏，更新卡片在「关于」里 —— 让设置页把它滚进视野并亮一次
-  requestUpdateCardFocus();
-}
 </script>
 
 <template>
@@ -79,7 +66,7 @@ function openUpdateSettings(): void {
 </template>
 
 <style scoped>
-/* 底栏自己的样式（t48 样式分层）：`.statusbar` / `.kbd-hint` / `.update-hint`。 */
+/* 底栏自己的样式（t48 样式分层）：`.statusbar` / `.kbd-hint`；`.update-hint` t72 起进了全局表（顶栏那格也在用）。 */
 
 .statusbar {
   display: flex;
@@ -99,17 +86,4 @@ function openUpdateSettings(): void {
 
 /* 底栏的更新提示：有新版本或已下载时才出现。
    点它会切到设置页，并把「关于」里的更新卡片滚进视野、高亮一次（见 update-anchor.ts） */
-.update-hint {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-family: inherit;
-  font-size: var(--t-xs);
-  cursor: pointer;
-}
-
-.update-hint:hover {
-  text-decoration: underline;
-}
 </style>

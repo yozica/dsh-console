@@ -625,6 +625,21 @@ main {
   line-height: 1.7;
 }
 
+/* 更新提示（t72 起两个组件都在用：底栏那条 + 应用内全屏时顶栏那格 → 进全局表，见 §7.33） */
+.update-hint {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.update-hint:hover {
+  text-decoration: underline;
+}
+
 /* ============================================================ 终端类页面（共享部分）
    `.term-host` 的**基础**规则（relative + flex: 1 1 auto）两路终端都在用，留在全局表；
    终端页自己的 `.term-body` / `.term-view` / `.shell-tab*` / `.chips` 搬进
