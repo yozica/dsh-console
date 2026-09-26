@@ -128,7 +128,7 @@ src/
                         - `env/`：EnvPane + 更新确认区 EnvUpdateConfirm（它不再是页面，是设置页
                           「运行环境」卡的详情视图，见 7.30）
                         - `dashboard` / `ui` / `usage` / `archive` / `settings`：各自一页，暂时只有一个文件
-test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（317 项，`npm test`）
+test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（318 项，`npm test`）
 test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
 test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
 test/text.ts            从源码文本里切片段的纯函数（blockOf / functionBodyOf / methodSliceOf / strip*）
@@ -176,7 +176,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（317 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（318 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -810,9 +810,9 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 
 **设置页的更新卡片**：状态行来自状态机的 `message`，下面那句说明**按平台分开写**（`updateNote` 计算属性）—— Windows 才说"下载与安装都不会自己做"，macOS 上根本装不了（ad-hoc 签名），说的是"点「打开下载页」下载新的 dmg 覆盖安装"；`canCheck` 为假（开发态）时整句不显示，因为状态行已经把原因说全了。版本号不在卡片里重复（上面「关于」已有 `DSH Console x.y.z`），按钮与「软件更新」标题同一行。
 
-**开发态怎么验这两条提示**：`available` / `downloaded` 只有**打包后的 Windows** 才可能出现（macOS 只能查到、装不了；开发态直接 `unsupported`），所以底栏那句提示、顶栏那一格（应用内全屏时底栏被藏起来，见 7.17 上面这段的落点）在开发时既看不见也点不到。为此有一个**只在开发态露出的**"假装更新相位"开关：设置页「关于」卡底部那排按钮（`v-if="!packaged"`，打包版连渲染都不渲染）与快捷键 `Ctrl+Shift+U` / `⌘⇧U`（在 `available → downloaded → downloading → 还原` 之间循环，只在非打包时安装）。它**不动真实状态**：伪装写在 `state/update-fake.ts` 的 `fakeUpdate` 里，界面读的 `update` 是 `fakeUpdate ?? realUpdate` 的**派生值**，真实那份只有一个写入口 `applyUpdate()` —— 于是主进程随后推来的 `onUpdateState` 不会把伪装顶掉（早先"就地改写真实那份"的写法有这个毛病），点「还原真实相位」也就是把伪装清空。伪装出来的 `message` 都带「（开发态演示）」，免得截图被当成真的发现了新版本。
+**开发态怎么验这两条提示**：`available` / `downloaded` 只有**打包后的 Windows** 才可能出现（macOS 只能查到、装不了；开发态直接 `unsupported`），所以底栏那句提示、顶栏那一格（应用内全屏时底栏被藏起来，见 7.17 上面这段的落点；**它排在顶栏里那格上下文信息「<地址>，PID …」的左边** —— 那格说的是「当前连的是哪个实例」、紧贴「退出全屏」，更新提示是一句动作，排在它前面；反过来写会像地址的尾巴，用户真机抓图指出过）在开发时既看不见也点不到。为此有一个**只在开发态露出的**"假装更新相位"开关：设置页「关于」卡底部那排按钮（`v-if="!packaged"`，打包版连渲染都不渲染）与快捷键 `Ctrl+Shift+U` / `⌘⇧U`（在 `available → downloaded → downloading → 还原` 之间循环，只在非打包时安装）。它**不动真实状态**：伪装写在 `state/update-fake.ts` 的 `fakeUpdate` 里，界面读的 `update` 是 `fakeUpdate ?? realUpdate` 的**派生值**，真实那份只有一个写入口 `applyUpdate()` —— 于是主进程随后推来的 `onUpdateState` 不会把伪装顶掉（早先"就地改写真实那份"的写法有这个毛病），点「还原真实相位」也就是把伪装清空。伪装出来的 `message` 都带「（开发态演示）」，免得截图被当成真的发现了新版本。
 
-**哪条自检守着**：「渲染层：开发态「假装更新相位」只在开发态露出（真实状态只有一个写入口）」（钉派生值、单一写入口、设置页按钮在 `!packaged` 块里、快捷键只在非打包时安装）、「自动更新：契约里有 7 个相位、UpdateState 字段与 4 个 API」「自动更新：`autoCheckUpdates` 在契约与 DEFAULTS 两处一致」「自动更新：不会偷偷下载 / 偷偷安装」「自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）」「自动更新：未打包时不加载 electron-updater（没有顶层 import，只按需 require）」。这五条**都是静态检查**：受限环境里跑不了打包后的应用，所以真机上装完新版后的行为仍要人工验一次。
+**哪条自检守着**：「渲染层：开发态「假装更新相位」只在开发态露出（真实状态只有一个写入口）」（钉派生值、单一写入口、设置页按钮在 `!packaged` 块里、快捷键只在非打包时安装）、「渲染层：更新提示两处共用一句话，顶栏那格排在地址左边（用户真机的摆法）」、「自动更新：契约里有 7 个相位、UpdateState 字段与 4 个 API」「自动更新：`autoCheckUpdates` 在契约与 DEFAULTS 两处一致」「自动更新：不会偷偷下载 / 偷偷安装」「自动更新：macOS 分支存在（ad-hoc 签名 → canAutoUpdate=false + 打开下载页）」「自动更新：未打包时不加载 electron-updater（没有顶层 import，只按需 require）」。这五条**都是静态检查**：受限环境里跑不了打包后的应用，所以真机上装完新版后的行为仍要人工验一次。
 
 ### 7.18 插件装配层：两个层面，别混
 
@@ -1775,7 +1775,7 @@ AGENTS 与 `docs/{env-doctor,plugin-restart,env-wizard}.md` 这类"现在怎么�
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，317 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，318 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

@@ -764,6 +764,31 @@ export function runStyles(repo: Repo): void {
       /:class="\{ rose: navOutcome === 'failed' \}"/.test(vueSource),
   );
 
+  // 「有更新」那句话在**两处**出现（底栏那条 + 应用内全屏时顶栏那一格，见 §7.17），这段钉两件事：
+  //   ① 两处读的是**同一句话**（`updateHint`，只在 store 里拼一次）—— 各拼一份就会漂；
+  //   ② 顶栏那一格的**摆法**：排在地址那格（`#topbar-note`）的**左边**、在「退出全屏」之前。
+  //      用户真机抓图指出的：写在地址后面时，那句动作夹在"当前连的是哪个实例"与退出按钮之间，
+  //      读起来像地址的尾巴；地址那一格该紧贴退出按钮。
+  const statusBarSource = fs.readFileSync(repo.vuePath('StatusBar.vue'), 'utf8');
+  const topButtonAt = topBarSource.indexOf('id="btn-topbar-update"');
+  const topNoteAt = topBarSource.indexOf('id="topbar-note"');
+  const exitButtonAt = topBarSource.indexOf('id="btn-exit-immersive"');
+  check(
+    '渲染层：更新提示两处共用一句话，顶栏那格排在地址左边（用户真机的摆法）',
+    /import \{[^}]*updateHint[^}]*\} from '[^']*store\.js';/.test(topBarSource) &&
+      /import \{[^}]*updateHint[^}]*\} from '[^']*store\.js';/.test(statusBarSource) &&
+      // 句子本身只在 store 里拼：组件里出现这句话的原文就是抄了一份
+      !/发现新版本/.test(topBarSource) &&
+      !/发现新版本/.test(statusBarSource) &&
+      /immersive && updateHint/.test(topBarSource) &&
+      topButtonAt !== -1 &&
+      topNoteAt !== -1 &&
+      exitButtonAt !== -1 &&
+      topButtonAt < topNoteAt &&
+      topNoteAt < exitButtonAt,
+    `顶栏三处的位置（字符下标）：提示=${topButtonAt} 地址=${topNoteAt} 退出=${exitButtonAt}`,
+  );
+
   // t46：用户在锁上按「不等了」/ Esc 要**取消**这次跳转（唯一会取消的路径，规格 §2.4）
   const userSkipBody =
     bootLockCode.match(/function userSkipBootLock\(\): void \{[\s\S]*?\n\}/)?.[0] ?? '';

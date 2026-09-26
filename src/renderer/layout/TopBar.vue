@@ -86,6 +86,18 @@ const note = computed(() => harnessArrivalNotice.value || contextNote.value);
     ></span>
     <h1 class="page-title" id="page-title">{{ title }}</h1>
     <div class="spacer"></div>
+    <!-- 应用内全屏时底栏被藏起来，更新提示得在这条里也有一份（见 §7.17）。
+         摆法（用户真机指出）：**排在地址那一格的左边** —— 右边那格说的是"当前连的是哪个实例"
+         （`127.0.0.1:3080，外部实例 PID …`），紧贴「退出全屏」；更新提示是一句动作，
+         排在它前面。写在后面的话，那句话会夹在地址与退出按钮之间，读起来像地址的尾巴。 -->
+    <button
+      v-if="immersive && updateHint"
+      id="btn-topbar-update"
+      class="update-hint"
+      @click="openUpdateSettings"
+    >
+      {{ updateHint }}
+    </button>
     <!-- 与页面相关的控件：门禁层显示期间整条收起（v-if，不留空槽、不加过渡） -->
     <span
       v-if="!gateVisible"
@@ -95,15 +107,6 @@ const note = computed(() => harnessArrivalNotice.value || contextNote.value);
       >{{ note }}</span
     >
 
-    <!-- 应用内全屏时底栏被藏起来，更新提示得在这格旁边也有一份（见 §7.17） -->
-    <button
-      v-if="immersive && updateHint"
-      id="btn-topbar-update"
-      class="update-hint"
-      @click="openUpdateSettings"
-    >
-      {{ updateHint }}
-    </button>
     <button
       v-if="!gateVisible"
       id="btn-exit-immersive"
