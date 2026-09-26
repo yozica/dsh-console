@@ -2,7 +2,7 @@
 'dsh-console': patch
 ---
 
-首启门禁拆出事实行 / 进行中进度（`EnvGate.vue` 1989 → 1781 行，新增 `shell/GateFacts.vue` 181 行）
+首启门禁拆出事实行 / 进行中进度（`EnvGate.vue` 1989 → 1781 行，新增 `gate/GateFacts.vue` 181 行）
 
 这一块是"三块共用一个槽位"（视觉 §5.5）：不在跑时摆事实行，在跑时摆状态行 + 进度 + 一个明确的按钮，
 底下还挂着第二步特有的那条 —— npm 都不能用时不给一个注定失败的「安装」，而是给 `corepack enable pnpm`。

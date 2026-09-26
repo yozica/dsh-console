@@ -9,14 +9,14 @@
  * **它不持有状态**：选中哪一层、操作忙不忙、数据是哪一份，都由父级拿着 —— 父级那边还有
  * 同一个选中层的"在生效配置里看这几条"跳转与增删改操作。这里只把点击报回去。
  */
-import type { PluginEntry, PluginInspectResult, PluginLayer } from '../../shared/ipc.js';
+import type { PluginEntry, PluginInspectResult, PluginLayer } from '../../../shared/ipc.js';
 import {
   isOwnLayer,
   kindLabel,
   layerName as viewLayerName,
   ownLayerTag as viewOwnLayerTag,
   ownLayerWhy as viewOwnLayerWhy,
-} from '../lib/plugin-view.js';
+} from '../../lib/plugin-view.js';
 
 const props = defineProps<{
   /** 这一屏读的那份装配信息（基线视图里是内置层的结果，见父级的 `activeData`） */

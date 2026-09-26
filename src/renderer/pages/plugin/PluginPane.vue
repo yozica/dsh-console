@@ -15,9 +15,9 @@
  *     插件把启动打挂时，恰恰只有这一页还能看。
  */
 import { computed, ref, watch } from 'vue';
-import { requestEnvFocus } from '../lib/env-anchor.js';
-import { envFix, wireEnvDoctor } from '../lib/env-doctor.js';
-import { openEnvDetail } from '../lib/env-layer.js';
+import { requestEnvFocus } from '../../lib/env-anchor.js';
+import { envFix, wireEnvDoctor } from '../../lib/env-doctor.js';
+import { openEnvDetail } from '../../lib/env-layer.js';
 import {
   LAYER_ACTIONS,
   buildLiveIndex,
@@ -31,13 +31,13 @@ import {
   liveEntriesOnly,
   problemLabel,
   visibleGroupsOf,
-} from '../lib/plugin-view.js';
-import { restartThenOpenHarness } from '../lib/restart-flow.js';
+} from '../../lib/plugin-view.js';
+import { restartThenOpenHarness } from '../../lib/restart-flow.js';
 import PluginConfigView from './PluginConfigView.vue';
 import PluginOpPanel from './PluginOpPanel.vue';
 import PluginStackView from './PluginStackView.vue';
-import { clearRestartNav, restartNav } from '../lib/restart-nav.js';
-import { currentTab, dsh, phaseInfo, snapshot } from '../lib/store.js';
+import { clearRestartNav, restartNav } from '../../lib/restart-nav.js';
+import { currentTab, dsh, phaseInfo, snapshot } from '../../lib/store.js';
 import type {
   PluginEntry,
   PluginLayerEditAction,
@@ -45,7 +45,7 @@ import type {
   PluginInspectResult,
   PluginLayer,
   PluginProblem,
-} from '../../shared/ipc.js';
+} from '../../../shared/ipc.js';
 
 const api = window.dshConsole;
 
@@ -865,7 +865,7 @@ function clearFilters(): void {
         </ul>
       </section>
 
-      <!-- 视图一：装配层栈（t59 起是 panes/PluginStackView.vue：这一层只把数据与选中递给它、
+      <!-- 视图一：装配层栈（t59 起是 pages/plugin/PluginStackView.vue：这一层只把数据与选中递给它、
            把"选中哪一层 / 跳转 / 升级 / 移除 / 临时停用"接回来 —— 父级那边还有同一个选中层的
            生效配置条目与增删改，状态只能有一个真源） -->
       <PluginStackView
@@ -882,7 +882,7 @@ function clearFilters(): void {
         @edit-bundle="editBundle"
       />
 
-      <!-- 视图二：生效配置（t64 起是 panes/PluginConfigView.vue：搜索词 / 两个过滤开关 /
+      <!-- 视图二：生效配置（t64 起是 pages/plugin/PluginConfigView.vue：搜索词 / 两个过滤开关 /
            基线与运行中索引都由这一层持有，子组件只报输入与点击） -->
       <PluginConfigView
         v-else
@@ -908,7 +908,7 @@ function clearFilters(): void {
       />
 
       <!-- 操作输出：pnpm 的原始输出原样贴出来，不假装进度条（与 dsh 终端同族）——
-           t59 起是 panes/PluginOpPanel.vue -->
+           t59 起是 pages/plugin/PluginOpPanel.vue -->
       <PluginOpPanel
         v-if="opStatus && opOpen"
         :op-busy="opBusy"

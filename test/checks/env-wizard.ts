@@ -1124,9 +1124,7 @@ export function runEnvWizard(repo: Repo): void {
   // ---------------------------------------------------------- 18. 门禁界面与安装引擎
   //    冻结文档 §3.8 里"由渲染层 / 安装引擎提清单、由契约与编排落地"的那几条
   //    （第 12~14、16、19、20、22、23 条）。`test/selftest.ts` 只由契约与编排改（§5.3）。
-  const topBarCode = stripComments(
-    fs.readFileSync(path.join(rendererDir, 'shell', 'TopBar.vue'), 'utf8'),
-  );
+  const topBarCode = stripComments(fs.readFileSync(repo.vuePath('TopBar.vue'), 'utf8'));
   const escapeButtonTag = /<button[^>]*@click="escape"[^>]*>/.exec(gateRaw)?.[0] ?? '';
   const gateEscapeBody = blockOf(gateCode, 'function escape(): void');
   check(
@@ -1158,14 +1156,18 @@ export function runEnvWizard(repo: Repo): void {
     })(),
   );
   const tabOrderBody = /const TAB_ORDER: TabId\[\] = \[([\s\S]*?)\];/.exec(appTsCode)?.[1] ?? '';
+  // "是不是页面"看**挂载清单里的 import 说明符**，不看目录名、也不看注释：
+  // 门禁层从 `gate/` 进来，页面在 `pages/<一处>/` 下（t67 起的结构）。
+  const mountImports = [...mountJs.matchAll(/from\s+'([^']*)'/g)].map((match) => match[1]);
   check(
-    '首启门禁：门禁层不是页面（TAB_ORDER 与 panes 清单里都没有它，容器与启动锁同级）',
+    '首启门禁：门禁层不是页面（TAB_ORDER 与页面清单里都没有它，容器与启动锁同级）',
     tabOrderBody.length > 0 &&
       !/gate/i.test(tabOrderBody) &&
-      !/panes\/[\w]*Gate/i.test(mountJs) &&
+      mountImports.includes('./gate/EnvGate.vue') &&
+      mountImports.includes('./gate/GateBanner.vue') &&
+      !mountImports.some((spec) => /^\.\/pages\/[\w/]*Gate/.test(spec)) &&
+      !mountImports.some((spec) => /^\.\/pages\/[\w/]*(EnvGate|GateBanner)\.vue$/.test(spec)) &&
       !/id="pane-gate"/.test(html) &&
-      /from '\.\/shell\/EnvGate\.vue'/.test(mountJs) &&
-      /from '\.\/shell\/GateBanner\.vue'/.test(mountJs) &&
       /id="gate-root"/.test(html) &&
       /id="boot-lock"/.test(html) &&
       // 同一层：门禁容器在启动锁之前，两者都在九页容器之外

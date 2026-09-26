@@ -1,7 +1,7 @@
 /**
  * 「插件」页的纯展示判据。
  *
- * 这些函数原来长在 `panes/PluginPane.vue` 的 `<script setup>` 里，虽然一条 DOM 都不碰，却和
+ * 这些函数原来长在 `pages/plugin/PluginPane.vue` 的 `<script setup>` 里，虽然一条 DOM 都不碰，却和
  * `ref` / `computed` 混在一起 —— 于是"某一层叫什么、算不算没贡献、巡检里这条能不能点"
  * 这些**规则**没法单独读、也没法单独测。搬到这里之后：组件里只剩一层薄包装（把 `data` /
  * `problems` 这些响应式来源喂进来）。

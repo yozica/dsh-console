@@ -31,13 +31,13 @@ function recheckEnv(): void {
  * 不共享可变全局。
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { envReport, envReportLoading, loadEnvReport } from '../lib/env-doctor.js';
-import { openEnvDetail } from '../lib/env-layer.js';
-import { settings, snapshot, update } from '../lib/store.js';
-import { isMac } from '../lib/platform.js';
-import { scrollIntoViewEased } from '../lib/scroll.js';
-import { updateCardFocus } from '../lib/update-anchor.js';
-import type { EnvInfo, SettingsValues, UpdatePhase } from '../../shared/ipc';
+import { envReport, envReportLoading, loadEnvReport } from '../../lib/env-doctor.js';
+import { openEnvDetail } from '../../lib/env-layer.js';
+import { settings, snapshot, update } from '../../lib/store.js';
+import { isMac } from '../../lib/platform.js';
+import { scrollIntoViewEased } from '../../lib/scroll.js';
+import { updateCardFocus } from '../../lib/update-anchor.js';
+import type { EnvInfo, SettingsValues, UpdatePhase } from '../../../shared/ipc';
 
 const api = window.dshConsole;
 

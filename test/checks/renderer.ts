@@ -5,7 +5,8 @@
  *
  * 渲染层没有类型检查，这一组就是它的类型检查：元素 id / class / API 名拼错、挂载点断链、
  * 平台适配走样都在这儿挡。界面已经逐页迁到 Vue 单文件组件，所以**标记与脚本都要把 .vue
- * 一起算进来**（panes/ 是页面，shell/ 是外壳），否则迁走的部分会悄悄脱离覆盖。
+ * 一起算进来**（`pages/` 是页面与页面私有的子件，`gate/` 是门禁层，`shell/` 是外壳，
+ * `components/` 是通用件），否则迁走的部分会悄悄脱离覆盖。
  *
  * 整段从 `test/selftest.ts` 的 `main()` 里搬出来，行为一字未改 —— 搬完的证据是自检输出
  * 逐行一致（314 条同名、同值、同顺序）；它要的那些源码文本由 `repo` 统一读好。
@@ -67,22 +68,25 @@ export function runRenderer(repo: Repo): void {
   // 每个组件都必须**有人用**：要么在 mount.ts 的挂载清单里，要么被别的组件 import
   //（t45 起「终端」页把 dsh 那一路拆成了子组件 DshTerminal，它不该出现在挂载清单里）。
   // 两种都不占的组件等于死代码 —— 界面上那块永远空着，或者根本没人渲染它。
-  const allVueSources =
-    mountJs +
-    vueFiles
-      .map(({ dir, name }) => fs.readFileSync(path.join(rendererDir, dir, name), 'utf8'))
-      .join('\n');
-  const unusedVue = vueFiles
-    .filter(({ dir, name }) => {
-      const stem = name.replace(/\.vue$/, '');
-      // 两种写法都算：挂载清单里是 `./panes/X.vue`，同目录的组件之间是 `./X.vue`
-      const specs = [
-        dir === 'panes' ? `./panes/${stem}.vue` : `./shell/${stem}.vue`,
-        `./${stem}.vue`,
-      ];
-      return !specs.some((spec) => allVueSources.includes(`from '${spec}'`));
-    })
-    .map(({ name }) => name);
+  // **判据是"解析 import"，不是"拼路径"**（t67）：组件按「一处一目录」散在
+  // `pages/*` / `gate/` / `shell/` 下，把 `./panes/X.vue` 这种写法写进断言就等于
+  // "每搬一次目录都要改自检"。这里把每条相对 import 按**它所在文件的目录**解析成
+  // 相对 `renderer/` 的路径，再看这个组件在不在那张被 import 的表里 ——
+  // 挂载清单（在根上）与同目录/跨目录的相对引用自动都对。
+  const readVue = (rel: string): string => fs.readFileSync(path.join(rendererDir, rel), 'utf8');
+  const imported = new Set<string>();
+  for (const [dir, text] of [
+    ['.', mountJs],
+    ...vueFiles.map((file): [string, string] => [
+      path.posix.dirname(file.path),
+      readVue(file.path),
+    ]),
+  ] as [string, string][]) {
+    for (const match of text.matchAll(/from\s+'(\.[^']*)'/g)) {
+      imported.add(path.posix.normalize(path.posix.join(dir, match[1])));
+    }
+  }
+  const unusedVue = vueFiles.filter((file) => !imported.has(file.path)).map((file) => file.name);
   check(
     '渲染层：每个 .vue 组件都被用到（在挂载清单里，或被别的组件 import）',
     vueFiles.length > 0 && unusedVue.length === 0,
@@ -91,15 +95,10 @@ export function runRenderer(repo: Repo): void {
   // 挂了终端的页面必须自己订阅容器尺寸变化。"靠全局 resize"或"切页时才 fit"都不够：
   // 本地 Shell 就因此不跟随窗口（踩过 —— 旧代码里是 app.js 的全局 resize 处理器负责，
   // 迁移时只搬进了终端页）。
-  const terminalUsers = vueFiles.filter(({ dir, name }) =>
-    fs.readFileSync(path.join(rendererDir, dir, name), 'utf8').includes('attachTerminal('),
-  );
+  const terminalUsers = vueFiles.filter((file) => readVue(file.path).includes('attachTerminal('));
   const noObserver = terminalUsers
-    .filter(
-      ({ dir, name }) =>
-        !fs.readFileSync(path.join(rendererDir, dir, name), 'utf8').includes('ResizeObserver'),
-    )
-    .map(({ name }) => name);
+    .filter((file) => !readVue(file.path).includes('ResizeObserver'))
+    .map((file) => file.name);
   check(
     '渲染层：用终端的页面都订阅了容器尺寸变化',
     terminalUsers.length > 0 && noObserver.length === 0,

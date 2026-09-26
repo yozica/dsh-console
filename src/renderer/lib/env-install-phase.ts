@@ -1,6 +1,6 @@
 /**
- * 安装 / 修复通道的相位判据。门禁层（`shell/EnvGate.vue`）与设置页的运行环境详情层
- * （`panes/EnvPane.vue`）各画一份进度，判据必须只有一份 —— 两份就会漂移。
+ * 安装 / 修复通道的相位判据。门禁层（`gate/EnvGate.vue`）与设置页的运行环境详情层
+ * （`pages/env/EnvPane.vue`）各画一份进度，判据必须只有一份 —— 两份就会漂移。
  */
 
 import type { EnvFixPhase, EnvInstallPhase, EnvInstallState } from '../../shared/ipc.js';

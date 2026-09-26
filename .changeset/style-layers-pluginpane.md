@@ -2,7 +2,7 @@
 'dsh-console': patch
 ---
 
-样式分层第五批：插件页（装配层）整节搬进 `panes/PluginPane.vue` 的 `<style scoped>`
+样式分层第五批：插件页（装配层）整节搬进 `pages/plugin/PluginPane.vue` 的 `<style scoped>`
 
 - 「插件页（装配层）」一整节 **96 个条目**搬走（`.plugin*` / `.layer*` / `.plugin-op*` …），全局表 **3376 → 2649 行（−727，比最初的 4502 少了 41%）**。这一页没有 `v-html`，不需要 `:deep()`。
 - 留在全局表的是跨页面共用的零件（`.btn` / `.panel*` / `.banner` / `.hint` / `.empty` / `.spacer` / `.block-head`）。

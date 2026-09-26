@@ -2,7 +2,7 @@
 'dsh-console': patch
 ---
 
-插件页拆出生效配置视图（`PluginPane.vue` 1462 → 1152 行，新增 `panes/PluginConfigView.vue` 423 行）
+插件页拆出生效配置视图（`PluginPane.vue` 1462 → 1152 行，新增 `pages/plugin/PluginConfigView.vue` 423 行）
 
 拆出去的是：组合出来的条目按层分组 + 搜索 / 两个过滤开关 + 基线那句"这是 dsh 自带的组合结果" +
 "运行中但配置里没有"的那几行 + 会话插件行数，以及每个条目行内的三个动作（禁用 / 启用 / 移除我的插入）。

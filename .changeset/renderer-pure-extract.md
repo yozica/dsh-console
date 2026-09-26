@@ -4,7 +4,7 @@
 
 渲染层拆模块第一步：门禁与详情层的共享纯逻辑进 `lib/`（顺带 dedupe 六处逐字重复）
 
-`shell/EnvGate.vue` 2648 → 2515 行、`panes/EnvPane.vue` 1546 → 1501 行，新增：
+`gate/EnvGate.vue` 2648 → 2515 行、`pages/env/EnvPane.vue` 1546 → 1501 行，新增：
 
 - `lib/gate-copy.ts`（135 行）：门禁与「运行环境」详情层共用的**词表与现成句子** —— 官方下载页、
   忙提示、三步文案、五项状态词、方法事实、两条安装路、档位词、并存风险，以及 `versionWithChannel`。

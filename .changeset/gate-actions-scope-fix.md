@@ -5,8 +5,8 @@
 首启门禁放行页的按钮行少了 16px 间距（`.gate-actions` 被搬进子组件的 scoped 块，父组件够不着）
 
 真机翻看发现的：放行页那排「进入 DSH Console / 再看看环境自检」贴着上面的完成清单。t62 把
-`.gate-actions { margin-top: 16px }` 写进了 `shell/GateActions.vue` 的 `<style scoped>`，而
-`shell/EnvGate.vue` 的**放行页**与**回看卡**也在用同一个 class —— `<style scoped>` 只作用于本组件
+`.gate-actions { margin-top: 16px }` 写进了 `gate/GateActions.vue` 的 `<style scoped>`，而
+`gate/EnvGate.vue` 的**放行页**与**回看卡**也在用同一个 class —— `<style scoped>` 只作用于本组件
 的模板（加上"被当子组件用时那个根元素"），所以那两处收到的是死规则。
 
 - `.gate-actions` 回到 `styles.css` 全局表；`GateActions.vue` 不再有 `<style scoped>`，

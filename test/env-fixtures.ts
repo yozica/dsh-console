@@ -29,11 +29,11 @@ export interface EnvFixtures {
   envJudgeBody: string;
   /** `src/main/main.ts` 原文，剥注释 */
   envMainCode: string;
-  /** `panes/EnvPane.vue` 原文，剥注释 */
+  /** `pages/env/EnvPane.vue` 原文，剥注释 */
   envPaneCode: string;
   /** `src/main/node-installer.ts` 原文，剥注释（门禁界面与安装引擎两组都在读） */
   installerCode: string;
-  /** `shell/EnvGate.vue` 原文（门禁界面的标记与文案） */
+  /** `gate/EnvGate.vue` 原文（门禁界面的标记与文案） */
   gateRaw: string;
   /** 同上，剥注释 */
   gateCode: string;
@@ -81,9 +81,7 @@ export function createEnvFixtures(repo: Repo): EnvFixtures {
       .map((stem) => fs.readFileSync(path.join(repo.srcDir, 'main', `${stem}.ts`), 'utf8'))
       .join('\n'),
   );
-  const envPaneCode = stripComments(
-    fs.readFileSync(path.join(repo.rendererDir, 'panes', 'EnvPane.vue'), 'utf8'),
-  );
+  const envPaneCode = stripComments(fs.readFileSync(repo.vuePath('EnvPane.vue'), 'utf8'));
   // t52 起 node-installer.ts 是 barrel + 类，纯函数与 IO 住在 node-*.ts 里 ——
   // "读源码文本"的断言要看整份（barrel 里一条 `export function …` 都搜不到）。
   const installerCode = stripComments(
@@ -101,7 +99,7 @@ export function createEnvFixtures(repo: Repo): EnvFixtures {
       .map((stem) => fs.readFileSync(path.join(repo.srcDir, 'main', `${stem}.ts`), 'utf8'))
       .join('\n'),
   );
-  const gateRaw = fs.readFileSync(path.join(repo.rendererDir, 'shell', 'EnvGate.vue'), 'utf8');
+  const gateRaw = fs.readFileSync(repo.vuePath('EnvGate.vue'), 'utf8');
   const gateCode = stripComments(gateRaw);
 
   // 夹具：一份"什么都好"的原始事实，各条断言按需覆盖一两项。
