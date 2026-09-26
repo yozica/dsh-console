@@ -1062,6 +1062,25 @@ body[data-immersive='true'] .webview-wrap {
 /* 插件页（装配层）自己的样式（`.plugin*` / `.layer*` / `.patch*` / `.op-*` …）已经整节搬进
    `panes/PluginPane.vue` 的 `<style scoped>` —— 分层判据见 AGENTS §7.33。 */
 
+/* t63：门禁拆出 `shell/GateFacts.vue` 之后，这两条同时落在父组件与子组件上（`.gate-card-why` 父级
+   的步骤卡也画、`.gate-detail-cmd` 父级的"展开看详情"也画），按 §7.33 的判据收进全局表。 */
+.gate-card-why {
+  max-width: var(--wizard-read);
+  margin-top: 4px;
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+}
+
+.gate-detail-cmd {
+  display: block;
+  margin-top: 4px;
+  color: var(--code-ink);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 /* t59：插件页拆出 `panes/PluginStackView.vue` / `panes/PluginOpPanel.vue` 之后，下面这几条同时落在
    父组件与子组件里（层栈那一列的条目列表与"生效配置"视图画的是同一种条目 / 标签），所以按 §7.33
    的判据收进全局表；只有单边在用的已经跟着组件走。 */

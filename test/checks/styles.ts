@@ -280,6 +280,12 @@ export function runStyles(repo: Repo): void {
       staysGlobal: ['.gate-option-hint'],
     },
     {
+      // t63：EnvGate 拆出来的事实行 / 进行中进度
+      pane: 'GateFacts.vue',
+      scoped: ['.gate-facts', '.gate-fact', '.gate-fact-detail', '.gate-fact-title'],
+      staysGlobal: ['.wizard-progress', '.gate-fact-more'],
+    },
+    {
       pane: 'PluginPane.vue',
       // t59 起层栈视图与操作输出各是一个子组件：`.plugin-layer` / `.plugin-detail-actions` 与
       // `.plugin-op` 跟着它们走了，剩下的是这一页自己的（表头、救援、生效配置、安装行）。
