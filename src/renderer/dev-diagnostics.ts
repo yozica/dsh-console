@@ -13,8 +13,7 @@
  */
 
 import { isAppModifier, shortcutLabel } from './utils/platform.js';
-import { update } from './state/store.js';
-import type { UpdateState } from '../shared/ipc';
+import { cycleFakeUpdate as cycleFakeUpdateInStore } from './state/update-fake.js';
 
 const MAX_DEPTH = 12;
 const MAX_LINES = 600;
@@ -79,73 +78,15 @@ function dumpState(): void {
 // ---------------------------------------------------------------- 更新提示的演示
 
 /**
- * 开发态"体验更新提示"：Ctrl+Shift+U（macOS ⌘⇧U）在几个更新相位之间循环。
- *
- * 为什么需要它：底栏那句「发现新版本 x.y.z，点此查看」只在 `available` / `downloaded`
- * 两个相位出现，而更新状态机只在**打包后的 Windows** 上才可能进入这两个相位
- * （见 src/main/updater.ts：未打包一律 `unsupported`）—— 于是这条提示、以及它点下去
- * 的「滚到更新卡片 + 高亮一次」，在开发时根本看不见、也点不到。
- *
- * 循环是 `available → downloaded → downloading → 回到真实状态`：第一次按下时先把真实
- * 状态存下来，走完一圈原样放回，所以它不会把开发态那个 `unsupported` 弄丢。
- * 消息里都带「（开发态演示）」，免得截图被误当成真的发现新版本。
- *
- * 注意：伪造的是**渲染层这份镜像**，点设置页里的「下载 / 重启并安装」会去问主进程，
- * 那次往返会把状态换回真实的 unsupported —— 想继续看再按一次快捷键即可。
+ * 开发态"体验更新提示"：Ctrl+Shift+U（macOS ⌘⇧U）在几个更新相位之间循环 ——
+ * 相位表、伪装出来的状态、文案都在 `state/update-fake.ts` 里，设置页那排按钮用的是同一份
+ * 实现（见 §7.17）。这里只负责"按快捷键也走那条路"，不自己造一份状态。
  */
-const FAKE_PHASES = ['available', 'downloaded', 'downloading'] as const;
-const FAKE_VERSION = '9.9.9';
-let fakeIndex = 0;
-let realUpdate: UpdateState | null = null;
-
-function fakeState(phase: (typeof FAKE_PHASES)[number], real: UpdateState): UpdateState {
-  const common = {
-    currentVersion: real.currentVersion,
-    releasesUrl: real.releasesUrl,
-    canCheck: true,
-    canAutoUpdate: true,
-  };
-  if (phase === 'available') {
-    return {
-      ...common,
-      phase,
-      version: FAKE_VERSION,
-      percent: null,
-      message: `发现新版本 ${FAKE_VERSION}（开发态演示）`,
-    };
-  }
-  if (phase === 'downloaded') {
-    return {
-      ...common,
-      phase,
-      version: FAKE_VERSION,
-      percent: null,
-      message: `新版本 ${FAKE_VERSION} 已下载（开发态演示）`,
-    };
-  }
-  return {
-    ...common,
-    phase: 'downloading',
-    version: FAKE_VERSION,
-    percent: 45,
-    message: '正在下载… 45%（开发态演示）',
-  };
-}
-
 function cycleFakeUpdate(): void {
-  if (!realUpdate) realUpdate = { ...update.value };
-  fakeIndex += 1;
-  if (fakeIndex > FAKE_PHASES.length) {
-    fakeIndex = 0;
-    update.value = { ...realUpdate };
-    console.log('[dev] 更新相位已还原为真实状态');
-    return;
-  }
-  const phase = FAKE_PHASES[fakeIndex - 1];
-  update.value = fakeState(phase, realUpdate);
+  const phase = cycleFakeUpdateInStore();
   const hint =
     phase === 'available' || phase === 'downloaded' ? '（底栏应出现可点的更新提示）' : '';
-  console.log(`[dev] 更新相位伪造成 ${phase}${hint}`);
+  console.log(phase ? `[dev] 更新相位伪造成 ${phase}${hint}` : '[dev] 更新相位已还原为真实状态');
 }
 
 export function installDevDiagnostics(): void {

@@ -8,6 +8,7 @@
 
 import { computed, ref } from 'vue';
 
+import { fakeUpdate } from './update-fake.js';
 import { phaseText } from '../shared/phase-text.js';
 import { applyPlatformAttribute, setPlatform } from '../utils/platform.js';
 import { RELEASES_URL } from '../../shared/ipc';
@@ -78,7 +79,7 @@ export const uiLoadable = computed(() => Boolean(dsh.value?.uiUrl) || owned.valu
  * 底栏（layout/StatusBar.vue）与设置页读同一份。
  * 初始 idle 只是"快照还没到"的占位；startStore() 会用快照里的 update 覆盖它。
  */
-export const update = ref<UpdateState>({
+const realUpdate = ref<UpdateState>({
   phase: 'idle',
   currentVersion: '',
   version: null,
@@ -88,6 +89,20 @@ export const update = ref<UpdateState>({
   canCheck: false,
   releasesUrl: RELEASES_URL,
 });
+
+/**
+ * 界面该显示的更新状态：**开发态假装相位**开着时用伪装那份盖住真实那份
+ * （`fakeUpdate`，见 state/update-fake.ts；打包版没有任何地方会写它）。
+ *
+ * 做成派生值而不是"就地改写 `realUpdate`"是有理由的：真实相位随时会被主进程推来
+ * （`onUpdateState`），改真实那份的话，一次推送就把伪装顶掉了。
+ */
+export const update = computed<UpdateState>(() => fakeUpdate.value ?? realUpdate.value);
+
+/** 写**真实**更新状态的唯一入口（快照、主进程推送、设置页的检查 / 下载结果都走它） */
+export function applyUpdate(next: UpdateState): void {
+  realUpdate.value = next;
+}
 
 /** 当前页面（外壳的导航与各页共用） */
 export const currentTab = ref<TabId>('dashboard');
@@ -130,7 +145,7 @@ export function startStore(): Promise<void> {
       snapshot.value = await api.getSnapshot();
       // 更新状态也来自快照：它是"主进程先有、渲染层后连上"的（macOS / 开发态在窗口加载前
       // 就已经是 unsupported），只靠 onUpdateState 会丢掉那一次。
-      update.value = snapshot.value.update;
+      applyUpdate(snapshot.value.update);
       // 主进程的 platform 是权威值：拿它校准 UA 推断的结果，再落到 <html data-platform>
       setPlatform(snapshot.value?.env?.platform);
       applyPlatformAttribute();
@@ -145,7 +160,7 @@ export function startStore(): Promise<void> {
       });
       api.onFullscreen((on) => syncDocumentFullscreen(Boolean(on)));
       api.onUpdateState((next) => {
-        update.value = next;
+        applyUpdate(next);
       });
       /**
        * 主进程自己改了设置时（目前只有关闭询问框的「记住我的选择」）要跟着更新：

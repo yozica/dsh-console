@@ -215,6 +215,79 @@ export function runRenderer(repo: Repo): void {
       : `${shortcutFiles.length} 处都走 isAppModifier`,
   );
 
+  // 开发态的「假装更新相位」（t72）：开发时更新相位只会是 unsupported，于是底栏 / 顶栏那两条
+  // 「发现新版本」的提示、以及"点它聚焦到更新卡片"这条路径根本走不到 —— 所以有一个**只在开发态**
+  // 露出的开关把它们伪造出来。这类"开发工具"最容易出的问题是渗进打包版，所以三条一起钉：
+  //   ① 界面读的 `update` 必须是 `fakeUpdate ?? realUpdate` 的**派生值**：伪装与真实各占一个 ref。
+  //      就地改写真实那份的话，主进程随后的 `onUpdateState` 会把伪装顶掉（本地实测过）。
+  //   ② 真实状态只有一个写入口 `applyUpdate()` —— "谁能改相位"因此是可数的（快照、推送、
+  //      设置页里检查 / 下载的结果，全走它）。
+  //   ③ 两道闸都在"非打包"这一侧：设置页那排按钮在 `v-if="!packaged"` 的块里（打包版连渲染都
+  //      不渲染），快捷键只在非打包时安装 —— 于是打包版里 `fakeUpdate` 没有任何地方会写它。
+  const fakeSource = fs.readFileSync(repo.tsPath('update-fake.ts'), 'utf8');
+  const storeSource = fs.readFileSync(repo.tsPath('store.ts'), 'utf8');
+  const settingsVueText = fs.readFileSync(repo.vuePath('SettingsPane.vue'), 'utf8');
+  const devDiagCode = fs
+    .readFileSync(path.join(rendererDir, 'dev-diagnostics.ts'), 'utf8')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  // 从"开发态那一块"的开标签切到卡片结束（`</section>`），再看按钮在不在这一段里。
+  const devBlock = settingsVueText.match(
+    /^[ \t]*<div v-if="!packaged" class="panel-block">[\s\S]*?<\/section>/m,
+  )?.[0];
+  const writeCount = (source: string, name: string): number =>
+    (rendererCode.match(new RegExp(`${name}\\.value\\s*=`, 'g')) ?? []).length;
+  const devGate: [string, boolean][] = [
+    [
+      'update 不是 fakeUpdate ?? realUpdate 的派生值',
+      /export const update = computed<UpdateState>\(\(\) => fakeUpdate\.value \?\? realUpdate\.value\)/.test(
+        storeSource,
+      ),
+    ],
+    [
+      'applyUpdate 不是唯一写入口',
+      /export function applyUpdate\(next: UpdateState\): void \{\s*realUpdate\.value = next;\s*\}/.test(
+        storeSource,
+      ) && writeCount(rendererCode, 'realUpdate') === 1,
+    ],
+    ['伪装那份状态被 update-fake.ts 之外的地方写了', writeCount(rendererCode, 'fakeUpdate') === 1],
+    [
+      'update-fake.ts 缺 setFakeUpdatePhase / cycleFakeUpdate',
+      /export function setFakeUpdatePhase\(phase: FakePhase \| null\)/.test(fakeSource) &&
+        /export function cycleFakeUpdate\(\): FakePhase \| null/.test(fakeSource) &&
+        /export const fakeUpdate = ref<UpdateState \| null>\(null\)/.test(fakeSource),
+    ],
+    [
+      '快捷键那条路没走同一份实现（或自己改了 update）',
+      /from '\.\/state\/update-fake\.js'/.test(devDiagCode) &&
+        !/update\.value\s*=/.test(devDiagCode),
+    ],
+    [
+      '设置页那排按钮不在 v-if="!packaged" 的块里（或按钮表缺项）',
+      Boolean(devBlock) &&
+        /v-for="b in FAKE_BUTTONS"/.test(devBlock ?? '') &&
+        /btn-dev-update-/.test(devBlock ?? '') &&
+        // 四个按钮（含「还原」）的文案在那张表上：改了文案不该悄悄少一个。
+        // 文案就用界面自己那套相位词（发现新版本 / 已下载 / 正在下载），别另起一套说法。
+        (settingsVueText.match(/label: '(发现新版本|已下载|正在下载|还原)'/g) ?? []).length === 4 &&
+        /setFakeUpdatePhase/.test(settingsVueText),
+    ],
+    [
+      '打包态仍会安装诊断快捷键',
+      /if \(!snapshot\.value\?\.env\?\.packaged\) installDevDiagnostics\(\);/.test(
+        fs.readFileSync(path.join(rendererDir, 'main.ts'), 'utf8'),
+      ),
+    ],
+  ];
+  const devProblems = devGate.filter(([, ok]) => !ok).map(([what]) => what);
+  check(
+    '渲染层：开发态「假装更新相位」只在开发态露出（真实状态只有一个写入口）',
+    devProblems.length === 0,
+    devProblems.length
+      ? devProblems.join('；')
+      : '派生值 + 单一写入口 + 按钮与快捷键都在非打包那一侧',
+  );
+
   // 依赖从"index.html 里的 script 标签"改成了模块导入（Vite 构建），
   // 所以要检查的是：入口被引入、入口导入了样式表、xterm 由 pages/terminal/xterm.ts 直接用类导入。
   const rendererEntry = fs.readFileSync(path.join(rendererDir, 'main.ts'), 'utf8');
