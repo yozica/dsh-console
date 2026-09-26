@@ -21,6 +21,750 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-09-26: 拆分与整理：源码模块化、一批界面小修
+
+黄条的竖直居中改成统一规则：之前按"单行 / 两行"分两个变体（`.banner.line` 挂在 `line: !!navLine` 上），可是**同一条黄条在宽窗口是一行、窄窗口才是两行** —— 行数由宽度决定，JS 判不出来。于是插件页「已改到装配层，重启 dsh 后生效」那条（宽窗口下一行）永远拿不到覆写，一直偏上：真机截图量出来上方留白 20px、下方 34px（用户第二次抓图指出）。
+
+现在 `.banner` 统一 `align-items: center`，图标也不再自己往下挪（`.banner.line` 与那个类一起删掉）。两行那态不会因此变差：**两行时最高的那一项本来就是文本块**，居中与顶对齐对它的位置没有影响，受影响的只有图标与按钮 —— 它们居中才是常态。用 headless Chrome 加载构建出的真 CSS 量过：改之前偏上 3.0 CSS px，改之后单行 +0.0、两行 +0.0。
+
+插件页「临时停用」之后回得去了：原来「恢复」只长在救援条里，而救援条只在 dsh 起不来时出现 —— 在层栈详情里点「临时停用」的人，dsh 明明好好的，界面上就再也找不到放回去的地方（用户真机：停用 `@yozica/dsh-plugin-paths` 之后无法启用）。现在
+
+- 巡检多一档「掉出了层列表」：**包自己声明过 `dsh.bundle`、却不在 `dsh.profile.bundles` 里**（旧界面把它错报成"装成了普通依赖，但它没有声明 dsh.bundle"），这行给「放回层里」；真·普通依赖照旧只给「卸掉它」；
+- 停用后那条黄条上直接给「放回 `<包名>`」；
+- 位置不需要界面记着（关掉页面 / 重开应用之后仍然插回**原来的位置**）：`index` 缺失时从这份 profile 目录里最近的 `package.json.bak-*` 里找回来，找不到就追加到末尾并说明是末尾
+
+新建 `composables/` 层：把两个内嵌页的宿主逻辑与"切到本页时做事"收成 composable
+
+这一层一直空着（这个仓库是从手写 DOM 的 `app.js` 逐页迁到 Vue 的，胶水当时是逐页搬进组件的）。
+先按"**两处一字不差**或骨架相同、差异能用 2~3 个回调表达"这条判据数了一遍重复，**只有一处站得住**：
+
+| 新增                    | 收的是什么                                                                                                                   | 谁在用                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `use-tab-activation.ts` | 「切到本页时才做事」：`watch(currentTab)` + id 过滤 + `immediate`                                                            | 插件页 / 终端页 / dsh 终端 / 两个内嵌页（5 处，原来每处手写一遍 `if (tab !== 'x') return`） |
+| `use-webview.ts`        | 内嵌页宿主：`view` / `note` / 载入记账 / 四个事件 / `-3` 过滤 / `load()` 里"`loadURL` 吞 promise、失败退到 `src`" / 重算视口 | `pages/ui/UiPane.vue`、`pages/usage/UsagePane.vue`                                          |
+
+**另外两处我上次的判断被代码否掉了，如实记下**：① 锚点滚动**不是** 4 处同构（只有 2 处，而且
+一个用原生 `scrollIntoView`、一个用 `utils/scroll.ts` 的缓动），不抽；② 终端那处只有
+`resolvedTheme()` 与主题 watch 两小块重复，而"一路终端"与"一个 Map 管多路"结构不同，
+硬抽会变成一堆回调 —— 比重复更难读，也不抽。
+
+验收：`npm test` **315/315**，输出与改动前**逐行完全一致**（零差异）；`lint` / `format:check` /
+`typecheck` / `build` / 沙箱门禁全绿。**需要真机看一眼**：两个内嵌页（Harness / 用量页）的
+载入、失败提示与切页回来重算视口，以及终端页的两路。
+
+开发态可以「假装」出更新相位了：设置页「关于」卡里多了一排只在开发模式出现的按钮（假装有新版本 / 假装已下载 / 假装正在下载 / 还原真实相位），用来验证底栏与应用内全屏时顶栏那一格「发现新版本」的提示 —— 打包版里看不到这排按钮，真实更新状态也不受影响
+
+补根 `tsconfig.json`：编辑器里 `window.dshConsole` 不再报 TS2551
+
+真机（Zed）编辑 `pages/usage/UsagePane.vue` 时报「属性"dshConsole"在类型"Window & typeof globalThis"
+上不存在」——仓库里那三份配置叫 `tsconfig.{base,main,node,renderer}.json`，**没有一份叫
+`tsconfig.json`**，而编辑器按"最近的 `tsconfig.json`"选项目：找不到就退化成"推断项目"，
+只按当前文件与其 import 建图 —— `env.d.ts` 里的 `declare global` 于是看不见。
+
+新增根配置（`extends: ./tsconfig.renderer.json` + `include: src/renderer, src/shared`）。**它只服务
+编辑器**：所有命令都显式 `-p`，`npm run typecheck` / `vue-tsc -p tsconfig.renderer.json` / 打包
+都不受影响；实测加与不加，`dist/renderer` 的产物**逐字节一致**（同一份 hash）。
+
+验收：`npm test` **316/316**（新增一条钉子盯住这个根配置）、lint / format:check / typecheck /
+build / 沙箱门禁全绿。
+
+`env-doctor.ts` 拆成 barrel + 六个叶子模块（2907 行 → 605 行的 barrel/类 + 六个叶子，导出面一个不差）
+
+主进程那个 2907 行的"运行环境自检"按主题拆开，调用方与两个反例脚本一行没改：
+
+| 文件                 | 行数 | 职责                                                                |
+| -------------------- | ---- | ------------------------------------------------------------------- |
+| `env-doctor.ts`      | 605  | **barrel + 两个有状态的类**（`EnvDoctor` / `EnvFixRunner`）         |
+| `env-probe-types.ts` | 148  | 探测的形状与超时（`EnvProbeRaw` / `VersionProbe` / `EnvRuntime` …） |
+| `env-node-range.ts`  | 354  | Node 版本区间的纯函数（解析 / 比较 / `judgeNodeVersion`）           |
+| `env-fix-plan.ts`    | 464  | 修复计划 / argv / 注册表查找路径 / 人话文案                         |
+| `env-judge.ts`       | 560  | 纯判定 `judgeEnvironment` 与 `probeTroubleLines`                    |
+| `env-probe.ts`       | 670  | 只读探测与二进制定位（含本机 dsh 安装树）                           |
+| `env-wizard.ts`      | 306  | 门禁判定（三步表 / `collectBootProbe` / `judgeWizard`）             |
+
+**两个有状态的类刻意留在 barrel 里**：`EnvDoctor` 的实例字段跨"探测 → 判定 → 修复 → 复检"几个阶段，
+拆散只是把"一个类里的顺序"换成"几个类之间的时序"。
+
+**判据不变**：导出面机械比对 **55 个 key 零差异**；`npm test` **314/314 且输出与改动前逐行一致**；
+沙箱门禁通过（32/32、185/185）；`lint` / `format:check` / `typecheck` 全绿。
+
+**跟着搬的三处**（见 AGENTS §7.35 的第二段）：`test/env-fixtures.ts` 的 `envSource` 改成
+"barrel + 六个叶子的拼接"；`scripts/env-doctor-cases.mjs` 那条读 `env-doctor.ts` 的超时顺序断言仍成立
+（`EnvFixRunner.execute` 留在原文件）；一条按"全仓库唯一 owner"找 `['i','-g', …]` 的断言，owner 从
+`env-doctor.ts` 变成 `env-fix-plan.ts`。
+
+首启门禁的模板级拆分：`EnvGate.vue` 2515 → 2153 行，确认区与输出面板各成组件
+
+| 新文件                     | 行数 | 装什么                                                                 |
+| -------------------------- | ---- | ---------------------------------------------------------------------- |
+| `gate/GateNodeConfirm.vue` | 357  | Node 安装 / 更新那条路的确认区（"将要执行" + 未签名 / 未校验两档确认） |
+| `gate/GateOutput.vue`      | 57   | 流式输出面板（原文照贴 + 跟着新片段滚 + 收起）                         |
+| `utils/status-message.ts`  | 9    | 状态栏那句话的唯一出口（`say`）                                        |
+| `utils/clipboard.ts`       | 17   | 复制到剪贴板 + 那句话（父子共用一个实现）                              |
+
+两个子组件都是**哑的**：计划、方法、档位、忙位仍由 `EnvGate.vue` 持有（同一批选择在那张卡片的
+**选择区**里也画着，只能有一个真源），子组件只负责"计划 → 人话"与"按钮 → 事件"。搬过去的模板
+**逐字复制**（props 按原来的标识符命名），只改三处：`v-if` 交给父级、`currentStep.id !== 'node'`
+→ `host !== 'node'`、`copy()` 换成 `lib/clipboard` 那一份。
+
+**样式跟着搬**（scoped 不跨组件，但子组件的根元素带父级的 `data-v`）：与父组件 / 自检页共用的
+12 条收进全局表（`.gate-confirm-title` / `.gate-detail*` / `.gate-fact-more` / `.gate-option-risk` /
+`.gate-choice` / `.gate-confirm .btn-row` …），只有确认区自己用的 `.gate-confirm-loading` 进子组件的
+`<style scoped>`，并在自检的 `styleLayers` 表里为它加一行。
+
+验收（§7.33 的三道 + 老四样）：
+
+- **机械等价**：`styles.css` + 全部 `.vue` 的 `<style>` 并成"选择器 → 声明"的多重集，改动前后
+  **577 → 577，零丢失零多出**。
+- **逐像素**：同一段夹具标记（把这次动到的 class 全画一遍）用改动前后的样式各渲染一次 2x 截图，
+  **完全一致**。
+- `npm test` 314/314；其中 **4 行是"计数"口径变化**（组件数 15 → 17、`.vue` 覆盖数 15 → 17、
+  全局表花括号 176 → 187、`styleLayers` 14 个页面 76 条 → 15 个页面 77 条），断言名与结论一条没变。
+- 沙箱门禁通过（32/32、185/185）、`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+⚠️ 请真机 `npm start` 复核一次门禁层：第一步点「安装」展开的确认区（含"展开看完整地址"、
+两条路都没预选时那组控件、未签名 / 未校验两档的按钮排布）与安装中的「详细输出」面板。
+
+环境自检页拆出更新确认区：`EnvPane.vue` 1501 → 1205 行，新增 `pages/env/EnvUpdateConfirm.vue`（362 行）
+
+确认区那一整块（更新 Node / pnpm 的"将要执行"：版本档位控件、归属与下载来源的事实表、跨档说明、
+以及"开始 / 取消 / 换档 / 换源"）搬进子组件。**它不持有状态**：计划、档位、忙位、报告里的归属都由
+父级拿着 —— 父级那一行本身也在读同一份计划画读数态与更新按钮，拆开就会变成两个真源。
+
+**这一步的模板几乎是逐字搬的**：两段各自的 `updateOpen === … && check.id === …` 合成 `kind` 一个
+开关、`planFor('install-pnpm')` 换成 `pnpmPlan` 这个 prop，其余连文案带 `cancelUpdate` 这些名字都没动
+（子组件里是同名的本地转发函数）。八个只给确认区用的派生值（`nodeCurrentText` / `nodeTargetText` /
+`nodeChannelUnknown` / `nodeChannelPickedText` / `nodeUpdateOwnerText` / `nodeSwitchNotice` /
+`nodeUpdateNoop` / `nodeUpdateActionLabel`）跟着组件走；`nodeAffectsDshText` 例外 —— 父级的进行中 /
+结果区也要用同一句，所以留在父级按 prop 传下去。
+
+样式：`.env-channel` 只有这一块在用 → 进子组件的 `<style scoped>`；`.env-confirm*` 与
+`.env-confirm .btn-row`（父组件的"一键修复"确认区也画）→ 收进全局表；自检的 `styleLayers` 表改成两行。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/envpane-split/`）、
+`npm test` 314/314（4 行计数口径变化：`.vue` 覆盖 19 → 20、组件数 19 → 20、全局表花括号 197 → 202、
+`styleLayers` 17 个页面 → 18 个页面、私有规则条数 86 不变）、沙箱门禁 32/32 + 185/185、
+`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+⚠️ 请真机 `npm start` 复核：设置 →「运行环境」→ 查看详情，点 Node 那一行的「更新」（确认区里的档位
+单选、跨档说明、事实表、开始 / 取消）与 pnpm 那一行的「更新」；以及未校验那一档的「换一个下载源再试」。
+
+首启门禁再拆两块：操作行与一键修复确认区（`EnvGate.vue` 1989 → 1916 行）
+
+| 新文件                    | 行数 | 装什么                                                                               |
+| ------------------------- | ---- | ------------------------------------------------------------------------------------ |
+| `gate/GateActions.vue`    | 126  | 操作行：一屏唯一一处强调色实底 + 一条次操作（三步各一套）+ pnpm 那句"跳过之后会怎样" |
+| `gate/GateFixConfirm.vue` | 77   | 一键修复（pnpm / dsh）的确认区：命令原文 + 目标目录 + 两个按钮                       |
+
+**焦点也要跟着搬**：这两块里原来各有一个 `ref`（`primaryRef` / `startRef`）被父级的 `focusDefault()`
+与 `watch(fixConfirmAction)` 直接 `.focus()`。搬走之后父级够不到子组件的元素，做法与
+`GateNodeConfirm` 那次一致：子组件 `defineExpose({ focusStart })`，父级持模板 ref 调它；
+**"哪个按钮是这一屏的落点"留在父级**（它知道有没有确认区打开、是不是在看回看卡）。
+
+模板逐字搬（`stepId` 取代 3 处 `currentStep.id`、`plan` 取代 `fixConfirmPlan`）；`.gate-actions`
+进 `GateActions` 的 scoped 块（`.gate-confirm*` 那批早已在全局表，这次没有规则进全局表）。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/gate3-split/`）、
+`npm test` 314/314（**3** 行计数口径变化：`.vue` 覆盖与组件数 22 → 24、`styleLayers` 20 个页面 91 条 →
+21 个页面 92 条）、沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+⚠️ 请真机 `npm start` 复核首启门禁：三步的操作行（第一步两条路都没选时「安装」禁用 + 那句 title、
+第二步的「先跳过这一步」与其下方说明、第三步只有「安装」）、以及点「安装」展开的一键修复确认区
+（命令原文 / 目标目录 / 开始·取消，以及**打开后焦点是否落在「开始」**）。
+
+首启门禁放行页的按钮行少了 16px 间距（`.gate-actions` 被搬进子组件的 scoped 块，父组件够不着）
+
+真机翻看发现的：放行页那排「进入 DSH Console / 再看看环境自检」贴着上面的完成清单。t62 把
+`.gate-actions { margin-top: 16px }` 写进了 `gate/GateActions.vue` 的 `<style scoped>`，而
+`gate/EnvGate.vue` 的**放行页**与**回看卡**也在用同一个 class —— `<style scoped>` 只作用于本组件
+的模板（加上"被当子组件用时那个根元素"），所以那两处收到的是死规则。
+
+- `.gate-actions` 回到 `styles.css` 全局表；`GateActions.vue` 不再有 `<style scoped>`，
+  `styleLayers` 那一行改成 `staysGlobal`。
+- **新增一条机械自检**：「样式分层：自成一条规则的私有类不会被别的组件用到（scoped 够不着别的
+  模板）」—— 扫全部 `.vue` 的模板 class 与 scoped 块。注入回这个 bug 验过：新旧两条检查同时变红。
+- 两个读样式块的助手改成**行首锚定**（组件注释里会引用那个标签的字面量，不锚定会从注释处开始吞）。
+
+实测：`.verify/gate-actions-scope/measure.py` 把 Vue 的 scoped 编译结果照抄成 `[data-v-*]`，
+清单下缘与按钮行上缘的间距 **0px → 16px**，清单一动没动。`npm test` 315/315、机械等价 577 → 577、
+沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+首启门禁再拆两块：选择区与结果行（`EnvGate.vue` 2153 → 1989 行）
+
+| 新文件                    | 行数 | 装什么                                                                      |
+| ------------------------- | ---- | --------------------------------------------------------------------------- |
+| `gate/GateNodeChoice.vue` | 123  | 选择区：版本档位 + 安装方法两组单选（含"两条路都没预选""正在安装"两句提示） |
+| `gate/GateResult.vue`     | 184  | 结果行：状态点 + 结论句 + 说明 + 那排出路（三种结局各一套按钮）             |
+
+两块都是**哑的**：方法与档位仍由父级持有（确认区 `GateNodeConfirm.vue` 读的是同一份状态），
+点色 / 结论 / 说明也是父级算的（父级的进行中与输出区读同一份：`outputState` / `outputSummary`）。
+**模板逐字搬**：`GateResult` 的 props 特意按原来的标识符命名（`resultDot` / `resultTitle` /
+`resultNote`），模板里只把 `currentStep.id` 换成 `currentStepId`（3 处）；`GateNodeChoice` 只在根元素
+去掉 `v-if`（交给调用方）。
+
+样式：`.gate-result*` 11 条进 `GateResult`、`.gate-method-fact` 1 条进 `GateNodeChoice` —— 这次**没有任何
+规则进全局表**（两块用的都是自己私有的规则 + 全局零件），所以自检里"全局表花括号"那一行数字不变。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/gate2-split/`，夹具画了两组
+单选 / 方法事实行 / 并存风险 / 两句提示 + 三种结局的结果行）、`npm test` 314/314（**3** 行计数口径变化：
+`.vue` 覆盖与组件数 20 → 22、`styleLayers` 18 个页面 86 条 → 20 个页面 91 条）、沙箱门禁 32/32 + 185/185、
+`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+⚠️ 请真机 `npm start` 复核首启门禁：第一步的档位 / 方法单选（选完再点「安装」）、以及安装结束后
+那三种结局的结果行与它们各自的出路按钮。
+
+首启门禁的最后两个小件：展开看详情与"先跳过 pnpm"的二次确认（`EnvGate.vue` 1781 → 1768 行）
+
+| 新文件                     | 行数 | 装什么                                        |
+| -------------------------- | ---- | --------------------------------------------- |
+| `gate/GateDetails.vue`     | 54   | 「展开看详情」：把这一屏那几项检查的原文摊开  |
+| `gate/GateSkipConfirm.vue` | 26   | 「先跳过 pnpm 这一步」的二次确认（交互 §5.4） |
+
+两块用的都是**全局零件**（`.gate-fact-more` / `.gate-detail*` / `.wizard-decide`），所以这一步
+**一条样式都没搬** —— 自检里"全局表花括号"与 `styleLayers` 那两行数字不动，也因此没做像素夹具
+（没有可比的样式改动）。模板逐字搬：`currentStep.id` → `stepId`（3 处）、`currentChecks` → `checks`、
+两处根元素的 `v-if` 交给调用方。
+
+**顺带把这一阶段的账结了**：17 个 PR（#47 ~ #70）把 10 个大文件拆成 60 多个模块的汇总写进
+`docs/backlog.md` 第 2 条与 AGENTS §7.36（含"哪些有意不拆"与"还欠一次真机翻看"）。
+
+验收：机械等价 **577 → 577 零丢失零多出**、`npm test` 314/314（**2** 行计数口径变化：`.vue` 覆盖与
+组件数 26 → 28，样式那两行数字不变）、沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` /
+`build` 全绿。
+
+⚠️ 请真机 `npm start` 复核首启门禁：某一步的「展开看详情 / 收起详情」（内容与 Tab 顺序），
+以及第二步点「先跳过这一步」弹出的那条二次确认（确定跳过 / 取消）。
+
+首启门禁拆出事实行 / 进行中进度（`EnvGate.vue` 1989 → 1781 行，新增 `gate/GateFacts.vue` 181 行）
+
+这一块是"三块共用一个槽位"（视觉 §5.5）：不在跑时摆事实行，在跑时摆状态行 + 进度 + 一个明确的按钮，
+底下还挂着第二步特有的那条 —— npm 都不能用时不给一个注定失败的「安装」，而是给 `corepack enable pnpm`。
+
+它**一个判据都不持有**：事实行、进度文案、百分比、「停止」的文案与可见性都由父级算好递下来
+（那些判据父级的结果行与输出面板也在用：`outputState` / `outputSummary`）。
+
+样式分两处落：事实行与进度区那 16 条进子组件的 scoped 块；`.gate-card-why`（父级的步骤卡也画）
+与 `.gate-detail-cmd`（父级的"展开看详情"也画）这 2 条收进全局表。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/gate4-split/`，夹具画了五种
+状态的事实行 + 进度区 + `corepack` 那条交代）、`npm test` 314/314（**4** 行计数口径变化：`.vue` 覆盖
+与组件数 24 → 25、全局表花括号 202 → 204、`styleLayers` 21 个页面 92 条 → 22 个页面 96 条）、
+沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+⚠️ 请真机 `npm start` 复核首启门禁：事实行五种状态的灯与文案、安装进行中的进度行（百分比 / 字节 /
+那句管理员权限交代 / 「取消下载」与「显示详细输出」）、以及 npm 不可用时第二步那条 `corepack` 交代。
+
+渲染层的外壳目录改名：`shell/` → `layout/`（跟终端页的「本地 Shell」不再撞名）
+
+仓库里 "shell" 有两个意思：**窗口外壳**（目录名）与**本地 shell 进程**（终端页那一路 zsh / pwsh，
+在 `pages/terminal/`、逻辑在 `pages/terminal/xterm.ts`）。看目录树时容易混，所以按通用的叫法把外壳这一层
+改名成 `layout/`：
+
+| 旧                                   | 新                                    |
+| ------------------------------------ | ------------------------------------- |
+| `src/renderer/shell/RailNav.vue`     | `src/renderer/layout/RailNav.vue`     |
+| `src/renderer/shell/TopBar.vue`      | `src/renderer/layout/TopBar.vue`      |
+| `src/renderer/shell/StatusBar.vue`   | `src/renderer/layout/StatusBar.vue`   |
+| `src/renderer/shell/CloseDialog.vue` | `src/renderer/layout/CloseDialog.vue` |
+
+纯改名：只动 `mount.ts` 的 import、注释与文档里的路径指针；模板与样式一行没动
+（机械等价 577 → 577 零丢失零多出）。判据记在 AGENTS §7.37。
+
+验收：`npm test` **315/315**，输出与改动前**逐行只差 1 行**（一条提示里的路径
+`shell/RailNav.vue` → `layout/RailNav.vue`）；`build` / `lint` / `format:check` / `typecheck` /
+沙箱门禁（32/32 + 185/185）全绿。
+
+`main.ts` 拆出三个自成一体的簇（1798 → 1554 行）
+
+`main.ts` 是 Electron 入口，模块级可变单例多，所以先把**不依赖别的簇**的三块搬出去，每个只拿一个
+小的 context（可变单例用 getter，稳定的才传函数）：
+
+| 文件               | 行数 | 装什么                                                                                                    |
+| ------------------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| `main-theme.ts`    | 109  | 主题、窗口底色、标题栏浮层、`broadcastTheme`（context：`isMac` / `getWindow()` / `send()` / `getMode()`） |
+| `main-embedded.ts` | 183  | 内嵌页诊断（guest console / 加载失败 / 请求失败）与开发期产物变化自动重载                                 |
+| `main-menu.ts`     | 71   | 应用图标与菜单（Windows/Linux 留空、macOS 最小原生菜单）                                                  |
+
+**一次真实的机械替换事故（已修，记进 AGENTS §7.35）**：把 `mainWindow` 批量换成 `ctx.getWindow()`
+时，`if (!mainWindow || mainWindow.isDestroyed()) return;` 被改成了
+`if (!ctx.getWindow().isDestroyed()) return;` —— **判空和取反一起丢了**。`npm test` 抓不到这个
+（main.ts 不在自检的运行时图里），只有搬完逐字读一遍才发现。教训：搬 `if (x && !x.y)` 这类判断
+别信 sed，写完必须读。
+
+验收：`npm test` **314/314**（仅上一轮改名的两行不同）、沙箱门禁通过（32/32、185/185）、
+`lint` / `format:check` / `typecheck` / `build:main` 全绿。**Electron 在沙箱里起不来**，所以这一步
+还需要你真机 `npm start` 翻一眼（窗口底色 / 标题栏配色 / 内嵌页诊断日志 / 菜单）。
+
+`main.ts` 再拆两块：崩溃兜底与外链（1507 → 1507 行的等价搬迁 + 两条钉子改成读整份）
+
+| 文件            | 行数 | 装什么                                                       | context     |
+| --------------- | ---- | ------------------------------------------------------------ | ----------- |
+| `main-crash.ts` | 38   | 未捕获异常 / 未处理拒绝的兜底（落盘 + 弹带日志路径的框）     | `logFile()` |
+| `main-url.ts`   | 52   | 外链的唯一入口（scheme 白名单 + 接住 `openExternal` 的失败） | `log()`     |
+
+`main.ts` 现在 1507 行（上一轮 1554）。
+
+**两条钉子跟着换成读整份**：`test/repo.ts` 多了 `mainSource`（`main.ts` + `main-*.ts`），
+release 那组"启动早期 / 关窗 / 外链"的断言改读它。顺手把"外链"那条从"数 `openExternalSafely(`
+出现 4 次"改成"**裸的 `shell.openExternal(` 全组只剩 1 处、3 处调用都走 helper**" —— 前者会因为
+类型注解里也出现函数名而假红，后者才是它真正想钉的不变量。
+
+验收：`npm test` **314/314**（仅上一轮改名的两行不同）、沙箱门禁通过（32/32、185/185）、
+`lint` / `format:check` / `typecheck` / `build:main` 全绿。
+
+⚠️ 这一步与前两轮一样改了主进程启动路径，而 **Electron 在沙箱里起不来** —— 请真机 `npm start`
+确认一次（重点：能正常启动、菜单/主题正常、关窗行为不变）。
+
+`main.ts` 的 IPC 注册层拆成六个模块（1507 → 865 行；`registerIpc()` 那 558 行不再挤在一个函数里）
+
+| 文件                  | 行数 | 装什么                                                                         |
+| --------------------- | ---- | ------------------------------------------------------------------------------ |
+| `main-ipc.ts`         | 25   | **barrel**：`registerIpc(ctx)` 按原顺序调四个叶子，另转发三个公共件            |
+| `main-ipc-shared.ts`  | 134  | `IpcContext` / `CloseAsk` + `bundledVersions` / `messageOf` / 忙位等小编排函数 |
+| `main-ipc-app.ts`     | 302  | `app:*` / `theme:set` / `settings:patch` / `dsh:*` / `session:*` / `shell:*`   |
+| `main-ipc-archive.ts` | 70   | `archive:*`                                                                    |
+| `main-ipc-plugin.ts`  | 152  | `plugin:*`                                                                     |
+| `main-ipc-env.ts`     | 153  | `env:check` / `env:fix*` / `env:wizard*` / `env:node-*`                        |
+
+`main.ts` 只剩"造一个 `IpcContext`、调一次 `registerIpc(ctx)`"。
+
+**搬动的 557 行逐字复制**，只改四类**可变量**与三个 helper 的签名：`mainWindow` → `ctx.getWindow()`、
+`pendingCloseAsk` → `ctx.pendingCloseAsk()`（取一次存下来，getter 之间 TS 不再收窄）、
+`rendererConnected` → `ctx.renderer.{isConnected,markConnected}`、`shellCounter` → `ctx.shells.next()`；
+`anyoneBusy` / `refusedInstallState` / `wizardSkips` 现在显式吃参数。稳定的引用（`Settings`、各 manager、
+那个 `Set`）按值传。
+
+**读源码文本的钉子跟着读整份**：`test/repo.ts` 的 `mainSource` 与 `test/env-fixtures.ts` 的
+`envMainCode` 都加上了 `main-ipc*.ts`；三条断言的签名跟着改（`anyoneBusy(ctx)` /
+`refusedInstallState(ctx, …)` / `wizardSkips(settings)`），其中两条一开始假红是因为 Prettier 把长调用
+折成了多行 —— "参数紧跟在左括号后"的写法要留 `\s*`。
+
+验收：`npm test` **314/314，输出与拆分前逐行相同**（这次零差异）、沙箱门禁通过（32/32、185/185）、
+`lint` / `format:check` / `typecheck` / `build:main` 全绿。
+
+⚠️ 这一步动了主进程的启动路径（`bootstrap()` 里造 `IpcContext` 那一处），而 **Electron 在沙箱里起不来** ——
+请真机 `npm start` 复核一次：能正常启动、菜单/主题正常、关窗行为不变、跑一次环境自检 + 首启门禁的
+两个入口（`env:*` 那组通道现在住在 `main-ipc-env.ts`）。
+
+`node-installer.ts` 拆成 barrel + 八个叶子模块（4169 行 → 2509 行的 barrel/类 + 八个叶子，导出面一个不差）
+
+主进程最大的那个文件（系统级 Node 安装与更新）按主题拆开，调用方与两个反例脚本一行没改：
+
+| 文件                | 行数 | 职责                                                 |
+| ------------------- | ---- | ---------------------------------------------------- |
+| `node-installer.ts` | 2509 | **barrel + `NodeInstallHooks` + `NodeInstaller` 类** |
+| `node-shared.ts`    | 58   | 共用的常量（超时 / 下载地址 / 输出上限 / 常驻文案）  |
+| `node-release.ts`   | 230  | 版本清单、校验清单、发布资产（纯函数）               |
+| `node-owner.ts`     | 180  | 归属判定 + 注册表 PATH 合并                          |
+| `node-failure.ts`   | 194  | 失败分类与人话文案                                   |
+| `node-flavor.ts`    | 36   | 安装包形态识别与静默参数                             |
+| `node-nvm.ts`       | 412  | nvm 输出解析、模型推导、注册表偏好                   |
+| `node-plan.ts`      | 334  | "装还是更新、走哪条路"纯判定 + 提权结果分类          |
+| `node-io.ts`        | 455  | IO 底层：探测 / 注册表 / 网络 / 临时目录             |
+
+**类刻意不拆**，而且有一条硬约束：`buildPlan` 与 `transferPhase` 必须留在同一个文件里 ——
+`scripts/env-wizard-cases.mjs` 的 F 段按这对锚点切源码。
+
+**判据不变**：导出面机械比对 **39 个 key 零差异**；`npm test` **314/314 且输出与改动前逐行一致**；
+沙箱门禁通过（32/32、**185/185**）；`lint` / `format:check` / `typecheck` 全绿。
+
+**跟着搬的两处**：`test/env-fixtures.ts` 的 `installerCode` 与 `scripts/env-wizard-cases.mjs` 的
+`installerSource` 都从"只读 `node-installer.ts`"改成"barrel + 八个叶子的拼接"——后者不改会让 M8 那条
+（`INJECTED_ENV_NAMES` 白名单）变成 184/185。经验与那条"按文本块删东西先留原文"的教训记在 AGENTS §7.35。
+
+插件页那条「重启之后」的结局提示单行时竖直居中：`.banner` 原来的 `align-items: flex-start` 与图标 `margin-top` 是为「标题 + 说明」两行准备的，单行套上去文字会明显偏上（用户真机截图指出）
+
+插件页拆出生效配置视图（`PluginPane.vue` 1462 → 1152 行，新增 `pages/plugin/PluginConfigView.vue` 423 行）
+
+拆出去的是：组合出来的条目按层分组 + 搜索 / 两个过滤开关 + 基线那句"这是 dsh 自带的组合结果" +
+"运行中但配置里没有"的那几行 + 会话插件行数，以及每个条目行内的三个动作（禁用 / 启用 / 移除我的插入）。
+
+**它不持有状态**：搜索词、两个开关、分组、运行中索引、基线与忙位都由父级拿着 —— 同一份数据父级的
+层栈视图与操作输出也在读（`activeData` / `opBusy`），拆开就会变成两个真源。父级只多了一条
+`@update:query="query = $event"` 与两个开关的翻转；模板只有四处小改（`v-model` → `:value` + `@input`、
+两个 `x = !x` → 事件、根元素的 `v-else` 交给调用方）。
+
+**样式整块搬**：那 26 条（`.plugin-config*` / `.plugin-search*` / `.plugin-filter*` / `.plugin-group*` /
+`.plugin-raw*` / `.plugin-scope` / `.plugin-presets` / `.plugin-entry-actions` / `.plugin-state*` /
+`.plugin-baseline-note*`）与父级没有共用，全部跟着组件走 —— 这次没有一条进全局表。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/plugin2-split/`）、
+`npm test` 314/314（**3** 行计数口径变化：`.vue` 覆盖与组件数 25 → 26、`styleLayers` 22 个页面 96 条 →
+23 个页面 99 条）、沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+⚠️ 请真机 `npm start` 复核插件页的生效配置视图：搜索框、两个过滤开关（含选中态的实心底）、
+「只看某一层」那枚标签与「清除筛选」、条目行内的禁用 / 启用 / 移除我的插入、运行状态那枚小标、
+以及"没能解析成结构"时的原始 dump 分支。
+
+插件页层栈视图末尾那句「还有 N 条…」的左内边距（真机翻看发现，比上面所有内容左移 16px）
+
+它用的是全局零件 `.hint`（本身没有左右内边距），而同一块里的小标题是
+`.plugin-entries .block-head { padding: 0 16px }`、条目行是 `.plugin-entry { padding: 6px 16px }`
+—— 于是那行注释贴到了卡片的左边缘。补一条 `.plugin-entries .hint { padding: 0 16px }`。
+
+实测（headless Chrome，2 倍缩放）：条目文字左缘 32~~33 设备像素，这句**原来在 0~~1、现在 33**。
+机械等价因此从 577 变成 **578（+1，就是这一条修复）**；`npm test` 315/315、lint / format:check /
+typecheck / build 全绿。
+
+`plugin-manager.ts` 拆成 barrel + 四个叶子模块（1322 行 → 318 行的 barrel/类 + 四个叶子，导出面一个不差）
+
+| 文件                | 行数 | 职责                                                                                |
+| ------------------- | ---- | ----------------------------------------------------------------------------------- |
+| `plugin-manager.ts` | 318  | **barrel + 三个类**（`PluginRunner` / `LiveClient` / `PluginManager`）              |
+| `plugin-shared.ts`  | 28   | 共用的常量（profile 名 / 各种超时 / 输出上限）                                      |
+| `plugin-parse.ts`   | 685  | profile manifest、`--dump-config` 解析、层归因、巡检、spec 与失败归纳（纯函数为主） |
+| `plugin-runner.ts`  | 245  | 装 / 卸 / 升级的子进程与输出归纳                                                    |
+| `plugin-live.ts`    | 149  | 运行中清单的客户端、信封与应答解包                                                  |
+
+**判据不变**：导出面机械比对 **23 个 key 零差异**；`npm test` **314/314 且输出与改动前逐行一致**；
+沙箱门禁通过（32/32、185/185）；`lint` / `format:check` / `typecheck` 全绿。
+读 `plugin-manager.ts` 文本的断言的读法改成"整份"（`test/repo.ts` 的 `pluginSource` 与
+`test/checks/env-doctor.ts` 里那一条），否则装插件的 PATH 那两条会假红。
+
+两个操作教训也记进了 AGENTS §7.35：① 机械扫导出时**正则要允许前导注释** —— `packageNameOf` 写成
+`/** … */ export function packageNameOf(` 同一行，脚本漏了它，表现是别处 `Cannot find name`；
+② 自动接线要**限制轮数**（每轮起一次 `tsc`，十几轮就撞执行器的 10 分钟上限）。
+
+插件页拆出两个子组件：层栈视图与操作输出面板（`PluginPane.vue` 1916 → 1462 行）
+
+| 新文件                             | 行数 | 装什么                                                                          |
+| ---------------------------------- | ---- | ------------------------------------------------------------------------------- |
+| `pages/plugin/PluginStackView.vue` | 367  | 层栈视图：左边层列表 + 右边选中那一层的详情与三个动作（升级 / 临时停用 / 移除） |
+| `pages/plugin/PluginOpPanel.vue`   | 163  | 操作输出面板：pnpm 与补丁层操作的原文照贴 + 中断 / 收起 / 插进我的层            |
+
+两个子组件都是**哑的**：选中哪一层、操作忙不忙、数据是哪一份仍由 `PluginPane.vue` 持有（同一份选择
+在"生效配置"视图与增删改操作里也要用），子组件只把点击报回来。模板**逐字复制**（props 按原来的标识符
+命名），只改三处：根元素的 `v-if` 交给父级、`selectedIndex = i` → `select(i)`、面板内的
+`opOpen = false` / `editLayer('insert', …)` 换成事件。
+
+**样式按 §7.33 的判据分三处落**：只有这一块在用的 23 条进 `PluginStackView`、10 条进 `PluginOpPanel`；
+父子两边都在用的 10 条（`.plugin-tag*` 与 `.plugin-entry*`）收进全局表；剩下 53 条留在父级。
+自检的 `styleLayers` 表跟着改成三行。
+
+验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/plugin-split/`，夹具把这次动到的
+class 全画了一遍）、`npm test` 314/314（4 行计数口径变化：`.vue` 覆盖 17 → 19、组件数 17 → 19、
+全局表花括号 187 → 197、`styleLayers` 15 个页面 77 条 → 17 个页面 86 条）、沙箱门禁 32/32 + 185/185、
+`lint` / `format:check` / `typecheck` / `build` 全绿。
+
+⚠️ 请真机 `npm start` 复核插件页：层栈（点某一层换详情 / "在生效配置里看这 N 条"跳转 / 树外插件的
+升级·临时停用·移除）、以及装 / 卸 / 升级时的输出面板（中断 / 收起 / 内置包被拦下时的「插进我的层」）。
+
+「插件」页的纯展示判据进 `pages/plugin/plugin-view.ts`（`PluginPane.vue` 2052 → 1915 行）
+
+`pages/plugin/PluginPane.vue` 里那些**一条 DOM 都不碰**却和 `ref` / `computed` 混在一起的规则搬进
+`pages/plugin/plugin-view.ts`（205 行）：层名（`home` 换 `~`）、算不算"你自己的层"、`kind` 的中文、
+"没贡献"的三种情况（未创建 / 没匹配上 / 空 `[]`）、`include:` 前缀、运行中条目的索引与差额、
+运行状态词、巡检分档与"能不能删 / 卸 / 放回"、以及生效配置视图的分组过滤。
+组件里只剩一层薄包装（把 `data` / `problems` 这些响应式来源喂进去）与三个"点一下就走"的动作。
+
+**只动 `<script setup>`**：`git diff` 里以 `<` 开头的增删行 **0 个**，所以免像素对比。
+验收：`vue-tsc` 0、`eslint` 0、`npm test` 314/314 且**输出逐行一致**、沙箱门禁（32/32、185/185）、
+`npm run build:renderer` 成功。
+
+**一条钉子跟着换了口径**：「救援：「放回层里」不依赖救援条」钉的是判据本身（`canRestore` 的名字、
+那一档的说法、"两种不形成层都能卸"），判据跨出 `.vue` 之后它从 `vueSource` 改成 `repo.rendererAll`
+（`app.ts` + `lib/*.ts` + 全部 `.vue`）。读文本的断言要跟着"判据搬到哪一层"换口径，记在 AGENTS §7.36。
+
+`process-utils.ts` 拆成 barrel + 八个叶子模块（1347 行 → 9 个文件，导出面一个不差）
+
+主进程那个 1347 行的"进程 / 网络工具"按主题拆开，调用方一行没改：
+
+| 文件                  | 行数 | 职责                                                                                  |
+| --------------------- | ---- | ------------------------------------------------------------------------------------- |
+| `process-utils.ts`    | 68   | **barrel**：逐条再导出公开面（**不用 `export *`**，叶子模块里还有只给兄弟用的内部件） |
+| `process-types.ts`    | 75   | 平台判断 / `COMSPEC` / 跨模块共用的形状                                               |
+| `process-shell.ts`    | 267  | 命令查找、PATH 展开、转发器识别                                                       |
+| `process-pnpm.ts`     | 260  | pnpm 定位 + VC++ 运行库（`pnpmVersionCache` 跟着 `pnpmVersionOf` 走）                 |
+| `process-path-env.ts` | 85   | 给子进程补 PATH                                                                       |
+| `process-dsh.ts`      | 256  | 解释器候选与 dsh 启动命令（`dshProbeCache` 跟着 `canRunDsh` 走）                      |
+| `process-launch.ts`   | 159  | 启动 spec 的公共件                                                                    |
+| `process-probe.ts`    | 165  | HTTP 健康探测 + 端口占用                                                              |
+| `process-proc.ts`     | 172  | 进程名 / 结束进程树 / 存活判定 / `homeDir`                                            |
+
+**判据是导出面机械比对**：`npm run build:main` 后比对
+`Object.keys(require('./dist/main/process-utils.js')).sort()` —— 改前改后**零差异（43 个）**；
+类型导出另核（漏一个 `export type {}` 会让别处 `tsc` 报 TS2724）。自检输出与改动前逐行一致
+（314 条同名同值同顺序）—— 其中四条"读源码文本"的断言改成读 `test/repo.ts` 新增的
+`processUtilsSource`（barrel + 八个叶子模块的拼接），因为 barrel 里只剩 re-export。
+
+套路与四条做法（显式清单 / 导出面判据 / 缓存跟着读者走 / 读文本的断言改成读整份）记在 **AGENTS §7.35**。
+
+验收：`npm test` 314/314 且输出逐行一致；沙箱门禁通过（32/32、185/185）；
+`lint` / `format:check` / `typecheck` 全绿。
+
+渲染层的 `lib/` 拆成 `utils/` / `state/` / `shared/` 三层，只有一处用的逻辑跟回那一处
+
+原来那个 `lib/`（24 个模块）混着三种东西：通用工具、跨页共享状态、以及"其实只有一处用"的逻辑。
+现在按可机械检查的判据分开：
+
+| 目录      | 判据                                                          | 装什么                                                                                                            |
+| --------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `utils/`  | 纯工具：与 dsh 领域无关、不持有状态、不 import 渲染层别的目录 | format / platform / markdown / scroll / clipboard / status-message / webview（类型）                              |
+| `state/`  | 跨页共享状态与相位机：持有 `ref` / 订阅 IPC                   | store / boot-lock / env-doctor / env-wizard / env-layer / env-anchor / update-anchor / restart-nav / restart-flow |
+| `shared/` | ≥2 处用的领域逻辑，不持有状态、也不是通用工具                 | gate-copy / env-install-phase / phase-text                                                                        |
+| 跟回特性  | 只有一处用（哪怕它是纯逻辑）                                  | `gate/wizard-view.ts`、`pages/{dashboard/dsh-actions,env/env-detail,plugin/plugin-view,terminal/xterm}.ts`        |
+
+**自检也跟着与目录结构解耦**：`test/repo.ts` 递归扫全部 `.vue` 与 `.ts`，新增 `tsPath()`
+（与 t67 的 `vuePath()` 同款：重名或拼错当场抛错）；「渲染层脚本」的合集从「`app.ts` + `lib/*`」
+改成「全部 `.ts`」。顺手把两处**写死 import 路径**的断言改成只看文件名 ——
+`test/checks/styles.ts` 那条（`from '../lib/restart-nav.js'`）在搬完之后立刻红了，正是它的功劳。
+
+验收：`npm test` **315/315**，且输出与改动前**逐行完全一致**（零差异）；机械等价 **577 → 577**
+零丢失零多出（`test/repo.ts` 读样式的路径也跟着换了，夹具不受影响）；
+`build` / `lint` / `format:check` / `typecheck` / 沙箱门禁（32/32 + 185/185）全绿。
+
+渲染层拆模块第一步：门禁与详情层的共享纯逻辑进 `lib/`（顺带 dedupe 六处逐字重复）
+
+`gate/EnvGate.vue` 2648 → 2515 行、`pages/env/EnvPane.vue` 1546 → 1501 行，新增：
+
+- `shared/gate-copy.ts`（135 行）：门禁与「运行环境」详情层共用的**词表与现成句子** —— 官方下载页、
+  忙提示、三步文案、五项状态词、方法事实、两条安装路、档位词、并存风险，以及 `versionWithChannel`。
+- `shared/env-install-phase.ts`（34 行）：安装 / 修复的相位判据（`INSTALL_BUSY_PHASES` / `installRunning` /
+  `installSettled` / `isFixSettled`）—— 两个组件原来各抄一份。
+- `utils/format.ts` 多一个 `formatBytes`（两处各抄过一份）。
+
+**这一步只搬零风险的纯逻辑**：`<template>` 与 `<style>` 一行没动（判据是 `git diff` 里以 `<` 开头的行
+一个都没有），所以免像素对比；验收仍是 `vue-tsc` / `eslint` / `npm test` **输出逐行一致** / 沙箱门禁
+（32/32、185/185）+ 渲染层构建成功。
+
+三条铁律与后续计划（子组件、纯派生视图、样式跟着搬时要跑 §7.33 的三道验收）记在 **AGENTS §7.36**：
+其中最重要的一条是「`lib/**` 不许有 DOM」——自检的编译图 `tsconfig.node.json` 没有 DOM 类型，
+而且这条保证只覆盖被自检 import 的闭包。
+
+渲染层目录整理：一处一目录（`pages/<一处>/` + `gate/` + `layout/` + `components/`），并把自检与目录结构解耦
+
+原来 `layout/` 里外壳的 6 件与门禁的 10 件平铺在一起、`panes/` 里 8 个页面与 5 个页面私有的子件平铺
+在一起，看目录看不出"哪几个文件是一处的"。现在：
+
+| 目录            | 装什么                                                                                                                             |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `pages/<一处>/` | 一个页面 / 一个特性一个目录，页面本体与它自己的子件同目录（dashboard / terminal / ui / usage / archive / plugin / env / settings） |
+| `gate/`         | 首启门禁那一层（覆盖层）：EnvGate + 9 个子件 + 常驻横幅 GateBanner                                                                 |
+| `layout/`       | 应用外壳：RailNav / TopBar / StatusBar / CloseDialog                                                                               |
+| `components/`   | 通用组件：**被两处以上真的 import** 的才放这里（今天一个都没有，规则写在它的 README 里）                                           |
+| `lib/`          | 纯逻辑（不动）                                                                                                                     |
+
+判据、为什么单文件目录也建、以及"`panes/` 改名 `pages/` 只动源码目录、不动 DOM 的 `.pane` 与
+`id="pane-*"`"都写在 AGENTS §7.37。
+
+**顺带把自检与目录结构解耦**（比搬文件本身重要）：`test/repo.ts` 原来把目录名写死
+（`vueDirs = ['panes','shell']`）、`test/checks/*` 里散着约 20 处
+`path.join(rendererDir, 'panes', 'X.vue')` —— 等于"每搬一次目录都要改自检"。现在 `repo.vueFiles`
+**递归扫** `.vue`、`repo.vuePath('EnvGate.vue')` 按**文件名**取路径（重名或拼错当场抛错并列出候选），
+「每个 .vue 都被用到」改成**解析 import**（按每个文件的目录规范化相对说明符），另有两条"看挂载清单
+里的 import"的断言不再被注释骗到。
+
+验收：`npm test` **315/315**，且输出与改动前**逐行只差 2 行**（一条断言标题里的"panes 清单"→
+"页面清单"、一条提示里的路径）；机械等价 577 → 577；`build` / `lint` / `format:check` / `typecheck` /
+沙箱门禁全绿。
+
+主题配色只判一次：`resolvedTheme` 收进 `state/store.ts`（原来在终端两个组件里各写一遍）
+
+xterm 的配色是 JS 选项（不走 CSS 变量），所以终端页那两路各自把"该用哪套配色"算了一遍：
+`snapshot.value?.theme?.resolved === 'light' ? 'light' : 'dark'`。两处一字不差，但哪天
+"跟随系统"的判定口径变了，只改一处就会出现两路终端一个亮一个暗。
+
+现在 `state/store.ts` 导出 `resolvedTheme`（computed），两个终端读同一个来源。
+
+验收：`npm test` **315/315** 且输出与改动前**逐行完全一致**；`lint` / `format:check` /
+`typecheck` / `build` / 沙箱门禁全绿；机械等价不受影响（模板与样式没动）。
+
+自检拆模块第五步：环境自检那几组成文件，夹具提成共享模块（`selftest.ts` 3640 → 2250 行）
+
+- `test/checks/env-doctor.ts`（1348 行）：运行环境自检（判定 + 探测 + 一键修复）与 VM-09 那批。
+- `test/env-fixtures.ts`（129 行）：**共享夹具** —— 一份"什么都好"的原始事实、各检查按需覆盖一两项，
+  以及 `envSource` / `envCode` / `envMainCode` / `envPaneCode` 四份源码文本。这些原来定义在
+  自检的第 16 组里，但后面的环境向导与安装引擎组隔着上千行还在引用，所以提成一份（谁要谁取，
+  不再出现"检查 A 从检查 B 的文件里 import 一个夹具"）。
+- `test/text.ts`（62 行）：从源码文本里切片段的小工具（`blockOf` 按大括号配平、`functionBodyOf`、
+  `methodSliceOf` 按下一个类成员为界、`stripComments`、`stripStrings`）—— 环境自检、环境向导、
+  安装引擎三组共用。
+
+验收：`npm test` **314/314** 且输出与改动前逐行一致；沙箱门禁通过（32/32、185/185）；
+`lint` / `format:check` / `typecheck` 全绿。
+
+自检拆模块收尾：入口只剩 55 行（`selftest.ts` 2250 → 55，全程 6591 → 55）
+
+`test/selftest.ts` 原来是一个 6591 行的文件、314 条断言全挤在一个 `main()` 里。六批纯搬迁之后它
+只剩入口：`createRepo()` → 依次 `run*` → `report()`。**每批的判据都是自检输出逐行一致**
+（314 行 `PASS 名字 — 实际值` 同名、同值、同顺序，只归一化「健康探测（真实）」那行的 `Nms`）。
+
+- `test/checks/env-wizard.ts`（1371 行）：首启环境向导、门禁界面、18a 的视图相位。
+- `test/checks/install-engine.ts`（874 行）：18b~18d —— 提权、nvm 的真实模型、归属与档位。
+- `test/env-fixtures.ts` 多收两份文本（`installerCode` / `gateRaw` / `gateCode`）—— 门禁界面那组
+  也要读 node-installer，不能各读一份。
+
+六批合计：`selftest.ts` 6591 → 55、新增 `harness` 80 / `repo` 174 / `text` 62 / `env-fixtures` 143，
+`test/checks/` 八个主题模块共 6579 行。布局、怎么加一条断言、以及踩过的三个子目录搬迁坑
+（`__dirname` 会变、相对 import 多退一层、跨段派生值先提成模块）记在 **AGENTS §7.34**。
+
+验收：`npm test` **314/314** 且输出与拆分前逐行一致；沙箱门禁通过（反例脚本 32/32、185/185）；
+`lint` / `format:check` / `typecheck` 全绿。
+
+自检开始拆模块：`test/selftest.ts` 的公共件与第 1~5 组先出去（6591 → 6172 行）
+
+`test/selftest.ts` 原本是一个 6591 行的文件、314 条断言全挤在一个 `main()` 里（最多的几条一次要看
+六千行）。这一步只做搬迁，判据是**自检输出逐行一致**（314 条同名、同值、同顺序；只有「健康探测（真实）」
+那行的 `Nms` 计时会抖，比对时归一化掉）。
+
+- `test/harness.ts`：断言登记（`check` / `skip`）、统计与 GitHub Actions 失败注解（`report`）、
+  「这台机器能不能起子进程」的两个探测，以及 `IS_WINDOWS`。各主题模块共用这一份，别各打一份汇总。
+- `test/repo.ts`：自检共用的仓库事实 —— 仓库根、`.verify/` 临时目录，以及那个跨几千行还在用的
+  `Settings` 实例（原来 `main()` 开头建好、§17d 还在用）。
+- `test/checks/launch.ts`：第 1~5 组（启动命令解析 / ANSI 与横幅 / 健康探测判据 / 端口占用解析 /
+  DshManager 状态机）整段搬过来，47 条断言，行为一字未改。
+- `test/selftest.ts` 只剩入口：建 `repo` → `await runLaunch(repo)` → …（其余各组仍在原地）→ `report()`。
+
+验收：`npm test` **314/314** 且输出与改动前逐行一致；`node scripts/selftest-sandbox.mjs` 通过
+（两个反例脚本 32/32、185/185 照旧）；`lint` / `format:check` / `typecheck` 全绿。
+
+自检拆模块第四步：插件装配层 / 补丁层 / 救援成文件（`selftest.ts` 4746 → 3640 行）
+
+- `test/checks/plugin.ts`（1146 行）：插件装配层（只读）、你自己的补丁层、救援（P2）三块 ——
+  这一层全靠"别人写的文件 + 别人打印的文本"，夹具是**真实输出**（本机 web profile），
+  上游改格式时这里第一时间变红。
+- `test/repo.ts` 补 `pluginSource` 与 `fixture(name)`（读 `test/fixtures/`），并明确暴露
+  `testDir` —— 搬到 `test/checks/` 的代码不能再拿 `__dirname` 拼夹具路径（这次又踩了一次：
+  `readProfileManifest` 收到了 `test/checks/fixtures/profile`）。这条与相对 import 多退一层
+  是同一类问题的两个面。
+
+验收：`npm test` **314/314** 且输出与改动前逐行一致；沙箱门禁通过（32/32、185/185）；
+`lint` / `format:check` / `typecheck` 全绿。
+
+自检拆模块第三步：发布链路与打包约定成文件（`selftest.ts` 5200 → 4746 行）
+
+- `test/checks/release.ts`（476 行）：第 8~15 组 —— CHANGELOG 与版本号对齐、changeset 片段规则、
+  Release 标题与正文、自动更新契约（不偷偷下载 / 不偷偷安装 / macOS 分支）、外链 helper、
+  启动早期的日志与兜底、产物命名与更新源、自动全屏前提、macOS 版本检查、依赖归属与包体积、
+  更新卡片的分平台文案。
+- `test/repo.ts` 再加三份共享事实：`pkg`（package.json）、`ipcSource` / `flatIpc`（`shared/ipc.ts`
+  原文与压平版）—— 环境自检与安装引擎那几组还要用同一份。
+- 搬到子目录后相对路径要多退一层（`../tools/…` → `../../tools/…`，动态 `import(…)` 与
+  `require(…)` 同样），这条与 `__dirname` 一样是子目录搬迁的固定成本。
+
+验收：`npm test` **314/314** 且输出与改动前逐行一致；沙箱门禁通过（32/32、185/185）；
+`lint` / `format:check` / `typecheck` 全绿。
+
+自检拆模块第二步：渲染层静态检查与主题/样式两组各自成文件（`selftest.ts` 6172 → 5200 行）
+
+接着上一步往下搬，仍然只搬不改，判据仍是**自检输出逐行一致**（314 条同名、同值、同顺序）。
+
+- `test/repo.ts` 从 35 行长到 151 行：那些被反复读到的源码文本集中到一处 —— `html` / `vueFiles` /
+  `vueSource` / `libSource` / `rendererJs` / `markup` / `rendererAll` / `rendererCode` / `mountJs` /
+  `css` / `vueStyles` / `allCss` / `uiPaneSource`，外加两个处理文本的小工具 `escaped(text)` 与
+  `cssBlock(selector)`，还有 `PackageJson` 形状。原来它们散在 §6/§7 里，后面几千行的断言又在用。
+- `test/checks/renderer.ts`（281 行）：第 6 组渲染层静态检查（17 条）。
+- `test/checks/styles.ts`（703 行）：第 7 组主题、样式与视觉契约（29 条，含启动锁的盖满/层级与
+  `:focus-visible` 那几条）。
+- `test/selftest.ts` 只剩入口 + 其余各组（仍算 5200 行，后面几步继续搬）。
+
+**这一步踩到的唯一一个坑**：`test/checks/` 比 `test/` 深一层，搬过去的代码里任何
+`path.join(__dirname, '..', …)` 都会指到 `test/` 底下（`Cannot find module … test/src/preload/preload.ts`）。
+所以搬到子目录的代码一律改用 `repo` 提供的路径（`repo.root` / `repo.srcDir` / `repo.rendererDir`），
+不再自己拼 `__dirname`。
+
+验收：`npm test` **314/314** 且输出与改动前逐行一致；`node scripts/selftest-sandbox.mjs` 通过
+（反例脚本 32/32、185/185 照旧）；`lint` / `format:check` / `typecheck` 全绿。
+
+`shared/ipc.ts`（跨进程契约）拆成 barrel + 八个主题模块（1143 → 22 行的 barrel + 八个叶子）
+
+| 文件             | 行数 | 职责                                                 |
+| ---------------- | ---- | ---------------------------------------------------- |
+| `shared/ipc.ts`  | 22   | **barrel**：`export *` 八个模块（消费方一行没改）    |
+| `ipc-shell.ts`   | 54   | 主题、关闭询问与确认框                               |
+| `ipc-update.ts`  | 59   | 自动更新：相位、状态与更新源地址（两个纯常量在这里） |
+| `ipc-runtime.ts` | 233  | dsh 运行时快照、事件、会话与设置                     |
+| `ipc-archive.ts` | 88   | 归档会话页                                           |
+| `ipc-plugin.ts`  | 235  | 插件装配层                                           |
+| `ipc-env.ts`     | 175  | 运行环境自检与首启门禁                               |
+| `ipc-node.ts`    | 204  | Node 安装 / 更新通道（含 t29 增量）                  |
+| `ipc-api.ts`     | 200  | `DshConsoleApi`（preload 照它实现）                  |
+
+**判据**：运行时导出面零差异（只有 `RELEASES_URL` / `UPDATE_MAC_FEED_URL` 两个常量）；
+`npm test` **314/314**；沙箱门禁通过（32/32、185/185）；`lint` / `format:check` / `typecheck` /
+渲染层构建全绿。
+
+**两处刻意改了口径**（这是唯一两行输出变化，其余 312 行逐字不变）：
+
+- **"契约零 import" → "零*运行时* import"**：叶子之间必须 `import type`，判据从 `/^\s*import\s/m`
+  收紧成 `/^\s*import\s+(?!type\b)/m`，两处自检标题与 `scripts/env-doctor-cases.mjs` 的 P 检查一起改。
+- **同文件里"再声明一次同名 interface"是隐式合并**：t29 给 `EnvDoctorReport` 加字段就是那么写的，
+  拆到两个模块后它们是两个不同的 interface（`tsc` 立刻报缺字段）—— 已把字段并回同一份声明。
+  这条与"读源码文本的断言要读整份"（`repo.ipcSource` / `plugin.ts` / `env-doctor-cases.mjs`）
+  一起写进 AGENTS §7.35。
+
+样式分层第二批：归档会话页的规则搬进 `pages/archive/ArchivePane.vue` 的 `<style scoped>`
+
+- `.archive*` 一整节 415 行搬走（全局表 4329 → 3914 行），全局表里留一句指针说明搬到哪了。
+- 两个坑写进 AGENTS §7.33：① `v-html` 渲染出来的正文（`renderMarkdown` 塞进 `.archive-turn-body` 的 `h1 / p / code / table …`）**必须写成 `:deep(...)`**，否则编译成 `.archive-turn-body h1[data-v-*]` 一条都匹配不上；② **多行选择器列表**逐行加 `:deep()` 会漏掉前几行 —— 这一版漏了 `h2..h5 / ul / th` 共 7 条，靠查构建产物里的选择器才抓到。自检因此多了一条钉子：`.archive-turn-body` 后面跟元素的行不许缺 `:deep()`。
+- 验收：机械等价 577 条 → 577 条（不丢不重）；headless Chrome 三段夹具（设置页 + 聚焦蒙层 + 归档页，含 v-html 那部分排版）逐像素一致；`npm test` 314/314。
+
+样式分层第三批：控制台的规则搬进 `pages/dashboard/DashboardPane.vue` 的 `<style scoped>`
+
+- 37 个条目搬走（`.dash*` / `.focus-*` / `.stats` / `.meta-*` / `.event-log*` / `.chart` / `.spark*` / `.command`，含两条媒体查询），全局表 3914 → 3647 行（−267）；留在全局表的是卡片零件（`.panel` / `.panel-head` / `.panel-block` / `.hint`）与 `.block-head` / `.block-note`（插件页也在用）。
+- 顺手把误放在「控制台」一节里的 `.settings-status` 收进 `pages/settings/SettingsPane.vue` —— 它只有设置页用。
+- 两个新教训写进 AGENTS §7.33：① 查"共享件还在不在全局表"必须用**行首锚定**（`.log-panel .panel-head` 里含 `.panel-head`，用 contains 会误判成被搬走）；② 产物里的媒体查询会被压成 `@media (width<=900px)`，按 `max-width` grep 产物会以为规则丢了。
+- 验收：机械等价 577 条 → 577 条；headless Chrome **五段**夹具（设置页 + 聚焦蒙层 + 归档页 + 控制台宽/窄两档，窄档覆盖两条媒体查询）逐像素一致；`npm test` 314/314。
+
+样式分层第六批：首启环境向导与入口门禁搬进 `gate/EnvGate.vue` 的 `<style scoped>`
+
+- 「首启环境向导与入口门禁」一节里 EnvGate 私有的 **98 个条目**搬走（`.gate*` 外壳与节点时间线、卡片、确认表等），全局表 **2649 → 1944 行（−705，比最初的 4502 少了 57%）**。
+- 与环境自检详情层**共用**的 42 个条目（`.gate-option*` / `.gate-choice*` / `.gate-confirm*` / `.wizard-*` —— EnvPane 复用向导同一套选项 / 选择 / 确认 / 进度行）留在全局表；顺手把误放在这一节里的 `.wizard-readout` 收进 `EnvPane.vue`。
+- 两条自检教训写进 AGENTS §7.33：① 查「私有规则有没有搬干净」**也要行首锚定** —— `.gate-rail` 在全局表里仍以 `html[…] body[…] .gate-rail` 的形式存在（macOS 全屏撤回留白），用 contains 会误判；② 表的 `readScoped()` 要先 `panes/` 再 `layout/` 找文件。
+- 顺手把 `scripts/env-wizard-cases.mjs` 的 CSS 断言改成读**两层**（它只读 `styles.css`，`.gate-result .btn-row` / `.gate-metabar` 搬走之后那两条间距断言直接红、沙箱门禁 `exit=1`）；`ENV_WIZARD_CSS_FILE` 那个变异实验后门保持"只读指定文件"。
+- 验收：机械等价 577 条 → 577 条；headless Chrome **八段**夹具（设置页 + 聚焦蒙层 + 归档页 + 控制台宽/窄 + 环境自检页 + 插件页 + **首启门禁**，含共享的选项 / 确认表 / 进度行）逐像素一致；`npm test` 314/314。
+
+样式分层第四批：环境自检页的规则搬进 `pages/env/EnvPane.vue` 的 `<style scoped>`
+
+- 「环境自检」与「更新入口与下载来源」两节里**只有 EnvPane 用**的 37 个条目搬走（`.env-row*` / `.env-scope` / `.env-confirm*` / `.env-source*` / `.env-skip` …），全局表 3647 → 3376 行（−271）。
+- 留在全局表的是与别处共用的：`.env` 外层、`.env-actions`（设置页「运行环境」卡也画）、`.env-op*`（环境向导的执行输出面板与这一页同形）。**这一节 42 条里只有 28 条是私有的** —— 再次说明"能搬多少"要按规则逐条数，不能按段落整体判断。
+- 自检新增一条改造：到处在用的 `cssBlock(selector)` 助手也改成读**两层**样式表（`allCss`）—— 只看全局表时 `.env-main` / `.env-seg` 那两条断言直接假红。
+- 验收：机械等价 577 条 → 577 条；headless Chrome **六段**夹具（设置页 + 聚焦蒙层 + 归档页 + 控制台宽/窄 + 环境自检页）逐像素一致；`npm test` 314/314。
+
+样式分层最后一批：终端页 / 内嵌界面 / 零散几条各自归位（全局表 1651 → 1497 行，−154）
+
+- `pages/terminal/TerminalPane.vue` 12 条（`.term-body` / `.term-view*` / `.shell-tab*` / `.shell-pane*` / `.chips` / `.btn.outline`）、`pages/terminal/DshTerminal.vue` 1 条（`.bar-title`）、`pages/ui/UiPane.vue` 4 条（`.ui-paste*`）、`layout/TopBar.vue` 2 条（`.immersive-only` / `.topbar-note.lit`）、`gate/GateBanner.vue` 1 条、`pages/env/EnvPane.vue` 2 条（`.env` / `.env > .bar`）。
+- **`.term-host` 的"基础规则"（relative + flex: 1 1 auto）仍留在全局表** —— 两路终端共用它（§7.30）；只作用于本地 Shell 那一路的 `.term-body > .term-host` 跟着 `TerminalPane` 走。
+- 三处直接读 `stylesCode` 的自检改成读两层：`.btn.outline` / `.shell-tab.active`、`.term-body` 与 `.term-host` 的四条、`.topbar-note.lit` 与三条"已经删掉的那套"；"每行至少有个非空 `<style scoped>`"的粗门槛从 `> 200` 字符降到 `> 0`。
+- 顺手修掉 12 处段落标记与 `}` 粘行（几轮搬运脚本攒下的），并加了一条钉子：段落标记必须自成一行。
+- 验收：机械等价 577 条 → 577 条；headless Chrome **十三段**夹具逐像素一致；`npm test` 314/314。
+
+样式分层第五批：插件页（装配层）整节搬进 `pages/plugin/PluginPane.vue` 的 `<style scoped>`
+
+- 「插件页（装配层）」一整节 **96 个条目**搬走（`.plugin*` / `.layer*` / `.plugin-op*` …），全局表 **3376 → 2649 行（−727，比最初的 4502 少了 41%）**。这一页没有 `v-html`，不需要 `:deep()`。
+- 留在全局表的是跨页面共用的零件（`.btn` / `.panel*` / `.banner` / `.hint` / `.empty` / `.spacer` / `.block-head`）。
+- 判归属时踩了个假阳性，写进 AGENTS §7.33 与 backlog：按「文件里出现过这个词」判会把 `RailNav.vue` 里的 `{ id: 'plugin' }` 字符串、别处注释里的 `.plugin-tag` 算成使用者 —— **要按标记里的 class 核**（`grep 'class="[^"]*\b类名\b'`）。
+- 验收：机械等价 577 条 → 577 条；headless Chrome **七段**夹具（设置页 + 聚焦蒙层 + 归档页 + 控制台宽/窄 + 环境自检页 + 插件页）逐像素一致；`npm test` 314/314。
+
+样式分层试点（backlog #1）：设置页自己的规则从 `styles.css` 搬进 `pages/settings/SettingsPane.vue` 的 `<style scoped>`
+
+- 搬走这一页私有的规则（`.settings` / `.form-row` / `.input-suffix` / `.update-*` 与「聚焦蒙层」的 `.spotlight`），全局表 4502 → 4329 行（−173）；跨组件的共享件（`.check`、`.panel-block > .hint`）留在全局表 —— 判据只有一条：**这个 class 是不是只有这一页在用**。
+- 三道验收都跑了：① 机械等价（「全局表 + 组件块」按 `选择器 → 声明` 抽成多重集，和改动前的快照比：577 条 → 577 条，不丢不重）；② headless Chrome 用改动前后的样式各渲染同一段夹具，**逐像素一致**（设置页 + 聚焦蒙层两段）；③ 自检改成跨两层看（「标记用到的 class 都有对应样式」与「除变量块外没有硬编码颜色」都查两层），并新增「样式分层：页面私有的规则搬进组件的 `<style scoped>`，共享件留在全局表」。
+- 这一层的坑（scoped 会给选择器 +1 个属性选择器，覆盖关系从"谁在后"变成"谁更具体"）记在 AGENTS §7.33。
+
+样式分层第七批：外壳四件（左栏 / 顶栏 / 底栏 / 关闭确认卡片）搬进各自的 `<style scoped>`
+
+- 「骨架」里三个外壳组件自己的 29 个条目 + 「指示灯」里按状态着色的 5 条 + 「关闭确认卡片」整节 7 条搬走，全局表 **1944 → 1651 行（−293，比最初的 4502 少了 63%）**。
+- **跨组件的布局契约留在全局表**：`.app` / `.workspace` / `.pane`（两列网格、页面用 `visibility` 互斥、挂载点 `display: contents`）与 `html`/`body` 上的状态开关（macOS 红绿灯留白、系统全屏撤回、应用内全屏）—— 判据要先排除 `html` / `body` / `:root` 开头的规则。
+- 自检里"私有规则有没有搬干净"的判据收紧为**选择器自成一条规则**（后面只能跟 `,` 或 `{`）：`.close-card .check`（`.check` 是共享件）与 `.topbar-note.lit`（顶栏那格"亮一下"的变体）都以私有选择器开头，只写行首锚定会误判成"没搬干净"。
+- 验收：机械等价 577 条 → 577 条；headless Chrome **十段**夹具（设置页 + 聚焦蒙层 + 归档页 + 控制台宽/窄 + 环境自检页 + 插件页 + 首启门禁 + **应用外壳** + **关闭确认卡片**）逐像素一致；`npm test` 314/314。
+
+应用内全屏时顶栏那句「发现新版本 …」的摆法：挪到地址（`地址，PID …`）的左边 —— 原来夹在地址与「退出全屏」之间，读起来像地址的尾巴
+
+应用内全屏时也看得到「有新版本」（提示从底栏补一份到顶栏那格）
+
+更新提示原来只在**底栏**（`layout/StatusBar.vue` 的 `.update-hint`），而应用内全屏时
+`body[data-immersive='true'] .statusbar { display: none }` 把整条底栏藏掉了 —— 全屏下更新提示
+等于不存在。
+
+- 「有更新」那句进 `state/store.ts`（`updateHint` computed），点它之后做什么进
+  `state/update-anchor.ts`（`openUpdateSettings()`）—— 底栏与顶栏读同一份；
+- 顶栏那格旁边补一个 `#btn-topbar-update`（只在 `immersive && updateHint` 时出现）。点它**先退出
+  应用内全屏**，再切到设置页并把更新卡片滚进视野、高亮一次（全屏时左栏是藏着的，直接切页会让人
+  找不到北）—— 与 §7.31 的到达提示同一个落点（顶栏那格在两种模式下都在）；
+- `.update-hint` 从组件的 `<style scoped>` 升到全局表：t72 起两个组件都在用，正是 §7.33 的判据
+  （`styleLayers` 里 StatusBar 那行同步改成 `staysGlobal`）。
+
 ## [0.6.4] - 2026-09-24: 重启后自动进 Harness，装插件挑对 pnpm
 
 测试夹具里不再带真实的家目录路径
