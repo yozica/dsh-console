@@ -33,11 +33,13 @@ function recheckEnv(): void {
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { envReport, envReportLoading, loadEnvReport } from '../../state/env-doctor.js';
 import { openEnvDetail } from '../../state/env-layer.js';
-import { settings, snapshot, update } from '../../state/store.js';
-import { isMac } from '../../utils/platform.js';
+import { applyUpdate, settings, snapshot, update } from '../../state/store.js';
+import { fakePhase, setFakeUpdatePhase } from '../../state/update-fake.js';
+import { isMac, shortcutLabel } from '../../utils/platform.js';
 import { scrollIntoViewEased } from '../../utils/scroll.js';
 import { updateCardFocus } from '../../state/update-anchor.js';
 import type { EnvInfo, SettingsValues, UpdatePhase } from '../../../shared/ipc';
+import type { FakePhase } from '../../state/update-fake.js';
 
 const api = window.dshConsole;
 
@@ -68,7 +70,12 @@ const status = ref('');
 const busy = ref(false);
 /** 版本信息来自快照的 env（主进程给），开发态与打包态都在这里如实显示 */
 const appVersion = ref('—');
-const packaged = ref(false);
+/**
+ * 是不是打包版。**默认按"是"**：这一位还管着"开发态专用的东西露不露"（下面「关于」卡里
+ * 那排"假装更新相位"的按钮），而在快照回来之前默认成 `false` 就等于在打包版里先把它渲染出来
+ * —— 宁可晚一点显示出开发态标记，也不要让不该出现的东西先出现。
+ */
+const packaged = ref(true);
 const runtime = reactive({ electron: '—', node: '—', chrome: '—' });
 let statusTimer: ReturnType<typeof setTimeout> | null = null;
 let stopThemeWatch: (() => void) | null = null;
@@ -232,11 +239,47 @@ const updateLabel = computed(() => {
 async function runUpdate(): Promise<void> {
   if (updateBusy.value) return;
   const action = updateAction.value;
-  if (action === 'download') update.value = await api.downloadUpdate();
+  if (action === 'download') applyUpdate(await api.downloadUpdate());
   else if (action === 'install') await api.installUpdate();
   else if (action === 'releases') void api.openExternal(update.value.releasesUrl);
-  else update.value = await api.checkForUpdates();
+  else applyUpdate(await api.checkForUpdates());
 }
+
+// ------------------------------------------------- 开发态：假装更新相位（打包版没有）
+
+/**
+ * 这排按钮：`label` 是按钮上的字、`phase` 是点下去伪装成哪个相位
+ * （`null` = 还原真实相位）。
+ *
+ * 文案与相位都摆在这里、模板只用 `v-for` 画出来，是因为模板里那个自检"模板 class"提取器
+ * 会把 `:class="…"` 里的**每个 token 与每个单引号字符串**都算成一个 class 名：四个按钮
+ * 把相位名写在模板里时它数出 +8（实测），收进这张表就只剩绑定表达式本身那 +3 了。
+ */
+const FAKE_BUTTONS: { key: string; label: string; phase: FakePhase | null }[] = [
+  { key: 'available', label: '发现新版本', phase: 'available' },
+  { key: 'downloaded', label: '已下载', phase: 'downloaded' },
+  { key: 'downloading', label: '正在下载', phase: 'downloading' },
+  { key: 'clear', label: '还原', phase: null },
+];
+
+/**
+ * 把界面伪装成某个更新相位（`available` / `downloaded` / `downloading`）；
+ * 再点一次同一个按钮就还原。
+ *
+ * 实现全在 `state/update-fake.ts`（与 Ctrl+Shift+U 同一份）：它只写那份会被 `update`
+ * 优先读的伪装状态，**真实更新状态一点不动**，所以点一次「检查更新」也不会把伪装顶掉。
+ * 这排按钮在打包版里连渲染都不渲染（`v-if="!packaged"`）。
+ */
+function fake(phase: FakePhase | null): void {
+  if (phase === null) {
+    setFakeUpdatePhase(null);
+    return;
+  }
+  setFakeUpdatePhase(fakePhase.value === phase ? null : phase);
+}
+
+/** 快捷键提示跟着平台走（与 dev-diagnostics.ts 里那条是同一个键） */
+const fakeShortcut = shortcutLabel('Shift+U');
 
 // ---------------------------------------------------------------- 底栏点进来的锚点
 
@@ -639,6 +682,30 @@ onUnmounted(() => {
           <div class="update-bar" :style="{ width: `${updatePercent}%` }"></div>
         </div>
         <p v-if="updateNote" id="update-note" class="hint">{{ updateNote }}</p>
+      </div>
+      <!-- 开发态专用（打包版连这一整块都不渲染）：开发时更新相位只会是 unsupported，
+           `available` / `downloaded` 那两条提示（底栏、应用内全屏时的顶栏那一格、点它聚焦到
+           更新卡片）根本走不到。这排按钮把相位"假装"出来，与快捷键是同一份实现
+           （state/update-fake.ts）—— 它只改界面读的那份值，真实更新状态不受影响。 -->
+      <div v-if="!packaged" class="panel-block">
+        <p class="hint" id="dev-update-hint">
+          开发态演示：{{
+            fakePhase ? '正在伪装' : '当前是真实相位'
+          }}（只改这份界面镜像，真实更新状态不动）· 快捷键 {{ fakeShortcut }}
+        </p>
+        <div class="btn-row">
+          <button
+            v-for="b in FAKE_BUTTONS"
+            :id="`btn-dev-update-${b.key}`"
+            :key="b.key"
+            class="btn small"
+            :class="{ primary: b.phase !== null && fakePhase === b.phase }"
+            :disabled="b.phase === null && !fakePhase"
+            @click="fake(b.phase)"
+          >
+            {{ b.label }}
+          </button>
+        </div>
       </div>
     </section>
 
