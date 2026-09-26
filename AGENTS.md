@@ -127,7 +127,7 @@ src/
                         - `env/`：EnvPane + 更新确认区 EnvUpdateConfirm（它不再是页面，是设置页
                           「运行环境」卡的详情视图，见 7.30）
                         - `dashboard` / `ui` / `usage` / `archive` / `settings`：各自一页，暂时只有一个文件
-test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（315 项，`npm test`）
+test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（316 项，`npm test`）
 test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
 test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
 test/text.ts            从源码文本里切片段的纯函数（blockOf / functionBodyOf / methodSliceOf / strip*）
@@ -141,7 +141,7 @@ scripts/env-doctor-cases.mjs  环境自检的独立反例脚本（纯函数夹�
 scripts/env-wizard-cases.mjs  环境向导的独立反例脚本（门禁判定 + 安装引擎纯函数 + 逃生口，185 条）—— 同上，沙箱门禁与 CI 都会自动收录
 .changeset/             每条改动一个片段；config.json 里 changelog: false
 vite.config.mts         渲染层构建配置（Vite + Vue，产物到 dist/renderer）
-tsconfig.*.json         三份配置，见第 3 节
+tsconfig.json           编辑器用的**根配置**（指向渲染层项目，t71）；三份真配置见第 3 节
 eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 .prettierrc.json        格式的唯一事实来源
 .husky/pre-commit       提交前钩子（lint-staged）
@@ -175,7 +175,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（315 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（316 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -187,7 +187,11 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run pack:win` / `dist:win` | 只产出目录版 / 产出 NSIS + 便携版 exe                                                   |
 | `npm run pack:mac` / `dist:mac` | 只产出 .app / 产出 dmg + zip                                                            |
 
-三份 tsconfig 各管什么：
+三份 tsconfig 各管什么（另有根上的 `tsconfig.json`，**只给编辑器找项目用**：它 `extends`
+`tsconfig.renderer.json` 并 `include` `src/renderer` + `src/shared` —— 编辑器按"最近的
+`tsconfig.json`"选项目，少了它就只能按"推断项目"看单个文件，于是 `env.d.ts` 里的
+`window.dshConsole` 看不见、`UsagePane.vue` 报 TS2551。命令一律显式 `-p`，所以它不影响 CI 与打包；
+实测加与不加 `dist/renderer` 的产物逐字节一致，自检里有一条钉子盯着它）：
 
 | 配置                     | 覆盖                                                                        | 谁在跑                                         |
 | ------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------- |
@@ -1768,7 +1772,7 @@ AGENTS 与 `docs/{env-doctor,plugin-restart,env-wizard}.md` 这类"现在怎么�
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，315 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，316 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

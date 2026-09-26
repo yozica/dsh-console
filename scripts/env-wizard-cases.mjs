@@ -1419,6 +1419,10 @@ function resolveRendererBuild() {
     process.execPath,
     [
       TSC,
+      // 根上那份 `tsconfig.json` 是给编辑器找项目用的；这里是**列文件**编译，
+      // 不忽略它的话 TS 6 会直接报 TS5112（"tsconfig.json is present but will not be loaded
+      // if files are specified on commandline"）—— CI 上抓到的，本地因为产物被缓存没撞上。
+      '--ignoreConfig',
       '--module',
       'nodenext',
       '--moduleResolution',
