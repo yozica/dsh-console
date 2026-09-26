@@ -8,8 +8,8 @@
 
 import { computed, ref } from 'vue';
 
-import { phaseText } from './phase-text.js';
-import { applyPlatformAttribute, setPlatform } from './platform.js';
+import { phaseText } from '../shared/phase-text.js';
+import { applyPlatformAttribute, setPlatform } from '../utils/platform.js';
 import { RELEASES_URL } from '../../shared/ipc';
 import type {
   AppSnapshot,

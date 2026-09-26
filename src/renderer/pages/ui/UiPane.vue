@@ -13,7 +13,7 @@
  * `classList.add('hidden')` 和 `setText` 表达；现在是模板里的 v-if 与 computed。
  */
 import { computed, onMounted, ref, watch } from 'vue';
-import { restartThenOpenHarness } from '../../lib/restart-flow.js';
+import { restartThenOpenHarness } from '../../state/restart-flow.js';
 import {
   currentTab,
   dsh,
@@ -21,8 +21,8 @@ import {
   immersiveAutoEntered,
   settings,
   uiLoadable,
-} from '../../lib/store.js';
-import type { WebviewElement, WebviewFailLoadEvent } from '../../lib/webview.js';
+} from '../../state/store.js';
+import type { WebviewElement, WebviewFailLoadEvent } from '../../utils/webview.js';
 
 const api = window.dshConsole;
 

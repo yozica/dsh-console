@@ -7,8 +7,8 @@
  * **它不判定任何东西**：事实行、进度文案、百分比、停止按钮的文案与可见性都由父级算好递下来
  * （那些判据父级的结果行与输出面板也在用）。这里只画。
  */
-import { copyToClipboard } from '../lib/clipboard.js';
-import { FACT_STATUS_WORDS, type FactStatus } from '../lib/gate-copy.js';
+import { copyToClipboard } from '../utils/clipboard.js';
+import { FACT_STATUS_WORDS, type FactStatus } from '../shared/gate-copy.js';
 import type { EnvWizardStepId } from '../../shared/ipc.js';
 
 defineProps<{

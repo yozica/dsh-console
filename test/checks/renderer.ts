@@ -168,7 +168,7 @@ export function runRenderer(repo: Repo): void {
   //   2. 顶栏只在「应用内全屏（左栏被藏掉、顶栏变成最左列）」时才让白
   //   3. 顶栏在非全屏时**不能**有左内边距（否则页面标题被冤枉缩进 84px）
   //   4. 系统全屏（红绿灯自动隐藏）时把 1、2 都撤回
-  const platformJs = fs.readFileSync(path.join(rendererDir, 'lib', 'platform.ts'), 'utf8');
+  const platformJs = fs.readFileSync(repo.tsPath('platform.ts'), 'utf8');
   check(
     '渲染层：macOS 红绿灯留白给左栏（应用内全屏让白、系统全屏撤回、非全屏顶栏不缩进）',
     /html\[data-platform='darwin'\]\s*\.rail\s*\{[^}]*padding-top/.test(cssText) &&
@@ -199,9 +199,13 @@ export function runRenderer(repo: Repo): void {
 
   // macOS 适配的契约二：三处快捷键处理器都必须走平台修饰键
   // （mac 认 Cmd、其它平台认 Ctrl），不能各自写死 ctrlKey —— 写死的话 mac 上全部失灵。
-  const shortcutFiles = ['app.ts', 'dev-diagnostics.ts', path.join('lib', 'xterm.ts')];
+  const shortcutFiles = [
+    path.join(rendererDir, 'app.ts'),
+    path.join(rendererDir, 'dev-diagnostics.ts'),
+    repo.tsPath('xterm.ts'),
+  ];
   const notPlatformAware = shortcutFiles.filter(
-    (rel) => !fs.readFileSync(path.join(rendererDir, rel), 'utf8').includes('isAppModifier('),
+    (file) => !fs.readFileSync(file, 'utf8').includes('isAppModifier('),
   );
   check(
     '渲染层：三处快捷键处理器都按平台取修饰键',
@@ -212,9 +216,9 @@ export function runRenderer(repo: Repo): void {
   );
 
   // 依赖从"index.html 里的 script 标签"改成了模块导入（Vite 构建），
-  // 所以要检查的是：入口被引入、入口导入了样式表、xterm 由 lib/xterm.ts 直接用类导入。
+  // 所以要检查的是：入口被引入、入口导入了样式表、xterm 由 pages/terminal/xterm.ts 直接用类导入。
   const rendererEntry = fs.readFileSync(path.join(rendererDir, 'main.ts'), 'utf8');
-  const xtermLib = fs.readFileSync(path.join(rendererDir, 'lib', 'xterm.ts'), 'utf8');
+  const xtermLib = fs.readFileSync(repo.tsPath('xterm.ts'), 'utf8');
   check(
     '渲染层：入口被引入，样式与 xterm 都有来源',
     /<script type="module" src="\.\/main\.ts"><\/script>/.test(html) &&

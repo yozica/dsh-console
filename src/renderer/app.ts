@@ -2,14 +2,15 @@
  * 渲染层剩下的"应用级胶水"：没有 DOM 归属、但需要一个地方待着的逻辑。
  *
  * 界面本身已经全部是 Vue 组件了（layout/ 是外壳，pages/<一处>/ 是页面与页面私有的子件，
- * gate/ 是首启门禁那一层，components/ 是通用件，lib/ 是共享状态与工具），
+ * gate/ 是首启门禁那一层，components/ 是通用件，utils/ 是纯工具、state/ 是跨页共享状态、
+ * shared/ 是跨特性共用的逻辑），
  * 这里只留四件事：
  *   1. 启动守卫（preload / xterm 没就绪时给一句能看懂的报错，而不是白屏）
  *   2. 启动锁：应用启动时自动拉起 dsh 的那几秒，锁住界面，就绪后解锁
  *   3. 自动打开：dsh 就绪后按设置切到 Harness 页并进全屏
  *   4. 键盘快捷键：Ctrl+R / ⌘R 重载、Ctrl+1~7 / ⌘1~7 切页、Esc 退出全屏/跳过启动锁
  *   5. 重启之后自动进 Harness：四个入口（插件页 / 控制台 / 环境自检 / 重启为受管实例）
- *      点了重启之后，等 dsh 就绪再切到 Harness 页 —— 见 `lib/restart-nav.ts` 与 docs/plugin-restart.md
+ *      点了重启之后，等 dsh 就绪再切到 Harness 页 —— 见 `state/restart-nav.ts` 与 docs/plugin-restart.md
  *
  * 它们都在"状态之上"而不是"界面之上"，所以不需要组件外壳；等启动锁也做成组件后，
  * 这里会只剩守卫与快捷键。
@@ -17,9 +18,9 @@
 
 import { computed, watch } from 'vue';
 
-import { phaseText } from './lib/phase-text.js';
-import { isAppModifier } from './lib/platform.js';
-import { setBootLockVisible } from './lib/boot-lock.js';
+import { phaseText } from './shared/phase-text.js';
+import { isAppModifier } from './utils/platform.js';
+import { setBootLockVisible } from './state/boot-lock.js';
 import {
   arriveAtHarness,
   markRestartStarting,
@@ -29,8 +30,14 @@ import {
   restartNav,
   restartStalled,
   settleRestartNav,
-} from './lib/restart-nav.js';
-import { escapeGate, gateVisible, gatePhase, loadWizard, wireEnvWizard } from './lib/env-wizard.js';
+} from './state/restart-nav.js';
+import {
+  escapeGate,
+  gateVisible,
+  gatePhase,
+  loadWizard,
+  wireEnvWizard,
+} from './state/env-wizard.js';
 import {
   currentTab,
   dsh,
@@ -41,7 +48,7 @@ import {
   snapshot,
   startStore,
   type TabId,
-} from './lib/store.js';
+} from './state/store.js';
 import type { DshPhase } from '../shared/ipc';
 
 const api = window.dshConsole;
@@ -401,7 +408,7 @@ function wireRestartNav(): void {
         return;
       }
       // 注意是 `restartStalled`（要见过 starting）而不是 `isRestartStalled` ——
-      // 重启必然经过 stopped，那一段不是"起不来"（见 lib/restart-nav.ts）
+      // 重启必然经过 stopped，那一段不是"起不来"（见 state/restart-nav.ts）
       if (restartStalled(restartNav.value, now.phase)) settleRestartNav('unready');
     },
     { immediate: true },
@@ -440,7 +447,7 @@ const TAB_ORDER: TabId[] = [
  * 「门禁层此刻接管着界面」——键盘捷径要失效的正是这一段（评审 T11-B）。
  *
  * **它不是 `gateVisible`，两者回答的不是同一个问题**：
- *   - `gateVisible`（`lib/env-wizard.ts`）回答的是「门禁层**该不该**显示」：相位 ∈
+ *   - `gateVisible`（`state/env-wizard.ts`）回答的是「门禁层**该不该**显示」：相位 ∈
  *     {blocked / 本轮属于门禁层的 checking / 挡过人的 released} **且** 启动锁不在显示中。
  *     它是**渲染的输入**，是给组件用的判据。
  *   - 这里要回答的是「用户此刻是不是**被门禁层接管着**、背景里的捷径必须失效」。它是

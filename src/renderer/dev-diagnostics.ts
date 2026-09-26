@@ -12,8 +12,8 @@
  * 只在开发态安装：打包后 index 入口不会调 installDevDiagnostics()。
  */
 
-import { isAppModifier, shortcutLabel } from './lib/platform.js';
-import { update } from './lib/store.js';
+import { isAppModifier, shortcutLabel } from './utils/platform.js';
+import { update } from './state/store.js';
 import type { UpdateState } from '../shared/ipc';
 
 const MAX_DEPTH = 12;

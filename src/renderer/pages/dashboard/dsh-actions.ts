@@ -6,7 +6,7 @@
  * 依赖通过参数传入，模块本身不持有状态。
  */
 
-import type { DshConsoleApi, DshSnapshot } from '../../shared/ipc';
+import type { DshConsoleApi, DshSnapshot } from '../../../shared/ipc';
 
 /** 读取当前 dsh 状态的取值函数（各页传 `() => dsh.value` 这样进来） */
 type GetDsh = () => DshSnapshot | null;
@@ -45,7 +45,7 @@ export async function forceStopFlow(api: DshConsoleApi): Promise<void> {
 }
 
 /**
- * 重启的结果。调用方（`lib/restart-nav.ts` 的编排）要拿它决定"要不要谈生效"：
+ * 重启的结果。调用方（`state/restart-nav.ts` 的编排）要拿它决定"要不要谈生效"：
  * 用户在确认框里点了取消，与"重启失败了"是两件不同的事，界面上的说法也不一样。
  */
 export interface RestartResult {

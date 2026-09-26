@@ -6,11 +6,11 @@
 
 `gate/EnvGate.vue` 2648 → 2515 行、`pages/env/EnvPane.vue` 1546 → 1501 行，新增：
 
-- `lib/gate-copy.ts`（135 行）：门禁与「运行环境」详情层共用的**词表与现成句子** —— 官方下载页、
+- `shared/gate-copy.ts`（135 行）：门禁与「运行环境」详情层共用的**词表与现成句子** —— 官方下载页、
   忙提示、三步文案、五项状态词、方法事实、两条安装路、档位词、并存风险，以及 `versionWithChannel`。
-- `lib/env-install-phase.ts`（34 行）：安装 / 修复的相位判据（`INSTALL_BUSY_PHASES` / `installRunning` /
+- `shared/env-install-phase.ts`（34 行）：安装 / 修复的相位判据（`INSTALL_BUSY_PHASES` / `installRunning` /
   `installSettled` / `isFixSettled`）—— 两个组件原来各抄一份。
-- `lib/format.ts` 多一个 `formatBytes`（两处各抄过一份）。
+- `utils/format.ts` 多一个 `formatBytes`（两处各抄过一份）。
 
 **这一步只搬零风险的纯逻辑**：`<template>` 与 `<style>` 一行没动（判据是 `git diff` 里以 `<` 开头的行
 一个都没有），所以免像素对比；验收仍是 `vue-tsc` / `eslint` / `npm test` **输出逐行一致** / 沙箱门禁

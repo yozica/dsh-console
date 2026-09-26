@@ -15,9 +15,9 @@
  *     插件把启动打挂时，恰恰只有这一页还能看。
  */
 import { computed, ref, watch } from 'vue';
-import { requestEnvFocus } from '../../lib/env-anchor.js';
-import { envFix, wireEnvDoctor } from '../../lib/env-doctor.js';
-import { openEnvDetail } from '../../lib/env-layer.js';
+import { requestEnvFocus } from '../../state/env-anchor.js';
+import { envFix, wireEnvDoctor } from '../../state/env-doctor.js';
+import { openEnvDetail } from '../../state/env-layer.js';
 import {
   LAYER_ACTIONS,
   buildLiveIndex,
@@ -31,13 +31,13 @@ import {
   liveEntriesOnly,
   problemLabel,
   visibleGroupsOf,
-} from '../../lib/plugin-view.js';
-import { restartThenOpenHarness } from '../../lib/restart-flow.js';
+} from './plugin-view.js';
+import { restartThenOpenHarness } from '../../state/restart-flow.js';
 import PluginConfigView from './PluginConfigView.vue';
 import PluginOpPanel from './PluginOpPanel.vue';
 import PluginStackView from './PluginStackView.vue';
-import { clearRestartNav, restartNav } from '../../lib/restart-nav.js';
-import { currentTab, dsh, phaseInfo, snapshot } from '../../lib/store.js';
+import { clearRestartNav, restartNav } from '../../state/restart-nav.js';
+import { currentTab, dsh, phaseInfo, snapshot } from '../../state/store.js';
 import type {
   PluginEntry,
   PluginLayerEditAction,
@@ -512,7 +512,7 @@ async function cancelOp(): Promise<void> {
 
 /**
  * 「立即重启 dsh」：走共享流程（t46）—— 先立意图（锁只有在重启开始后才上得上，见
- * `lib/restart-nav.ts` 的说明）→ 重启 → 失败当场说实话；成功则由 app.ts 等就绪后
+ * `state/restart-nav.ts` 的说明）→ 重启 → 失败当场说实话；成功则由 app.ts 等就绪后
  * 自动切到 Harness 页。这里的黄条不再自己消失，它变成这一轮的进度与结局。
  */
 async function restartDsh(): Promise<void> {
@@ -550,7 +550,7 @@ const myPatchPath = computed(
   () => data.value?.layers?.find((layer) => layer.kind === 'profile-patch')?.name ?? '',
 );
 
-// —— 纯展示判据都在 `lib/plugin-view.ts` 里；这里只把响应式的来源喂进去（AGENTS §7.36）
+// —— 纯展示判据都在 `pages/plugin/plugin-view.ts` 里；这里只把响应式的来源喂进去（AGENTS §7.36）
 const layerName = (layer: PluginLayer): string => viewLayerName(layer, data.value?.home || '');
 const liveById = computed(() => buildLiveIndex(data.value?.live?.entries ?? []));
 const staticIds = computed(() => collectStaticIds(data.value?.treeLayers ?? []));

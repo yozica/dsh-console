@@ -16,7 +16,7 @@ import type {
   PluginLiveEntry,
   PluginProblem,
   PluginTreeLayer,
-} from '../../shared/ipc.js';
+} from '../../../shared/ipc.js';
 
 /** 层里那一排动作按钮的文案 */
 export const LAYER_ACTIONS: Record<PluginLayerEditAction, string> = {

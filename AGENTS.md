@@ -100,8 +100,13 @@ src/
     app.ts              应用级胶水：启动守卫、启动锁状态机、门禁改道（gateDiversion）、自动打开、快捷键
     mount.ts            挂载清单：外壳三块 + 全部页面 + 门禁层与横幅
     dev-diagnostics.ts  开发期诊断：把元素结构导出到日志
-    lib/                共享状态与纯逻辑（store / platform / xterm / markdown / env-doctor / env-wizard / boot-lock / …）
-                        ＋ clipboard / status-message（复制与状态栏那句话，t58 从 EnvGate 提出来）
+    utils/              **纯工具**（无状态、不 import 渲染层别的目录）：format / platform / markdown /
+                        scroll / clipboard / status-message（复制与状态栏那句话，t58 从 EnvGate 提出来）
+                        / webview（`<webview>` 的类型声明）—— t69 从 `lib/` 拆出来，见 7.37
+    state/              **跨页共享状态与相位机**：store（唯一的快照订阅）/ boot-lock / env-doctor /
+                        env-wizard / env-layer / env-anchor / update-anchor / restart-nav / restart-flow
+    shared/             **跨特性共用的逻辑**（≥2 处用、不持有状态、也不是通用工具）：gate-copy（门禁与
+                        环境详情层的词表）/ env-install-phase / phase-text
     components/         通用组件：被两处以上真的 import 的 `.vue` 才放这里（**现在一个都没有**，
                         规则写在 `components/README.md`，见 7.37）
     gate/               首启门禁那一层（覆盖层，不是页面）：EnvGate + 它的 9 个子组件
@@ -145,9 +150,9 @@ eslint.config.mjs       ESLint（只管正确性，见第 4 节）
 - **`src/shared/ipc.ts` 是跨进程形状的单一来源**：只放类型与纯常量，**禁止 import 任何运行时依赖**（渲染层要读这些类型，引入 `fs` / `path` 就会被拖进浏览器包）。加设置项要动两处：这里与 `main/settings.ts` 的 `DEFAULTS`；两边不一致时 `tsc` 直接报错，不会悄悄漂移。
 - **主进程 / preload / shared 由 tsc 直出 CJS**（`tsconfig.main.json` 的 `rootDir=src`、`outDir=dist`）：产物与源码一一对应（`src/main/main.ts → dist/main/main.js`），`main.ts` 里的相对路径（preload、`dist/renderer`、`build/icon.png`）编译后依然成立，**不需要为了打包改写业务代码** —— 这也是选 tsc 而不是 bundler 的主要原因。
 - **渲染层由 Vite 打包成单个自包含的普通脚本**（见下）。
-- **共享状态只有一份**：`lib/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
-- **门禁层是一个覆盖层，不是第 8 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/lib/env-wizard.ts` 管相位与显示（见 7.21）。
-- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,lib/**}`、`test/**`；渲染层 = `renderer/{pages/**,gate/**,layout/**,components/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
+- **共享状态只有一份**：`state/store.ts` 做唯一的 `getSnapshot` + `onState` + `onTheme` + `onFullscreen` 订阅。`startStore()` 必须缓存 **Promise** 而不是 boolean：入口 `void startStore()` 先发起、组件挂载后再 `await startStore()`，只判断 boolean 的话第二次会立刻返回，组件在快照还是 `null` 时就去读（踩过：事件日志首个挂载是空的）。
+- **门禁层是一个覆盖层，不是第 8 个页面**：它盖住左栏 / 页面 / 状态栏（顶栏留着好拖窗口），`--z-gate`（58）低于启动锁（60）。做成页面就能用 `Ctrl+2` 切走，硬门禁就没意义了。三层职责分得很清楚：`shared/ipc.ts` 定形状、`main/env-doctor.ts` 的 `judgeWizard` 是**纯判定**、`main/node-installer.ts` 只负责"把系统改对"，`renderer/state/env-wizard.ts` 管相位与显示（见 7.21）。
+- **模块边界（阶段二定下来的三条线，别越界）**：安装引擎 = `main/node-installer.ts` + `main/process-utils.ts`；契约与编排 = `shared/ipc.ts`、`preload/`、`main/{env-doctor,main,settings}.ts`、`renderer/{app.ts,utils/**,state/**,shared/**}`、`test/**`；渲染层 = `renderer/{pages/**,gate/**,layout/**,components/**,utils/**,state/**,shared/**,mount.ts,index.html,styles.css}`。渲染层**不许** import `src/main/**`（Vite 会把它拖进那一个自包含产物）；安装引擎**不许** import `env-doctor` / `dsh-manager`（要复检、要停 dsh 就注入钩子，这样它能离线测）。
 
 **一次启动的数据流**：主进程 `bootstrap()` 读 `Settings` → `DshManager.start()`（探测端口 → 解析启动命令 → 在 PTY 里拉起 dsh → 轮询健康检查 → 从输出里捕获带令牌的地址）→ 任何状态变化都 `emitState()` 推给渲染层；渲染层 `startStore()` 拉一次全量快照后靠 `onState` / `onTheme` / `onFullscreen` 接收增量，外壳与页面读同一份响应式状态。主进程到渲染层的**唯一**通道是 preload 暴露的 `window.dshConsole`（形状见 `shared/ipc.ts` 的 `DshConsoleApi`）。启动后 1.5 秒另有一轮**只读**的运行环境自检在后台跑（`main/env-doctor.ts`，见 7.20）：它不参与启动、不碰 dsh 进程，结果由渲染层 `envCheck()` 拉取。
 
@@ -228,7 +233,7 @@ node scripts/selftest-sandbox.mjs scripts/env-doctor-cases.mjs   # 也可以显�
 - **沙箱门禁不能与 `npm run lint` 并发跑**。`node scripts/selftest-sandbox.mjs` 的第一步是**编译**，它跑的是
   `tsc -p tsconfig.node.json --noEmit false --listEmittedFiles` —— `noEmit` 被显式关掉、且这个配置**没有 `outDir`**，
   于是程序里被 import 到的 `src/**` 也会**就地**生成 `.js`（`.verify/selftest-sandbox/tsc.log` 里的 `TSFILE:` 行就是：
-  `src/shared/ipc.js`、`src/main/dsh-manager.js`、`src/renderer/lib/{env-detail,wizard-view}.js`（selftest 也 import 它们）、…，共 44 个），编译完由清理段按清单删掉。而 eslint 的扫描面是
+  `src/shared/ipc.js`、`src/main/dsh-manager.js`、`src/renderer/pages/env/env-detail.js`、`src/renderer/gate/wizard-view.js`（selftest 也 import 它们）、…，共 44 个），编译完由清理段按清单删掉。而 eslint 的扫描面是
   「仓库根下它能解析的所有 `.js` / `.ts` / `.vue`」，**包含这些中途产物**：两者并发时 `no-undef`
   （`exports` / `require` / `process` / `console` / `__dirname`）会成片爆出来 —— **本轮实测 516 条；树安静之后串行重跑 = 0**。
   - **正确做法**：**串行跑** —— 沙箱门禁跑完（清理段把清单里的路径删干净）**之后**再 `npm run lint`；
@@ -309,7 +314,7 @@ git tag v0.2.3 && git push origin main --tags
 2. `./app.js` 要在建立共享状态与挂载之前求值：它一被求值就接上启动锁、快捷键、自动打开这些应用级逻辑；接着 `startStore()` 建立唯一的快照订阅，最后才 `mountAll()` —— 组件一挂上就要读数据。
 3. 静态 import 会被提升：想在入口模块体里做赋值去抢在 import 之前是不可能的，那类初始化只能写成一个被 import 的模块。
 
-现状：**没有**一条自检直接断言这份 import 顺序；相邻契约由「渲染层：入口被引入，样式与 xterm 都有来源」（核对入口导入了 `./styles.css`，且 xterm 的来源是 `lib/xterm.ts` 里对 `@xterm/xterm` / `@xterm/addon-fit` 的导入）与「渲染层：xterm 与 addon 用导入的类，不经过 window 全局」守着。
+现状：**没有**一条自检直接断言这份 import 顺序；相邻契约由「渲染层：入口被引入，样式与 xterm 都有来源」（核对入口导入了 `./styles.css`，且 xterm 的来源是 `pages/terminal/xterm.ts` 里对 `@xterm/xterm` / `@xterm/addon-fit` 的导入）与「渲染层：xterm 与 addon 用导入的类，不经过 window 全局」守着。
 
 ### 7.2 渲染层入口不能动态 import
 
@@ -322,7 +327,7 @@ git tag v0.2.3 && git push origin main --tags
 - `html[data-platform='darwin'] .rail { padding-top: calc(var(--bar-h) + 12px) }`，并把左栏整列设为可拖动区（按钮 `no-drag`）；
 - **例外**是应用内全屏：左栏被藏掉后顶栏成了最左边的一列，这时才给顶栏 `padding-left: 84px`（选择器 `html[data-platform='darwin'] body[data-immersive='true'] .topbar`）；
 - Windows 的顶栏右侧留白必须写成 `calc(100vw - env(titlebar-area-width))`，**不能用 `100%`** —— `100%` 是顶栏所在容器的宽度，非全屏时那个容器已被左栏切掉 188px，减出来是负数（症状：地址显示成 `http://127.`）；而 macOS 上 `env(titlebar-area-*)` 不生效，那条 calc 会退回兜底的 150px，所以顶栏右侧要用 `html[data-platform='darwin']` 覆盖成普通内边距。
-- 平台属性由 `lib/platform.ts` 写入（先用 UA 同步判定，快照到了再用主进程的 `env.platform` 校准）；**首帧的留白不能等 IPC**。标题栏高度在两侧各写一次（CSS 的 `--bar-h` 与主进程的 `TITLEBAR_HEIGHT`，都是 36），**必须一致**，否则系统按钮会和顶栏错位。
+- 平台属性由 `utils/platform.ts` 写入（先用 UA 同步判定，快照到了再用主进程的 `env.platform` 校准）；**首帧的留白不能等 IPC**。标题栏高度在两侧各写一次（CSS 的 `--bar-h` 与主进程的 `TITLEBAR_HEIGHT`，都是 36），**必须一致**，否则系统按钮会和顶栏错位。
 - Windows / Linux 上 `Menu.setApplicationMenu(null)`（菜单留空），macOS 上保留最小原生菜单（应用 / 编辑 / 显示 / 窗口），否则 ⌘Q、⌘C/V 会失灵。
 
 **门禁层的左轨是另一条左轨**（`.gate-rail`，`.gate` 从 `top: var(--bar-h)` 起）：窗口模式下它落在
@@ -408,7 +413,8 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 - **xterm 独占的元素里不能有 Vue 管理的子节点**：两边往同一块 DOM 里塞东西会打架。所以终端挂在 `.term-mount`（空元素）上，空状态覆盖层是它的**兄弟**而不是子节点。
 - **xterm 与 addon 必须用导入的类，不能绕 window 全局**。曾经留过一层 `window.FitAddon = FitAddon` 的过渡，而 UMD 全局是**命名空间对象**（`window.FitAddon.FitAddon` 才是类），把 ESM 导入的类本身挂上去后 `new window.FitAddon.FitAddon()` 就变成 `undefined`，**fit addon 静默装不上、终端永远停在 80×24**。自检「渲染层：xterm 与 addon 用导入的类，不经过 window 全局」守着。
 - **xterm 建完要立刻 fit 一次**（它默认 80×24），切页时再补一次。xterm 会为滚动条预留宽度，字符区宽度 = `列数 × 单元格宽`，除不尽的部分留在右侧 —— `div.xterm-screen` 看着「偏左」是字符网格的固有结果，不是布局错。
-- **共享的纯逻辑放 `lib/`**（状态词、时长格式化、需要确认的操作、xterm 的建实例与 fit），不要在组件里各写一份。模板里别给「导入的 ref」直接赋值（`@click="immersive = false"`），改用一个小函数。
+- **共享的纯逻辑别在组件里各写一份**：按 §7.37 的三层放 —— 纯工具进 `utils/`、跨页状态进 `state/`、
+  跨特性逻辑进 `shared/`，只有一处用的就跟着那一处（如 `pages/terminal/xterm.ts`）。模板里别给「导入的 ref」直接赋值（`@click="immersive = false"`），改用一个小函数。
 - **「数据晚到」要重试**：Harness 页切过去时快照可能还没到，`maybeLoad` 里 `!dsh` 会提前返回；若只在切页时尝试一次，页面就会永远停在空状态。所以 `watch(dsh)` 里也要再试一次。
 
 ### 7.9 启动锁是单向状态机
@@ -467,7 +473,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 - **环境自检不再是页面**：设置页多一张「运行环境」卡（一行结论 `N 项正常 · N 项不正常 · N 项需要注意`
   —— 与详情视图顶部那句**一字不差**，免得点进详情像换了个说法 + 要求的那句 Node 区间 +
   「查看详情」「重新检测」），点「查看详情」打开**工作区上的详情层**
-  `#env-detail-layer`（`lib/env-layer.ts` 的 `envDetailOpen` / `openEnvDetail` / `closeEnvDetail`）。
+  `#env-detail-layer`（`state/env-layer.ts` 的 `envDetailOpen` / `openEnvDetail` / `closeEnvDetail`）。
   它是覆盖层不是页面：**不进 `TAB_ORDER`**，点左栏任何一项（`selectTab` → `closeEnvDetailOnTabChange`）
   都会收掉它；回程按钮只收层、**不改 `currentTab`**（这样从控制台横幅、插件页进来的用户回到原处），
   文案跟着来路走 —— 从设置卡进来是「← 设置」（摆法预览 2A 里就是这么画的），别的来路是「← 返回」。
@@ -479,7 +485,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
   看着像"左栏变成了向导"（踩过：`open` 类、行数、结论全对，只有截图看得出来）。自检按 `<main>…</main>`
   取整段来钉它。
 - **快捷键 9 → 7**：`TAB_ORDER`（`app.ts`）、状态栏那句 `⌘/Ctrl+1~7`、终端里放行 `Ctrl+数字` 的
-  正则（`lib/xterm.ts` 的 `passAppShortcutsThrough` 是 `/^[1-7]$/`）、以及 `docs/` 里的页面数说法一起改。
+  正则（`pages/terminal/xterm.ts` 的 `passAppShortcutsThrough` 是 `/^[1-7]$/`）、以及 `docs/` 里的页面数说法一起改。
 - **`envFocus` 锚点机制没变**：控制台横幅、插件页的「一键装 pnpm」、门禁层的两条出路都改成
   `openEnvDetail()` + `requestEnvFocus(...)`；自检里有一条钉子盯着**全仓库不许再有 `currentTab.value = 'env'`**。
 
@@ -501,7 +507,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 
 **现在的做法**（裁定 1A / 2A / 3B / 4A，逐字文案与状态机见 [`docs/plugin-restart.md`](plugin-restart.md)）：
 
-- **先立意图，再动手**：四个入口都调 `lib/restart-flow.ts` 的 `restartThenOpenHarness(api, getDsh, reason)`
+- **先立意图，再动手**：四个入口都调 `state/restart-flow.ts` 的 `restartThenOpenHarness(api, getDsh, reason)`
   —— 它先 `beginRestartNav(reason)` **再**调重启。顺序不能反：`dshManager.start()` 一 spawn 完就返回，
   相位很快 `running → stopping → stopped → starting`，等 IPC 回来再立意图就错过了 5 秒上锁窗口。
 - **上锁**：`app.ts` 的 `wireRestartNav()` 在意图出现时开第三个回合（见 §7.9），锁上写
@@ -534,8 +540,8 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
   受影响的只有图标与按钮 —— 它们居中才是常态（常见 alert 摆法）。这条能用 headless Chrome 离线验证：
   拿 `dist/renderer/assets/` 里构建出的真 CSS 渲染一段黄条骨架（`--force-device-scale-factor=2 --screenshot`），
   再量"上方留白 vs 下方留白"即可 —— 改之前 +3.0 CSS px、改之后一行 +0.0 / 两行 +0.0。
-- **分层**：`lib/restart-nav.ts` 只有状态与纯判据（**不许有 DOM** —— 自检直接 import 它来钉就绪判据，
-  而自检的编译图 `tsconfig.node.json` 没有 DOM 类型）；`lib/restart-flow.ts` 是编排（有 `alert`，谁也别
+- **分层**：`state/restart-nav.ts` 只有状态与纯判据（**不许有 DOM** —— 自检直接 import 它来钉就绪判据，
+  而自检的编译图 `tsconfig.node.json` 没有 DOM 类型）；`state/restart-flow.ts` 是编排（有 `alert`，谁也别
   import 它）；`app.ts` 负责等就绪 / 超时 / 切页 / 发状态栏消息。
 
 **哪条自检守着**：「启动锁：重启 dsh 之后是第三个回合（afterRestart），锁文案按回合分开、重启那轮不提全屏」
@@ -758,7 +764,7 @@ Prettier**，不然 `format:check` 会红（这一轮又踩了一次）。
 
 ### 7.12 界面设计与主题
 
-UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达层级，不平摊**（四级表面 + 半透明发丝线，阴影全局只用一处）；交互强调色与状态语义色两套色相不撞车；字体随包分发 IBM Plex Sans / Mono（中文回落系统字体）。主题由**主进程解析**（`themeInfo()` → `{ mode, resolved }`），渲染层只把结果写到 `<html data-theme>`；**终端配色必须单独给**（xterm 的配色是 JS 配置，不走 CSS），在 `lib/xterm.ts` 的 `TERM_THEMES.dark / .light` 两套里。自检守着「主题：样式表除变量块外没有硬编码颜色」「主题：亮色覆盖了深色的全部颜色变量」「主题：终端两套配色都在（xterm 不走 CSS）」「字体：@font-face 引用的文件都存在」。
+UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达层级，不平摊**（四级表面 + 半透明发丝线，阴影全局只用一处）；交互强调色与状态语义色两套色相不撞车；字体随包分发 IBM Plex Sans / Mono（中文回落系统字体）。主题由**主进程解析**（`themeInfo()` → `{ mode, resolved }`），渲染层只把结果写到 `<html data-theme>`；**终端配色必须单独给**（xterm 的配色是 JS 配置，不走 CSS），在 `pages/terminal/xterm.ts` 的 `TERM_THEMES.dark / .light` 两套里。自检守着「主题：样式表除变量块外没有硬编码颜色」「主题：亮色覆盖了深色的全部颜色变量」「主题：终端两套配色都在（xterm 不走 CSS）」「字体：@font-face 引用的文件都存在」。
 
 **界面设计的交付物必须是「能看的产物」，而且要在研发动手之前过一遍**（阶段二首启向导定下的规矩）。设计阶段交的不是一段文字描述，而是一个**双击就能打开的单文件 HTML 预览**：本轮是 `docs/env-wizard-preview.html`（155 KB、**零 `<script>`**、纯内联 CSS），用**真实尺寸**（顶栏 36px、左栏 `--rail-w` 188px、内容列最大 760px —— 与 `main.ts` / `styles.css` 里的值一致）与**既有 CSS 变量**摆出**全部界面与状态**（缺 Node / 安装中 / 失败 / 门禁层 / 逃生口 / 自检页的更新入口…），逐屏可看、可量、可标注。理由有两条：**"两栏布局、留白适中"这类描述没法 review**（读完描述都点头，做出来才发现间距不对，退回去改的代价是重做一屏）；而预览里的每个数与变量都能和实现**逐字对上** —— `docs/env-wizard-visual.md` 那些间距值（含自检 M15–M17 钉住的十个值）就是从它取的。推论：**改设计先改预览、再动实现**；预览里没有的界面状态不算设计过。
 
@@ -767,7 +773,7 @@ UI 按 `frontend-design` 技能走了两轮，要点：**圆角与阴影表达�
 ### 7.13 静态检查只看代码、不看注释
 
 自检里的 id / class / api / webview 检查扫描 `index.html` ＋**全部** `.vue`（递归扫 `pages/` /
-`gate/` / `layout/` / `components/`）＋ `lib/*.ts` 的合集，并**先剥掉注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、`#000` 这类示意写法举例，当真值去查会误报。class 检查要认得动态绑定（`:class="{ active: 条件 }"` 的键名算用到的 class）。新增页面时记得同步挂载清单、样式与（如需要）preload 暴露的 API —— 自检「样式：标记用到的 class 都有对应样式（HTML + .vue）」已经挡住过两次真问题。
+`gate/` / `layout/` / `components/`）＋ 全部 `.ts`（`utils/` / `state/` / `shared/` / 各特性目录）的合集，并**先剥掉注释**：注释里常拿 `getElementById('btn-xxx')`、`` `<webview>` ``、`#000` 这类示意写法举例，当真值去查会误报。class 检查要认得动态绑定（`:class="{ active: 条件 }"` 的键名算用到的 class）。新增页面时记得同步挂载清单、样式与（如需要）preload 暴露的 API —— 自检「样式：标记用到的 class 都有对应样式（HTML + .vue）」已经挡住过两次真问题。
 
 ### 7.14 设置页网格：`min-height: 0` 会吃掉溢出内容
 
@@ -920,10 +926,10 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 **底栏「发现新版本」点进来要落到更新卡片上，而且要有"被带过去"的过程**：只切页不够（设置页好几屏，卡片在「关于」里）。这条流程分三步，顺序不能换（`SettingsPane.spotlightUpdateCard`）：
 
 1. **切页并落定**：`StatusBar` 改 `currentTab`，设置页等一次 `nextTick`（页面靠 visibility 切换）**再停 300ms**（`SETTLE_MS`）。这一停不能省：切页与滚动同时发生的话，界面换了、滚动也开始了，眼睛还没认出新页面就已经滚到位（用户反馈"怪"）；
-2. **缓动滚动**：`lib/scroll.ts` 的 `scrollIntoViewEased(el, 620)`。**不用原生 `scrollIntoView({ behavior: 'smooth' })`** —— 它的时长与曲线由浏览器定、偏快（用户反馈"还没看清就到了"）；自写的曲线是缓入缓出三次方，时长在调用处给，系统开了「减弱动效」就直接跳过去；
+2. **缓动滚动**：`utils/scroll.ts` 的 `scrollIntoViewEased(el, 620)`。**不用原生 `scrollIntoView({ behavior: 'smooth' })`** —— 它的时长与曲线由浏览器定、偏快（用户反馈"还没看清就到了"）；自写的曲线是缓入缓出三次方，时长在调用处给，系统开了「减弱动效」就直接跳过去；
 3. **聚焦蒙层**：必须**等滚动结束**再量 `getBoundingClientRect()`（滚动途中量会把洞画到半路），然后在整张「关于」卡片处开洞。`.spotlight` 是 `position: fixed; inset: 0` 的全窗口蒙层，靠 `box-shadow: 0 0 0 9999px var(--scrim)` 铺满、只留卡片那个洞；另一个元素「环」做强调色呼吸（环要动扩散，而洞那层带着 9999px 的巨大阴影，拿它做动画既贵又难看）。蒙层 `pointer-events: none`：不挡用户点卡片上的按钮；点一下 / 按一下键 / 滚一下滚轮 / 2.6 秒到点都会收掉。它用 `Teleport` 挂到 `body` —— 挂在页面里会被 `.settings` 的滚动容器与各级层叠上下文限制住，盖不到左栏、顶栏和底栏。
 
-信号放在 `lib/update-anchor.ts`：**递增的请求号**而不是布尔量（第二次没有变化，watch 不触发，看起来就像"点了没反应"）；每次请求带一个 token，中途又点一次时旧流程在 `await` 处自行退出。
+信号放在 `state/update-anchor.ts`：**递增的请求号**而不是布尔量（第二次没有变化，watch 不触发，看起来就像"点了没反应"）；每次请求带一个 token，中途又点一次时旧流程在 `await` 处自行退出。
 
 ### 7.20 运行环境自检：探测是只读的，修复只有两个动作
 
@@ -953,7 +959,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - **对外形状与三条口径**（细节留日志 / 一次性开关不改全局配置 / 装完同一次运行内刷新）写在 **`docs/env-doctor.md` §3.4**：`ALLOW_INSTALL_SCRIPTS_FLAG`、`PNPM_PURE_JS_SPEC` / `pnpmInstallSpec`、`refreshLookupPath`、`probeFixTarget`、`fixDoneMessage`、`EnvFixHooks.logFile?`、`parseRegQueryVars` / `expandEnvRefs` / `mergePathText`。**签名与逐条口径放设计文档**（它跟模块一起改、能写清「为什么」），AGENTS 只留「现象 → 判据 → 做法」加指针 —— 签名抄进这一份，第二天就会过期。
 - **哪条自检守着**（`test/selftest.ts` 的 17a 组 + `scripts/env-doctor-cases.mjs`）：「装 pnpm 带一次性 install-scripts 开关，且绝不改用户的全局 npm 配置」「`mergePathText` 合并去重保序；`refreshLookupPath` 把新目录真的写进本进程 PATH（键名保持 `Path`、第二次不重复注入）」「收尾那句话分得清四种情形，『重开应用』只在刷新后仍找不到时出现」「没有装出可用结果时命令 / 退出码 / stdout / stderr 全落进日志」「`describePnpmRunFailure` 认出缺运行库：给人话 + 两条出路」；case G 逐字钉住 `… i -g pnpm --allow-scripts=pnpm`。**真机装一次、看一次「文件在但跑不起来」的日志，仍然要人工验。**
 
-**报告是「拉」的，没有 `onEnvReport`**：契约里只有 `envCheck()`、`envFix()`、`envFixCancel()` 与 `onEnvFixState` / `onEnvFixOutput` 五个成员。主进程按需探测并把结果缓存住（`{ refresh: true }` 才清缓存重跑），修复后的复检结果随修复状态回来；渲染层 `lib/env-doctor.ts` 是唯一的镜像。启动后 1.5 秒主进程会自己跑一轮（不 `await`、不阻塞启动），**每轮在事件日志里留一行**（`环境自检：N 项正常 · N 项需要注意 · N 项不正常（先看 x）`）—— 留一行是为了报障时先看到事实，不是为了刷屏。
+**报告是「拉」的，没有 `onEnvReport`**：契约里只有 `envCheck()`、`envFix()`、`envFixCancel()` 与 `onEnvFixState` / `onEnvFixOutput` 五个成员。主进程按需探测并把结果缓存住（`{ refresh: true }` 才清缓存重跑），修复后的复检结果随修复状态回来；渲染层 `state/env-doctor.ts` 是唯一的镜像。启动后 1.5 秒主进程会自己跑一轮（不 `await`、不阻塞启动），**每轮在事件日志里留一行**（`环境自检：N 项正常 · N 项需要注意 · N 项不正常（先看 x）`）—— 留一行是为了报障时先看到事实，不是为了刷屏。
 
 **自检页常驻挂载**（所有页面都靠 visibility 隐藏，见 7.6），所以它在**挂载时**就 `loadEnvReport()`，而不是等「首次进入这一页」：控制台顶部那条横幅与插件页的「没找到 pnpm」读的是同一份报告，等切页才拉会和它们抢第一次数据。
 
@@ -963,7 +969,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 ### 7.21 首启环境门禁与 Node 安装：硬门禁 + 永远可用的逃生口
 
-**为什么有这一层**：在一台什么都没有的 Windows 11 上，进了主界面也只能看着 dsh 起不来（见 7.4）。所以启动后先跑一轮**只读**探测，缺东西就盖一张**覆盖层**（不是第 10 个页面 —— 做成页面就能用 `Ctrl+2` 切走），逐步把 Node → pnpm → dsh 装好，环境 OK 才放行。判定与"动手"分家：`main/env-doctor.ts` 的 `judgeWizard(report, skips)` 是**纯函数**（入参只有阶段一的报告 + 用户跳过的步骤），`main/node-installer.ts` 只负责把系统改对，`renderer/lib/env-wizard.ts` 管相位与显示。
+**为什么有这一层**：在一台什么都没有的 Windows 11 上，进了主界面也只能看着 dsh 起不来（见 7.4）。所以启动后先跑一轮**只读**探测，缺东西就盖一张**覆盖层**（不是第 10 个页面 —— 做成页面就能用 `Ctrl+2` 切走），逐步把 Node → pnpm → dsh 装好，环境 OK 才放行。判定与"动手"分家：`main/env-doctor.ts` 的 `judgeWizard(report, skips)` 是**纯函数**（入参只有阶段一的报告 + 用户跳过的步骤），`main/node-installer.ts` 只负责把系统改对，`renderer/state/env-wizard.ts` 管相位与显示。
 
 **几条必须守住的**：
 
@@ -981,7 +987,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 - **档位是事实，不是偏好：`switchesChannel` 按构造保证，别改回去**（VM-15 的另一半）：**现象** —— 用户在向导里选了「当前版」装出 `v26.9.0`，之后点「更新」，目标却按默认的稳定版算成 `v24.21.0`，**比已装的更低**，而界面没说这是换档。**原因** —— 目标档位的默认值写死成 `'lts'`；"这一次是不是换档"只在显式选档那一支上算，于是另两条可达路径（`install` 的设计默认正好跨档、目标版本比现在低）拿不到"这是换档"的事实，界面就把它当"更新"显示。**现在的做法** —— ① `update` 省略档位 = **跟随当前档位**（当前档 = 已装版本在官方清单里那一条的 `lts` 字段，判不出来就 `null`、不许猜），只有 `install` 才用设计默认的"最新稳定版"；② `decideNodePlan()` 在**所有**分支上算 `switchesChannel = direction === 'older' || (currentChannel !== null && channel !== currentChannel)` —— 即"**档位变了 或 目标更低**"这个**超集**语义，于是约定 ②「`direction === 'older'` ⟹ `switchesChannel === true`」**按构造无条件成立**（不是靠"跟随时现实中不会出现更低的目标"这种概率性理由）。⚠️ **`src/shared/ipc.ts` 里那句注释只写了充分条件**（"目标档位与当前档位不同 = 这是「换档」"），照它把这一行改回"只比档位"就会让 `older` 重新变成一次没有解释的静默降级（t9 的变异实验正是这么把它还原红的）—— **以后者（代码里的构造）为准，别照注释改**；③ 跨档的**两个来源**都要认：用户显式选档，以及 `install` 的设计默认正好跨档（向导第三步「换一个 Node」那条可达路径）。
 - **「先停 dsh」这类承诺必须与引擎的实际动作同位**（同一类坑的第二个实例）：**现象** —— 确认区上写着「更新会先停掉正在运行的 dsh」，但真机上 `dsh` 没被停。**原因** —— 那句承诺对应的 `hooks.stopDsh()` 原先住在 `installPhase()` 里，而"机器上已经有版本管理器"（`installsManager === false`）那条路**整个跳过安装阶段**，于是那句承诺**悄悄落空**（界面说着会停、实际没停）。**现在的做法** —— 停 dsh 是 `execute()` 里 `mode === 'update'` 的**唯一一处**调用（`stopDshForUpdate()`，排在 `installsManager` 分支**之前**）：不管走哪条路、要不要下载，先停一次，结构上不可能漏、也不可能停两次。**代价与时序**（船长裁定，记下来免得后人当 bug 修）：直装那条路因此从「下载 → 校验 → 停 → 装」变成「**停 → 下载 → 校验 → 装**」—— 好处是与需求 §8.3 的"先停、再更新"逐字一致、两条路共用同一处；代价是**下载失败 / 取消时 dsh 已经被停了**。这个代价**可以接受**：终态仍是 `error`（界面照旧给「重新启动 dsh」这个一键恢复的出口），不为它新增"dsh 已经停掉了"的额外文案。
 
-- **向导正文画的是「正在看哪一步」，不是「判定给的当前步骤」**（t43，冻结 §0.3 的 R-28 ~ R-31）：判定仍在主进程（`currentStepId`，界面不自己判），但正文多了一层**视图相位** —— 默认跟着判定；用户在**左轨**点了走过的节点（`已完成` / `已跳过`，做成真按钮、按阅读顺序进 `Tab` 顺序）之后**钉住**，正文改画**只读回看卡**（结论 + `step.detail` 的原文 + 一个「回到当前步骤」，**卡里没有任何安装 / 跳过动作**）；判定再前进也**不把用户推走**，只出一行「下一步（…）也已经就绪了」/「三步都完成了」的提示，点了才过去。纯规则在 `renderer/lib/wizard-view.ts`（能直接测，所以别把它塞回读 `window` 的那个模块），`lib/env-wizard.ts` 只存"钉住了哪一步"。两个最容易踩的点：**`screen` 里回看优先于放行页**（只看 `gate === 'open'` 会在最后一步完成时把正在回看的用户直接推到结果页）；**`gateVisible` 的 `released` 分支是 `blocking || reopened`** —— 用户从自检页 / 横幅显式重开的那一轮，判成 `open` 也要停在放行页，否则就是"点了一下、一闪就没了"（R-31）。
+- **向导正文画的是「正在看哪一步」，不是「判定给的当前步骤」**（t43，冻结 §0.3 的 R-28 ~ R-31）：判定仍在主进程（`currentStepId`，界面不自己判），但正文多了一层**视图相位** —— 默认跟着判定；用户在**左轨**点了走过的节点（`已完成` / `已跳过`，做成真按钮、按阅读顺序进 `Tab` 顺序）之后**钉住**，正文改画**只读回看卡**（结论 + `step.detail` 的原文 + 一个「回到当前步骤」，**卡里没有任何安装 / 跳过动作**）；判定再前进也**不把用户推走**，只出一行「下一步（…）也已经就绪了」/「三步都完成了」的提示，点了才过去。纯规则在 `renderer/gate/wizard-view.ts`（能直接测，所以别把它塞回读 `window` 的那个模块），`state/env-wizard.ts` 只存"钉住了哪一步"。两个最容易踩的点：**`screen` 里回看优先于放行页**（只看 `gate === 'open'` 会在最后一步完成时把正在回看的用户直接推到结果页）；**`gateVisible` 的 `released` 分支是 `blocking || reopened`** —— 用户从自检页 / 横幅显式重开的那一轮，判成 `open` 也要停在放行页，否则就是"点了一下、一闪就没了"（R-31）。
   **哪条自检守着**（`test/selftest.ts` 的「环境向导」一组 + `scripts/env-wizard-cases.mjs`）：「skipped 项判 warn 不是 missing」「快速探测把要起子进程才知道的项标成 skipped」、门禁判定的 I 系列（全 `warn` → 三步 `done` → 放行；`report.error` 非空且无 `missing` → `unknown` 不挡人；**有 `missing` 证据就挡**）、「首启门禁：逃生口不写盘、不依赖任何安装动作」、「首启门禁：跳过 / 恢复只走 `envWizardSkip`」、安装引擎的 M 段（两条路、退出码分类、等太久的"未确定"、复检失败不说 done）。**t43 的一组（18a 节）**：左轨只有走过的步骤可点（当前 / 没轮到的都不行）、正文画钉住的那一步（它不再成立时静默回当前）、判定前进的两种文案、左轨是按钮且带 `aria-current`、回看卡里没有安装 / 跳过动作、`screen` 回看优先、`reopened` 在重开 / 逃生 / 进入三处的一置两清。**这一轮（t29）新增的几条**：归属纯函数与计划形状（「环境向导（VM-14）：归属 → 方法」「档位跟随当前、跨档才叫换档」）、`switchesChannel` 的三条不变量（跟随时**不许**被误报成换档 / `older` 必须伴随换档 / `install` 设计默认跨档也必须为真）、实例断言（「安装引擎（VM-14）：nvm 那条路的机器上不再装管理器」「环境自检页（VM-14 / VM-15）：更新入口不写死方法，档位不写死字面量（默认跟随、显式才换档）」），以及 `scripts/env-wizard-cases.mjs` 的 O 段（648 组合穷举：`direction === 'older'` ⟹ `switchesChannel === true`，反例 0 条）。**变异守则**（评审时照这两条做，t9 / t12 各做过一次）：把 `await this.stopDshForUpdate();` 拿掉 → 停 dsh 那组断言变红；把 `switchesChannel` 还原成"只比档位" → 跨档那组断言变红。真机上装一次 Node、看一次 UAC、断一次网仍要人工验。
 
 ### 7.22 改源码不能整文件往返写：编码与换行会被毁掉（同类事故已两次）
@@ -1150,7 +1156,7 @@ POST <origin>/api/pluginInventory/list → cookie 鉴权
 
 **做法**（两步，缺一不可）：
 
-1. **按分隔符切段 + 片段之间插 `<wbr>`**：`renderer/lib/env-detail.ts` 的 `detailSegments()`（`/` 与 `\` 都认）。它**只切分、不产生 HTML** —— 那段文字里有用户机器上的真实路径，走 `v-html` 就是一条注入面，自检钉着不许。
+1. **按分隔符切段 + 片段之间插 `<wbr>`**：`renderer/pages/env/env-detail.ts` 的 `detailSegments()`（`/` 与 `\` 都认）。它**只切分、不产生 HTML** —— 那段文字里有用户机器上的真实路径，走 `v-html` 就是一条注入面，自检钉着不许。
 2. **片段本身包在 `.env-seg`（`white-space: nowrap`）里**。只做第 1 步不够：`@deepseek-ai` 里那个连字符**本身就是一个断点**（UAX#14 的 HY），窗口一窄浏览器就优先断在它上面 —— 实测视口 760 又变回 `…/@deepseek-` + `ai/dsh/lib/bin.js`，正是要修的那个样子。
 
 **实测**（CDP 量渲染结果，窗口 1220×820、DPR 2）：
@@ -1333,17 +1339,17 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
   改成 `\(\s*ctx,\s*…` 才是它真正想说的（**钉源码形状时，凡是有可能被折行的调用都要留 `\s*`**）。
 - **这一轮的输出零差异**：`npm test` 的 314 行与拆分前**逐行相同**（前面几轮至少还有改名的那两行）。
 
-### 7.36 渲染层拆模块：纯逻辑进 `lib/`，DOM 与模板留在组件（t53 起）
+### 7.36 渲染层拆模块：纯逻辑搬出组件，DOM 与模板留在组件（t53 起）
 
 **现状（第一步，2026-09-26）**：`gate/EnvGate.vue` 2648 → 2515 行、`pages/env/EnvPane.vue` 1546 → 1501 行，
 新增两个共享模块：
 
-| 文件                       | 行数 | 装什么                                                                                                                                          |
-| -------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/gate-copy.ts`         | 135  | 门禁与「运行环境」详情层共用的**词表与现成句子**（下载页 / 忙提示 / 三步文案 / 五项状态词 / 方法事实 / 档位 / 并存风险 / `versionWithChannel`） |
-| `lib/env-install-phase.ts` | 34   | 安装与修复的相位判据（`INSTALL_BUSY_PHASES` / `installRunning` / `installSettled` / `isFixSettled`）                                            |
-| `lib/format.ts`            | +9   | 多一个 `formatBytes`（两处各抄过一份）                                                                                                          |
-| `lib/plugin-view.ts`       | 205  | 「插件」页的纯展示判据（层名 / 归属 / 没贡献三态 / live 索引 / 巡检分档 / 能不能删·卸·放回 / 分组过滤）—— `PluginPane.vue` 2052 → 1915 行       |
+| 文件                          | 行数 | 装什么                                                                                                                                          |
+| ----------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared/gate-copy.ts`         | 135  | 门禁与「运行环境」详情层共用的**词表与现成句子**（下载页 / 忙提示 / 三步文案 / 五项状态词 / 方法事实 / 档位 / 并存风险 / `versionWithChannel`） |
+| `shared/env-install-phase.ts` | 34   | 安装与修复的相位判据（`INSTALL_BUSY_PHASES` / `installRunning` / `installSettled` / `isFixSettled`）                                            |
+| `utils/format.ts`             | +9   | 多一个 `formatBytes`（两处各抄过一份）                                                                                                          |
+| `pages/plugin/plugin-view.ts` | 205  | 「插件」页的纯展示判据（层名 / 归属 / 没贡献三态 / live 索引 / 巡检分档 / 能不能删·卸·放回 / 分组过滤）—— `PluginPane.vue` 2052 → 1915 行       |
 
 这一步**只搬零风险的纯逻辑**：不动 `<template>`、不动 `<style>`（判据是 `git diff` 里以 `<` 开头的行
 一个都没有），所以**免像素对比**；验收仍按老四样：`vue-tsc` / `eslint` / `npm test` 输出逐行一致 /
@@ -1352,7 +1358,8 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **三条铁律**（后面继续拆 EnvGate / PluginPane / EnvPane 时照着来）：
 
-1. **`lib/**` 不许有 DOM**。自检直接 import `lib/` 里的纯模块来钉判据，而它的编译图
+1. **纯逻辑目录不许有 DOM**（`utils/` / `state/` / `shared/`，t69 前是一个 `lib/`）。自检直接 import
+   它们里的纯模块来钉判据，而它的编译图
    `tsconfig.node.json` **没有 DOM 类型** —— 一旦某个 lib 模块用了 `document` / `window` / `HTMLElement`，
    只要它进了那张图就会编译失败。**注意这条保证只覆盖"被自检 import 的闭包"**：`vue-tsc` 有 DOM，
    所以一个新 lib 模块如果没人 import，用了 DOM 也不会红。要么让它保持纯、要么留在组件里。
@@ -1362,8 +1369,8 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
    - 钉"行为与形状"的那批（`gateRaw` / `gateCode`，比如"逃生口的处理函数里没有 `api.`"、"回看卡里没有
      安装动作"）搬纯词表不受影响；
    - 但有一条钉子（「救援：「放回层里」不依赖救援条」）钉的是**判据本身**（`canRestore` 的名字、那一档
-     的说法、"两种不形成层都能卸"），判据搬进 `lib/plugin-view.ts` 之后它从 `vueSource` 改成
-     **`repo.rendererAll`**（= `app.ts` + `lib/*.ts` + 全部 `.vue`）。**判据一旦跨出 `.vue`，读文本的断言
+     的说法、"两种不形成层都能卸"），判据搬进 `pages/plugin/plugin-view.ts` 之后它从 `vueSource` 改成
+     **`repo.rendererAll`**（= `app.ts` + 全部 `.ts` + 全部 `.vue`）。**判据一旦跨出 `.vue`，读文本的断言
      就得跟着换口径** —— 这是第三次遇到（先是 `styles.css` 的两层，再是主进程两个 barrel）。
    - 要搬**模板或样式**时先看 §7.33 那三道验收（机械等价 / 逐像素 / 自检），并同步改 `styleLayers` 表。
 
@@ -1375,8 +1382,8 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 | -------------------------- | ---- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `gate/GateNodeConfirm.vue` | 357  | Node 安装 / 更新那条路的**确认区**（"将要执行"卡片 + 未签名 / 未校验那两档确认） | 计划、方法、档位、忙位（props）+ 六个事件（close / start / pick-method / use-direct / open-source / open-download） |
 | `gate/GateOutput.vue`      | 57   | 流式输出面板（原文照贴 + 跟着新片段滚 + 收起）                                   | 四行读数（command / text / state / summary）+ `collapse`                                                            |
-| `lib/status-message.ts`    | 9    | 状态栏那一句话的唯一出口（`say`）                                                | —                                                                                                                   |
-| `lib/clipboard.ts`         | 17   | 复制到剪贴板 + 那句话（父子的"复制"共用一份）                                    | —                                                                                                                   |
+| `utils/status-message.ts`  | 9    | 状态栏那一句话的唯一出口（`say`）                                                | —                                                                                                                   |
+| `utils/clipboard.ts`       | 17   | 复制到剪贴板 + 那句话（父子的"复制"共用一份）                                    | —                                                                                                                   |
 
 这一步学到的五条：
 
@@ -1583,7 +1590,7 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 
 **还没做的**（后续 PR）：`EnvGate.vue`（1781 行）还能再拆（展开详情、跳过确认、顶栏与底条、左轨队列）、
 `PluginPane.vue` 剩下的三块（救援条、生效配置视图、安装行）、`SettingsPane.vue`（842）、
-`ArchivePane.vue`（769）、以及纯派生视图（`lib/gate-view.ts` / `lib/env-node-view.ts`）；
+`ArchivePane.vue`（769）、以及纯派生视图（新规矩下会落在 `gate/gate-view.ts` / `pages/env/env-node-view.ts`）；
 模板与样式一起搬的那些照上面这套来（`.verify/{gate,gate2,plugin,envpane}-split/{equiv,pixel}.py` 直接用）。
 
 **第四个：`plugin-manager.ts`（t54，1322 → 318 行 + 四个叶子）**
@@ -1679,6 +1686,25 @@ renderer/
 **目录名的两个决定**：① 外壳这一层叫 `layout/` 而不是 `shell/`（t68，用户提的）：仓库里 "shell"
 已经被「本地 Shell」（终端页那一路 zsh / pwsh）占了，两个意思撞在一个词上；② `pages/` 是页面、
 `gate/` 是覆盖层、`lib/` 是纯逻辑 —— 名字与 §7.33 的样式分层判据一一对应。
+
+**四个「放哪儿」**（t69 把原来的 `lib/` 拆成前三个 + 跟回特性）：
+
+| 目录      | 判据                                                                                            | 现在装什么                                                                                                                                   |
+| --------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `utils/`  | **纯工具**：与 dsh 领域无关、不持有状态、**不 import 渲染层别的目录**                           | format / platform / markdown / scroll / clipboard / status-message / webview（类型）                                                         |
+| `state/`  | **跨页共享状态与相位机**：持有 `ref` / 订阅 IPC、有明确的读写者                                 | store / boot-lock / env-doctor / env-wizard / env-layer / env-anchor / update-anchor / restart-nav / restart-flow                            |
+| `shared/` | **跨特性共用的领域逻辑**：≥2 处用、不持有状态、也不是通用工具（可以 import `utils/`、`state/`） | gate-copy / env-install-phase / phase-text                                                                                                   |
+| 跟回特性  | **只有一处用**的（哪怕它是"纯逻辑"）                                                            | `gate/wizard-view.ts`、`pages/dashboard/dsh-actions.ts`、`pages/env/env-detail.ts`、`pages/plugin/plugin-view.ts`、`pages/terminal/xterm.ts` |
+
+**拆 `lib/` 的理由**：那一个目录里当时混着三种东西（通用工具、跨页状态、某一处的逻辑），
+判据只能靠"看名字猜"。现在每一层都有可机械检查的判据：`utils/` 是叶子（`import` 里不许出现别的层）、
+`state/` 一定持有 `ref`、`shared/` 一定被 ≥2 个目录 import。**只有一处用的纯逻辑跟回那一处**这条
+与 §7.33 的样式分层同源 —— 就像 `.gate-actions` 那种"两边都在用"的规则必须进全局表一样，
+放哪儿只由"谁在用"决定，不由"它纯不纯"决定。
+
+**自检也跟着改成按文件名找**：`test/repo.ts` 现在递归扫全部 `.vue` 与 `.ts`，给了 `vuePath()` /
+`tsPath()` 两个查找器（重名或拼错当场抛错）。渲染层脚本的合集从「`app.ts` + `lib/*`」改成
+「全部 `.ts`」（`repo.rendererTs`），所以**以后再搬目录，自检一行都不用改**。
 
 **判据，按顺序问三条**：
 

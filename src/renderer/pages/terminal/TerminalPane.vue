@@ -20,11 +20,11 @@ import {
   fitAndSync,
   passAppShortcutsThrough,
   TERM_THEMES,
-} from '../../lib/xterm.js';
-import { currentTab, snapshot, startStore } from '../../lib/store.js';
+} from './xterm.js';
+import { currentTab, snapshot, startStore } from '../../state/store.js';
 import DshTerminal from './DshTerminal.vue';
-import { isMac } from '../../lib/platform.js';
-import type { TerminalEntry } from '../../lib/xterm.js';
+import { isMac } from '../../utils/platform.js';
+import type { TerminalEntry } from './xterm.js';
 
 const api = window.dshConsole;
 

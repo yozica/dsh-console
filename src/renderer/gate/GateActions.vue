@@ -14,7 +14,7 @@
  */
 import { ref } from 'vue';
 
-import { BUSY_HINT } from '../lib/gate-copy.js';
+import { BUSY_HINT } from '../shared/gate-copy.js';
 import type { EnvFixAction, EnvWizardStepId } from '../../shared/ipc.js';
 
 defineProps<{

@@ -12,11 +12,11 @@
  *
  * 搬过来时只改了三处：`v-if` 交给调用方（父级按 `nodeConfirmOpen` 决定挂不挂）、第三步那处
  * `currentStep.id !== 'node'` 换成 `host !== 'node'`（父级打开时就定好了 host）、`copy()`
- * 换成 `lib/clipboard` 那一份。其余连模板带文案逐字未动。
+ * 换成 `utils/clipboard` 那一份。其余连模板带文案逐字未动。
  */
 import { computed, ref } from 'vue';
 
-import { copyToClipboard } from '../lib/clipboard.js';
+import { copyToClipboard } from '../utils/clipboard.js';
 import {
   BUSY_HINT,
   CHANNEL_SHORT,
@@ -24,7 +24,7 @@ import {
   METHOD_OPTIONS,
   METHOD_RISK,
   versionWithChannel,
-} from '../lib/gate-copy.js';
+} from '../shared/gate-copy.js';
 import type { EnvNodeChannel, EnvNodeMethod, EnvNodeOwner, EnvNodePlan } from '../../shared/ipc.js';
 
 const props = defineProps<{
@@ -80,7 +80,7 @@ function openDownloadPage(): void {
   emit('open-download');
 }
 
-/** 复制下载地址：与父级那条「corepack enable pnpm」共用一份实现（`lib/clipboard`） */
+/** 复制下载地址：与父级那条「corepack enable pnpm」共用一份实现（`utils/clipboard`） */
 const copy = copyToClipboard;
 
 /** 父级在"确认区刚打开"时把焦点交给主按钮（原先是父级盯着 `nodeConfirmOpen` 那个 watch） */

@@ -26,7 +26,6 @@ export async function runRelease(repo: Repo): Promise<void> {
   const pkg = repo.pkg;
   const ipcSource = repo.ipcSource;
   const flatIpc = repo.flatIpc;
-  const rendererDir = repo.rendererDir;
   const rendererJs = repo.rendererJs;
   const uiPaneSource = repo.uiPaneSource;
 
@@ -348,7 +347,7 @@ export async function runRelease(repo: Repo): Promise<void> {
   // ---------------------------------------------------------- 12. 自动全屏的前提
   //    应用内全屏是"为内嵌 DSH 界面让出整屏"。外部实例拿不到令牌时这一页只有一段说明，
   //    为它收起左栏与底栏没有意义 —— 用户点开 Harness 页莫名全屏就是这个问题。
-  const storeSource = fs.readFileSync(path.join(rendererDir, 'lib', 'store.ts'), 'utf8');
+  const storeSource = fs.readFileSync(repo.tsPath('store.ts'), 'utf8');
   const codeOf = (text: string): string =>
     text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '');
   const uiPaneCode = codeOf(uiPaneSource);

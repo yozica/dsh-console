@@ -59,7 +59,7 @@ import {
   envFix,
   envFixOutput,
   runEnvFix,
-} from '../lib/env-doctor.js';
+} from '../state/env-doctor.js';
 import {
   anyoneBusy,
   enterMainUi,
@@ -79,7 +79,7 @@ import {
   viewedStepId,
   wizard,
   wizardError,
-} from '../lib/env-wizard.js';
+} from '../state/env-wizard.js';
 import {
   BUSY_HINT,
   CHECK_TITLES,
@@ -92,9 +92,9 @@ import {
   STEP_WHY,
   type FactStatus,
   type MethodArea,
-} from '../lib/gate-copy.js';
-import { installRunning, installSettled, isFixSettled } from '../lib/env-install-phase.js';
-import { say } from '../lib/status-message.js';
+} from '../shared/gate-copy.js';
+import { installRunning, installSettled, isFixSettled } from '../shared/env-install-phase.js';
+import { say } from '../utils/status-message.js';
 import GateNodeConfirm from './GateNodeConfirm.vue';
 import GateOutput from './GateOutput.vue';
 import GateActions from './GateActions.vue';
@@ -104,10 +104,10 @@ import GateFacts from './GateFacts.vue';
 import GateFixConfirm from './GateFixConfirm.vue';
 import GateNodeChoice from './GateNodeChoice.vue';
 import GateResult from './GateResult.vue';
-import { formatBytes } from '../lib/format.js';
-import { advanceNotice, canViewStep } from '../lib/wizard-view.js';
-import { openEnvDetail } from '../lib/env-layer.js';
-import { currentTab, settings } from '../lib/store.js';
+import { formatBytes } from '../utils/format.js';
+import { advanceNotice, canViewStep } from './wizard-view.js';
+import { openEnvDetail } from '../state/env-layer.js';
+import { currentTab, settings } from '../state/store.js';
 import type {
   EnvCheck,
   EnvCheckId,

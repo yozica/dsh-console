@@ -69,7 +69,7 @@
 | 修复状态机 `EnvFixState` + 流式输出 + 可中断 + 超时独立终态 + 单动作互斥                                                | `main/env-doctor.ts` 的 `EnvFixRunner`、`EnvFixState`           | 复用交互形状；**互斥要升级成全局一把锁**（第 11.4 节）                 |
 | Windows 上 `.cmd` 的统一启动形状 `LaunchSpec` / `launchSpec` / `dshLaunchSpec` / `isRunnablePath`                       | `src/main/process-utils.ts`                                     | **唯一入口**，新代码一律取用，**绝不再造第二套**                       |
 | 子进程环境补 PATH（`envWithKnownBins`，保留系统原有的 `Path` 键名）与安装源注入（`pluginRegistryEnv`）                  | `process-utils.ts`、`plugin-registry` 设置                      | 复用；Node 安装与 nvm 子进程同样走它                                   |
-| 环境自检页（左栏第 8 项，`Ctrl+8` / `⌘8`）                                                                              | `src/renderer/pages/env/EnvPane.vue` + `lib/env-doctor.ts`      | 复用；只加「更新」入口与门禁的往返入口                                 |
+| 环境自检页（左栏第 8 项，`Ctrl+8` / `⌘8`）                                                                              | `src/renderer/pages/env/EnvPane.vue` + `state/env-doctor.ts`    | 复用；只加「更新」入口与门禁的往返入口                                 |
 | 门禁类交互的既有先例：启动锁（`idle → waiting → done` 单向状态机、顶栏不被盖、`Esc` 可跳过）                            | `src/renderer/app.ts`、`index.html` 的 `#boot-lock`             | **照它的形状做门禁层**，不发明第二套「锁」                             |
 | 验证机制：自检（`npm test`）+ 受限环境的门禁（`node scripts/selftest-sandbox.mjs`，**自动收录 `scripts/*-cases.mjs`**） | `test/selftest.ts`、`scripts/selftest-sandbox.mjs`              | 复用；本轮的纯函数反例按同名约定放进 `scripts/`                        |
 

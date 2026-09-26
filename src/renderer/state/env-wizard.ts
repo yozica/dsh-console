@@ -1,7 +1,7 @@
 /**
  * 首启环境向导（入口门禁）在渲染层的共享状态与相位机。
  *
- * 三条分工（与 `lib/env-doctor.ts` 同一套纪律）：
+ * 三条分工（与 `state/env-doctor.ts` 同一套纪律）：
  *   1. **判定在主进程**（`main/env-doctor.ts` 的纯函数 `judgeWizard`）：这里只搬运结论，
  *      界面**不自己判**"环境够不够"。两套判据就是两套口径。
  *   2. **报告与门禁状态都是"拉"的**：`envWizard()` 是唯一取结论的路径（主进程有缓存，
@@ -20,7 +20,7 @@
  *     显示期间步骤状态、当前步骤、复检结论每轮都按最新报告重算（冻结 §1 R-18）。
  *   - **正文画哪一步**另外有一层"视图相位"（t43 / 冻结 §0.3 的 R-29 / R-30）：默认跟着判定给的
  *     当前步骤；用户在左轨点了走过的节点之后**钉住**，判定再前进也不动它（只出一行提示）。
- *     纯规则在 `lib/wizard-view.ts`，这里只存"钉住了哪一步"。
+ *     纯规则在 `gate/wizard-view.ts`，这里只存"钉住了哪一步"。
  *
  * `gateVisible` 是**唯一**的"门禁层此刻该不该显示"来源（顶栏 R-03 也读它）：
  *
@@ -39,7 +39,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue';
 
 import { bootLockVisible } from './boot-lock.js';
-import { canViewStep, resolveViewedStep, type ViewPin } from './wizard-view.js';
+import { canViewStep, resolveViewedStep, type ViewPin } from '../gate/wizard-view.js';
 import { envFix, envReport } from './env-doctor.js';
 import type {
   EnvInstallPhase,
@@ -440,13 +440,13 @@ export function reopenGate(): void {
 /**
  * 一键修复跑完要**在同一轮里**重拉一次门禁结论（VM-07）。
  *
- * 复检报告随 `env:fix-state` 回来，由 `lib/env-doctor.ts` 落进 `envFix`；这里盯的正是它。
+ * 复检报告随 `env:fix-state` 回来，由 `state/env-doctor.ts` 落进 `envFix`；这里盯的正是它。
  * 为什么必须盯：`install-pnpm` 就是门禁第二步的修复动作（冻结 R-07：pnpm 不许开第二条路），
  * 而**门禁的步骤状态是另一条读法** —— 走 `env:wizard` 拿 `judgeWizard` 的结论。少了这一步，
  * 用户装完 pnpm 之后第二步仍然停在「待办」上，只有重开应用才看得到。
  *
  * 为什么用 `watch(envFix)` 而不是自己再订阅一次 `env:fix-state`：同一条 IPC 只该有一个订阅者
- * （`lib/env-doctor.ts` 已经订了），共享状态也只该有一个真源。
+ * （`state/env-doctor.ts` 已经订了），共享状态也只该有一个真源。
  */
 function watchFixReports(): void {
   watch(envFix, (state) => {
