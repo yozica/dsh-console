@@ -13,6 +13,7 @@
  * `classList.add('hidden')` 和 `setText` 表达；现在是模板里的 v-if 与 computed。
  */
 import { computed, onMounted, ref, watch } from 'vue';
+import { useWebview } from '../../composables/use-webview.js';
 import { restartThenOpenHarness } from '../../state/restart-flow.js';
 import {
   currentTab,
@@ -22,20 +23,14 @@ import {
   settings,
   uiLoadable,
 } from '../../state/store.js';
-import type { WebviewElement, WebviewFailLoadEvent } from '../../utils/webview.js';
 
 const api = window.dshConsole;
 
-const view = ref<WebviewElement | null>(null);
-const note = ref('还没有拿到带令牌的地址');
 const urlInput = ref('');
 const busy = ref(false);
 
 /** 用户手动粘贴的带令牌地址（令牌是进程级的，不做持久化） */
 const pastedUrl = ref('');
-let viewReady = false;
-let loadedOnce = false;
-let loadedUrl = '';
 
 /** 可用的带令牌地址：优先本应用从终端输出里捕获的，其次用户粘贴的 */
 const resolvedUrl = computed(() => dsh.value?.uiUrl || pastedUrl.value);
@@ -106,97 +101,20 @@ function updateHint() {
   );
 }
 
-function loadUrl(url?: string | null): void {
-  const el = view.value;
-  if (!el || !url) return;
-  hideHint();
-  note.value = `载入中：${maskUrl(url)}`;
-  loadedOnce = true;
-  loadedUrl = url;
-  if (viewReady) {
-    // 用 loadURL 并吞掉 promise，避免切换地址时上一笔导航被中止而抛 ERR_ABORTED
-    try {
-      const pending = el.loadURL(url);
-      if (pending && typeof pending.catch === 'function') pending.catch(() => {});
-      return;
-    } catch {
-      /* 落到 src 赋值 */
-    }
-  }
-  el.src = url;
-}
-
-function maybeLoad(force?: boolean): void {
-  if (!dsh.value) return;
-  const url = resolvedUrl.value;
-  if (!url) {
+/**
+ * 内嵌页宿主：`view` / `note` / 载入记账 / 那四个事件 / 「切到本页时做事」都归它
+ * （见 `composables/use-webview.ts`）。这里只留 Harness 页自己的判据。
+ */
+const host = useWebview({
+  tabId: 'ui',
+  idleNote: '还没有拿到带令牌的地址',
+  onActivate: () => {
     updateHint();
-    note.value = '需要先捕获带令牌的地址';
-    return;
-  }
-  if (loadedOnce && !force && loadedUrl === url) {
-    hideHint();
-    return;
-  }
-  loadUrl(url);
-}
-
-function applyPastedUrl() {
-  const value = String(urlInput.value || '').trim();
-  if (!value) {
-    note.value = '先在输入框里粘贴 dsh 打印的带令牌地址';
-    return;
-  }
-  if (!/^https?:\/\//i.test(value)) {
-    note.value = '地址需要以 http:// 或 https:// 开头';
-    return;
-  }
-  pastedUrl.value = value;
-  loadUrl(value);
-}
-
-function reload() {
-  view.value?.reload();
-}
-
-function goBack() {
-  const el = view.value;
-  if (el?.canGoBack()) el.goBack();
-}
-
-async function restartManaged() {
-  if (busy.value) return;
-  busy.value = true;
-  try {
-    await restartThenOpenHarness(api, () => dsh.value, 'ui');
-  } finally {
-    busy.value = false;
-  }
-}
-
-/** 应用内全屏开关（顶栏的退出按钮、Esc 改的是同一个状态） */
-function toggleFullscreen() {
-  immersive.value = !immersive.value;
-}
-
-/** 顺带把新的访问令牌捕获回来；内嵌界面随即可用 */
-function refreshViewport() {
-  const el = view.value;
-  if (!el) return;
-  el.style.height = 'calc(100% - 1px)';
-  void el.offsetHeight;
-  el.style.height = '';
-}
-
-onMounted(() => {
-  const el = view.value;
-  if (!el) return;
-
-  el.addEventListener('dom-ready', () => {
-    viewReady = true;
-  });
-  el.addEventListener('did-start-loading', () => (note.value = '载入中…'));
-  el.addEventListener('did-finish-load', async () => {
+    maybeLoad(false);
+    refreshViewport();
+    maybeAutoFullscreen();
+  },
+  onLoaded: async (el) => {
     const url = el.getURL();
     let body = '';
     try {
@@ -218,54 +136,87 @@ onMounted(() => {
     }
     hideHint();
     note.value = `已载入 ${url}`;
-  });
-  el.addEventListener('did-fail-load', (event) => {
-    const detail = event as WebviewFailLoadEvent;
-    if (detail.errorCode === -3) return; // 被新导航取代/主动取消，不算失败
+  },
+  onFailed: (detail) => {
     note.value = `载入失败 (${detail.errorCode}) ${detail.errorDescription}`;
     showHint(
       '载入失败',
       `错误码 <code>${detail.errorCode}</code>：${escapeHtml(detail.errorDescription)}<br>地址：<code>${escapeHtml(maskUrl(detail.validatedURL))}</code>`,
       true,
     );
-  });
+  },
+});
+const { view, note, reload, goBack, refreshViewport } = host;
 
-  // 捕获到新令牌 = 新的 dsh 进程，之前载入的页面（含旧 cookie）作废
-  api.onUiUrl(() => {
-    loadedOnce = false;
-    pastedUrl.value = '';
-    if (currentTab.value === 'ui') maybeLoad(true);
-  });
-
-  /**
-   * 第一次进本页时按设置自动全屏 —— 但**只有内嵌界面真的能用（或即将能用）才做**：
-   * 外部实例拿不到令牌时这里只有一段说明，为它收起整屏（藏掉左栏与底栏）没有意义。
-   * 用户粘贴了地址也算能用，所以额外看 pastedUrl。
-   */
-  function maybeAutoFullscreen(): void {
-    if (immersiveAutoEntered.value) return;
-    if (!settings.value.uiFullscreenOnStart) return;
-    if (!uiLoadable.value && !pastedUrl.value) return;
-    immersiveAutoEntered.value = true;
-    immersive.value = true;
+function maybeLoad(force?: boolean): void {
+  if (!dsh.value) return;
+  const url = resolvedUrl.value;
+  if (!url) {
+    updateHint();
+    note.value = '需要先捕获带令牌的地址';
+    return;
   }
+  // `host.url()` 非空 = 之前已经载入过一次（改造前那对 loadedOnce / loadedUrl 的等价物）
+  if (host.url() && !force && host.url() === url) {
+    hideHint();
+    return;
+  }
+  host.load(url, `载入中：${maskUrl(url)}`);
+}
 
-  // 切到本页：刷新提示 + 按需载入 + 按设置自动全屏
-  watch(
-    currentTab,
-    (tab) => {
-      if (tab !== 'ui') return;
-      updateHint();
-      maybeLoad(false);
-      refreshViewport();
-      maybeAutoFullscreen();
-    },
-    { immediate: true },
-  );
+/**
+ * 第一次进本页时按设置自动全屏 —— 但**只有内嵌界面真的能用（或即将能用）才做**：
+ * 外部实例拿不到令牌时这里只有一段说明，为它收起整屏（藏掉左栏与底栏）没有意义。
+ * 用户粘贴了地址也算能用，所以额外看 pastedUrl。
+ */
+function maybeAutoFullscreen(): void {
+  if (immersiveAutoEntered.value) return;
+  if (!settings.value.uiFullscreenOnStart) return;
+  if (!uiLoadable.value && !pastedUrl.value) return;
+  immersiveAutoEntered.value = true;
+  immersive.value = true;
+}
 
-  // dsh 状态变化时：刷新提示，并在本页可见时尝试载入。
-  // 后者不能省：切到本页时快照可能还没到（maybeLoad 里 !dsh 会提前返回），
-  // 等令牌随快照到达时若不重试，页面就永远停在"还没载入界面"（踩过）。
+function applyPastedUrl() {
+  const value = String(urlInput.value || '').trim();
+  if (!value) {
+    note.value = '先在输入框里粘贴 dsh 打印的带令牌地址';
+    return;
+  }
+  if (!/^https?:\/\//i.test(value)) {
+    note.value = '地址需要以 http:// 或 https:// 开头';
+    return;
+  }
+  pastedUrl.value = value;
+  host.load(value, `载入中：${maskUrl(value)}`);
+}
+
+async function restartManaged() {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    await restartThenOpenHarness(api, () => dsh.value, 'ui');
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 应用内全屏开关（顶栏的退出按钮、Esc 改的是同一个状态） */
+function toggleFullscreen() {
+  immersive.value = !immersive.value;
+}
+
+// 捕获到新令牌 = 新的 dsh 进程，之前载入的页面（含旧 cookie）作废
+api.onUiUrl(() => {
+  host.reset();
+  pastedUrl.value = '';
+  if (currentTab.value === 'ui') maybeLoad(true);
+});
+
+// dsh 状态变化时：刷新提示，并在本页可见时尝试载入。
+// 后者不能省：切到本页时快照可能还没到（maybeLoad 里 !dsh 会提前返回），
+// 等令牌随快照到达时若不重试，页面就永远停在"还没载入界面"（踩过）。
+onMounted(() => {
   watch(dsh, () => {
     updateHint();
     if (currentTab.value !== 'ui') return;
