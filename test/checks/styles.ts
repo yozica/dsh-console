@@ -168,7 +168,9 @@ export function runStyles(repo: Repo): void {
       .map((dir) => path.join(rendererDir, dir, file))
       .find((candidate) => fs.existsSync(candidate));
     const text = fs.readFileSync(found ?? path.join(rendererDir, 'panes', file), 'utf8');
-    const body = text.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? '';
+    // **行首锚定**：组件里的注释会引用这个标签（"这些规则原来在 …… 里"），不锚定就会从注释
+    // 那一处开始吞、把 script 与 template 都算成块内容。
+    const body = text.match(/^<style[^>]*scoped[^>]*>([\s\S]*?)^<\/style>/m)?.[1] ?? '';
     return body.replace(/\/\*[\s\S]*?\*\//g, '');
   };
   // 改一页就往这张表里加一行。它同时守住三件事：
@@ -274,10 +276,11 @@ export function runStyles(repo: Repo): void {
       staysGlobal: ['.gate-option', '.gate-choice-row'],
     },
     {
-      // t62：EnvGate 拆出来的操作行（一屏唯一一处强调色实底 + 一条次操作）
+      // t62：EnvGate 拆出来的操作行（一屏唯一一处强调色实底 + 一条次操作）。
+      // 它自己**没有** `<style scoped>`：`.gate-actions` 父组件那两处也在用 → 在全局表（见下）。
       pane: 'GateActions.vue',
-      scoped: ['.gate-actions'],
-      staysGlobal: ['.gate-option-hint'],
+      scoped: [],
+      staysGlobal: ['.gate-actions', '.gate-option-hint'],
     },
     {
       // t63：EnvGate 拆出来的事实行 / 进行中进度
@@ -415,8 +418,9 @@ export function runStyles(repo: Repo): void {
   check(
     '样式分层：页面私有的规则搬进组件的 <style scoped>，共享件留在全局表（v-html 内容走 :deep）',
     layerProblems.length === 0 &&
-      // 每行至少得有个非空的 <style scoped>（"里面真有那些规则"由上面逐条断言守着）
-      styleLayers.every((row) => readScoped(row.pane).length > 0) &&
+      // 私有规则列表非空的行，组件里就得真有那个块；`scoped: []` 的行（搬完之后一条私有规则
+      // 都不剩、组件整个 <style scoped> 也删了）不算错 —— 它的两个 class 都在 staysGlobal 里。
+      styleLayers.every((row) => row.scoped.length === 0 || readScoped(row.pane).length > 0) &&
       /\.archive-turn-body :deep\(/.test(archiveRules) &&
       // 段落标记必须**自成一行**：段落重写脚本会把最后一条规则的 `}` 与下一节标记粘成一行
       // （`} /* ==== 卡片 */`），那样 marker 正则就再也认不出那一节 —— 攒了几轮才一次性修掉 12 处。
@@ -425,6 +429,72 @@ export function runStyles(repo: Repo): void {
     layerProblems.length || deepLeaks.length
       ? [...layerProblems, ...deepLeaks.map((l) => `漏了 :deep：${l}`)].join('；')
       : `${styleLayers.length} 个页面、${styleLayers.reduce((n, r) => n + r.scoped.length, 0)} 条私有规则`,
+  );
+
+  // t66：上面那张表守的是"该搬的搬了、该留的留了"，但它**看不见规则够不够得着**那个元素 ——
+  // 而 `<style scoped>` 的生效范围是：本组件模板里的元素 ＋（被别的组件当子组件用时）**它的根元素**
+  // （根元素同时带上父组件的 scope id）。所以一条**自成规则**的类选择器（`.foo {`）只要被别的
+  // 组件模板用到，在那边就是死规则。
+  // 为什么两层表与像素夹具都抓不到：机械等价比的是"规则并集"，同一条 `.foo` 放全局还是放 scoped
+  // 在并集里一模一样；像素夹具的静态标记**没有 data-v 属性**，scoped 与全局渲染结果相同。这类
+  // 缺陷只有"谁够得着"能看出来。
+  // 真实案例（用户真机翻看时发现）：t62 把 `.gate-actions { margin-top: 16px }` 搬进 `GateActions.vue`
+  // 的 scoped 块，而 `EnvGate.vue` 的放行页与回看卡也在用同一个 class —— 那两处的按钮行贴着上面的
+  // 清单，少了 16px。现在这条规则在全局表，并有这条自检守着。
+  // 只看**自成一条规则**的选择器：带上下文的（`.close-card .btn-row`）本来就是"只在本组件内部生效"
+  // 的覆盖，跨组件复用同一个 class 是正常的。`@media` 里的规则会被算成带上下文（保守，不误报）。
+  const readVue = (dir: string, name: string): string =>
+    fs.readFileSync(path.join(rendererDir, dir, name), 'utf8');
+  const templateClasses = (text: string): Set<string> => {
+    const tpl = text.match(/<template>([\s\S]*)<\/template>/)?.[1] ?? '';
+    const names = new Set<string>();
+    for (const m of tpl.matchAll(/\bclass="([^"]*)"/g)) {
+      for (const n of m[1].split(/\s+/)) if (n) names.add(n);
+    }
+    // `:class="cond ? 'a' : 'b'"` 这类字面量分支也算用到；拼出来的字符串（\`x-${n}\`）不猜。
+    for (const m of tpl.matchAll(/:class="([^"]*)"/g)) {
+      for (const n of m[1].matchAll(/'([A-Za-z][\w-]*)'/g)) names.add(n[1]);
+    }
+    return names;
+  };
+  const usedBy = new Map<string, string[]>();
+  for (const { dir, name } of repo.vueFiles) {
+    for (const cls of templateClasses(readVue(dir, name))) {
+      usedBy.set(cls, [...(usedBy.get(cls) ?? []), name]);
+    }
+  }
+  const deadScoped: string[] = [];
+  for (const { dir, name } of repo.vueFiles) {
+    // **行首锚定**切块：`.vue` 里的说明性注释常引用这个标签（"这些规则原来在 …… 里"），
+    // 不锚定的话，注释里那一处会被当成开始标记、把整份文件都算成块内容 —— 真踩过：
+    // 注入回那个 bug 之后这条检查反而报了 PASS，因为块内容从注释一直吞到真正的 `</style>`。
+    const blocks = readVue(dir, name).match(/^<style[^>]*scoped[^>]*>([\s\S]*?)^<\/style>/gm) ?? [];
+    const bare = new Set<string>();
+    for (const block of blocks) {
+      const body = block
+        .replace(/^<[^>]*>/, '')
+        .replace(/<\/style>$/, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const rule of body.matchAll(/([^{}]+)\{/g)) {
+        for (const one of rule[1].split(',')) {
+          const single = /^\.([A-Za-z][\w-]*)$/.exec(one.trim());
+          if (single) bare.add(single[1]);
+        }
+      }
+    }
+    for (const cls of bare) {
+      const others = (usedBy.get(cls) ?? []).filter((file) => file !== name);
+      if (others.length) {
+        deadScoped.push(`${name} 的 .${cls} 在 ${others.join(' / ')} 里够不着（应进全局表）`);
+      }
+    }
+  }
+  check(
+    '样式分层：自成一条规则的私有类不会被别的组件用到（scoped 够不着别的模板）',
+    deadScoped.length === 0,
+    deadScoped.length
+      ? deadScoped.join('；')
+      : `${repo.vueFiles.length} 个组件、${usedBy.size} 个模板 class 都查过`,
   );
 
   check(

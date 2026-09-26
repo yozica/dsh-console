@@ -1571,6 +1571,15 @@ body[data-gate-visible='true'] .rail > * {
   margin-top: 10px;
 }
 
+/* 门禁里的按钮行与上面那块内容之间的间距。**必须留在全局表**：`EnvGate.vue`（放行页与回看卡
+   各一处）与子组件 `GateActions.vue` 都在用同一个 class，搬进任何一个组件的 `<style scoped>`
+   就只有那一个组件够得着 —— t62 把它搬进 `GateActions.vue` 之后，放行页那排按钮贴着上面那张
+   完成清单，少了这 16px（真机翻看时被发现）。守着它的自检在 `test/checks/styles.ts`：
+   「样式分层：自成一条规则的私有类不会被别的组件用到」。 */
+.gate-actions {
+  margin-top: 16px;
+}
+
 /* 两个跨屏复用的小砖：提醒块（软底，不许做成卡）与决策块（要用户明确选一次） */
 .wizard-notice {
   margin-top: 10px;

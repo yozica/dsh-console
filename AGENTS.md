@@ -110,7 +110,7 @@ src/
                          页面，而是设置页「运行环境」卡的详情视图，见 7.30；PluginPane = 装配层，
                          它的层栈视图 / 操作输出 / 生效配置视图是 PluginStackView / PluginOpPanel /
                          PluginConfigView 三个子组件，EnvPane 的更新确认区是 EnvUpdateConfirm，见 7.36）
-test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（314 项，`npm test`）
+test/selftest.ts        自检入口：建 repo → 依次跑 test/checks/* → 汇总（315 项，`npm test`）
 test/harness.ts         断言的公共件：check / skip / report（统计 + CI 失败注解）/ 能不能起子进程
 test/repo.ts            自检读到的"仓库事实"：路径、.verify/、Settings、各源码文本与 cssBlock 等工具
 test/text.ts            从源码文本里切片段的纯函数（blockOf / functionBodyOf / methodSliceOf / strip*）
@@ -158,7 +158,7 @@ Electron 用 `file://` 加载产物，而 ES module 在 `file://` 下会走 CORS
 | `npm run build`                 | `build:renderer` + `build:main`                                                         |
 | `npm run build:renderer`        | `vite build`                                                                            |
 | `npm run build:main`            | `tsc -p tsconfig.main.json`                                                             |
-| `npm test`                      | `tsx test/selftest.ts`（314 项，不需要 Electron、不启停任何进程）                       |
+| `npm test`                      | `tsx test/selftest.ts`（315 项，不需要 Electron、不启停任何进程）                       |
 | `npm run lint`                  | ESLint 全量（含 Vue 单文件组件）                                                        |
 | `npm run lint:fix`              | 同上，顺带修可自动修的问题                                                              |
 | `npm run format`                | Prettier 全量格式化                                                                     |
@@ -701,7 +701,33 @@ Prettier**，不然 `format:check` 会红（这一轮又踩了一次）。
 
 **哪条自检守着**：「样式：标记用到的 class 都有对应样式（HTML + .vue，两层样式表都算）」
 「主题：样式表除变量块外没有硬编码颜色」（两层）「样式分层：页面私有的规则搬进组件的
-`<style scoped>`，共享件留在全局表」。
+`<style scoped>`，共享件留在全局表」
+「样式分层：自成一条规则的私有类不会被别的组件用到（scoped 够不着别的模板）」。
+
+**⚠️ t66 补的一课：这套验收有一处盲区 —— "规则搬对了"不等于"规则够得着"。**
+`<style scoped>` 的生效范围只是**本组件模板里的元素**，加上"它被别的组件当子组件用时那个根元素"
+（根元素会同时带上父组件的 scope id）。所以一条**自成规则**的类选择器（`.foo { … }`）只要被别的
+组件模板用到，在那边就是死规则。三道验收为什么都漏了：
+
+| 验收               | 为什么看不出                                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| 机械等价（多重集） | 比的是"规则并集"：同一条 `.foo` 放全局表还是放某个组件的 scoped 块，在并集里一模一样                       |
+| 逐像素             | 静态夹具**没有 `data-v-*` 属性**，scoped 与全局渲染结果天然相同（设置页那几段夹具就是这么做的）            |
+| `styleLayers` 表   | 它只问"这条规则还在不在组件块里 / 全局表里"，不问"谁在用它"—— 表是人手写的，判据说对了、**填错了也没人拦** |
+
+真实事故：t62 把 `.gate-actions { margin-top: 16px }` 写进了 `GateActions.vue` 的 scoped 块，
+而 `EnvGate.vue` 的**放行页**与**回看卡**也在用同一个 class —— 那两处的按钮行贴着上面的清单，
+少了 16px。**是用户真机翻看时发现的**，而我们这一阶段所有机械验收当时都是绿的。
+
+现在有两道拦：① `styleLayers` 里 `GateActions.vue` 那一行把 `.gate-actions` 记在 `staysGlobal`
+（搬回去就红）；② 新增的自检**机械地**跑一遍 §7.33 开头那条判据（"这个 class 是不是只有这一页
+在用"）—— 扫描全部 `.vue` 的模板 class 与 scoped 块，**自成一条规则的私有类一旦出现在别的组件
+模板里就报错**。这条判据以后不靠人眼。量这个间距用的是 `.verify/gate-actions-scope/measure.py`
+（静态夹具模拟 `data-v-*` 的锁，量出来 0px → 16px）。
+
+**读样式块一律按行首锚定**（`/^<style…>/ … /^<\/style>/`）：组件的注释里常引用那个标签
+（"这些规则原来在 `<style scoped>` 里"），不锚定就会从注释那一处开始吞、把 script 与 template
+都算成块内容 —— 注入回 bug 试那条新自检时，它就是这么报了 PASS 的。
 
 ### 7.10 本地 Shell 有意**不持久化**
 
@@ -1449,8 +1475,10 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 父级持一个模板 ref 调它。**"哪个按钮是这一屏的落点"这件事留在父级**（它知道有没有确认区打开、
 是不是在看回看卡），子组件只提供"我这一块的主按钮"这一个动作。
 
-风格上仍然照旧：模板逐字搬（`stepId` 取代 3 处 `currentStep.id`、`plan` 取代 `fixConfirmPlan`），
-`.gate-actions` 进 `GateActions` 的 scoped 块（`.gate-confirm*` 那批早已在全局表，这次没有规则进全局表）。
+风格上仍然照旧：模板逐字搬（`stepId` 取代 3 处 `currentStep.id`、`plan` 取代 `fixConfirmPlan`）。
+**但这一轮样式那句判断是错的**：当时写的是"`.gate-actions` 进 `GateActions` 的 scoped 块"，
+而 `EnvGate.vue` 的放行页与回看卡也在用同一个 class —— 规则锁在子组件的 scope id 上就够不着那两处，
+**放行页那排按钮少了 16px 间距**（t66 真机翻看时发现并修掉，见本节末尾与 §7.33 的那条补课）。
 
 验收：机械等价 **577 → 577 零丢失零多出**、逐像素**完全一致**（`.verify/gate3-split/`，夹具画了
 三步的操作行 + pnpm 那句说明 + 一键修复确认区）、`npm test` 314/314（**3** 行计数口径变化：
@@ -1489,6 +1517,36 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 （机械等价 577 → 577 零丢失零多出、逐像素一致、跨层自检）。**有意不拆的**：几个有状态的类
 （`NodeInstaller` / `EnvDoctor` / `EnvFixRunner` / `Plugin*`，理由见 §7.35）、`styles.css`（§7.33 的结论）、
 900 行以下的页面组件。汇总与"还欠一次真机翻看"记在 `docs/backlog.md` 第 2 条。
+
+**第十步（t66，2026-09-26 真机翻看后的第一个修正）：`.gate-actions` 回到全局表**
+
+拆模块这一阶段所有机械验收都是绿的，但**真机翻看**一眼就看出一处：放行页那排
+「进入 DSH Console / 再看看环境自检」**贴着上面的完成清单**，少了 16px 间距。
+根因不在"搬没搬对"，而在 **scoped 够不够得着**（详见 §7.33 末尾那一课）：t62 把
+`.gate-actions { margin-top: 16px }` 写进了子组件 `GateActions.vue` 的 scoped 块，而父组件
+`EnvGate.vue` 的**放行页**与**回看卡**也在用同一个 class —— 规则锁在子组件的 `data-v` 上，
+那两处就是死规则。
+
+修法（三条，缺一不可）：
+
+1. `.gate-actions` 回到 `styles.css` 全局表，`GateActions.vue` 整个 `<style scoped>` 删掉
+   （它用到的两个 class 都是共享件）；`styleLayers` 里那一行改成 `scoped: []` +
+   `staysGlobal: ['.gate-actions', '.gate-option-hint']`，并放宽"每行都得有非空块"那条前提
+   （`scoped: []` 的行是合法的）。
+2. **新增一条机械自检**（`test/checks/styles.ts`）：「样式分层：自成一条规则的私有类不会被别的
+   组件用到（scoped 够不着别的模板）」—— 扫全部 `.vue` 的模板 class 与 scoped 块，
+   `.foo { … }` 这种自成规则的选择器一旦出现在别的组件模板里就报错。**注入回 bug 验过**：
+   两条检查同时变红；只靠 `styleLayers` 那张人手填的表，填错了就没人拦。
+3. 量了这个间距：`.verify/gate-actions-scope/measure.py`（静态夹具把 Vue 的 scoped 编译结果
+   照抄成 `[data-v-*]`，量出来**改动前 0px → 改动后 16px**，清单下缘一动没动）。
+
+顺带修掉两个"读到假样式块"的隐患：`readScoped` 与那条新检查切 `<style>` 块时一律**行首锚定**
+（组件注释里会引用那个标签的字面量，不锚定就会从注释处开始吞，把 script 与 template 都算成块内容
+—— 注入 bug 试新检查时它就这么报过一次 PASS）。
+
+验收：机械等价 **577 → 577 零丢失零多出**、`npm test` **315/315**（新增 1 条；
+`styleLayers` 那条的计数从"23 个页面、99 条私有规则"变成"23 个页面、98 条私有规则"）、
+沙箱门禁 32/32 + 185/185、`lint` / `format:check` / `typecheck` / `build` 全绿。
 
 **第八步（t64，2026-09-26）：插件页的生效配置视图**
 
@@ -1594,7 +1652,7 @@ t57 拆掉的是最后那块大的 —— 它里面那个 558 行的 `registerIp
 ### 自检
 
 ```bash
-npm test     # tsx test/selftest.ts，314 项，不需要 Electron、不启停任何进程
+npm test     # tsx test/selftest.ts，315 项，不需要 Electron、不启停任何进程
 ```
 
 受限环境里 `npm test` 起不来（tsx 要经 esbuild 的带管道子进程，见第 5 节），用等价入口：

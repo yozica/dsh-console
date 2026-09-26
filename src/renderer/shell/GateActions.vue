@@ -6,6 +6,11 @@
  * 三条分支按步骤分：第一步是「安装」（两条路一条都没预选时禁用）+「我想自己去官网下载安装」；
  * 第二步是「安装」+「先跳过这一步」；第三步只有「安装」。**它不判定任何东西**：禁用与 title
  * 里的原因都由父级算好递下来（`methodNeedsPick` / `busy` / `npmMissing` 那些判据父级的别处也在用）。
+ *
+ * 它**没有**自己的 scoped 样式块：用到的两个 class（`.gate-actions` / `.gate-option-hint`）父组件
+ * 那边也在用，按 §7.33 都在全局表 —— `.gate-actions` 曾经被放进这里，结果父组件那两处收不到它。
+ * （读这两层样式的自检按**行首**锚定来切样式块，所以这段说明里不写那个标签的字面量，
+ * 免得多出一处假的"开始标记"把整份文件都算进块里。）
  */
 import { ref } from 'vue';
 
@@ -115,12 +120,3 @@ defineExpose({ focusStart });
     跳过之后，插件页的装 / 卸 / 升级仍然用不了（以后随时可以回来补上）。
   </p>
 </template>
-
-<style scoped>
-/* t62：这一条原来在 `EnvGate.vue` 的 <style scoped> 里，只有操作行在用（`.gate-option-hint`
-   与 `.btn*` 是全局零件）。 */
-
-.gate-actions {
-  margin-top: 16px;
-}
-</style>
