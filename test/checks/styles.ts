@@ -262,6 +262,18 @@ export function runStyles(repo: Repo): void {
       ],
     },
     {
+      // t61：EnvGate 拆出来的结果行（点色 + 结论 + 说明 + 那排出路）
+      pane: 'GateResult.vue',
+      scoped: ['.gate-result', '.gate-result-dot', '.gate-result-title', '.gate-result-note'],
+      staysGlobal: ['.btn'],
+    },
+    {
+      // t61：EnvGate 拆出来的选择区（版本档位 + 安装方法两组单选）
+      pane: 'GateNodeChoice.vue',
+      scoped: ['.gate-method-fact'],
+      staysGlobal: ['.gate-option', '.gate-choice-row'],
+    },
+    {
       pane: 'PluginPane.vue',
       // t59 起层栈视图与操作输出各是一个子组件：`.plugin-layer` / `.plugin-detail-actions` 与
       // `.plugin-op` 跟着它们走了，剩下的是这一页自己的（表头、救援、生效配置、安装行）。
