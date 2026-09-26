@@ -83,7 +83,6 @@ import {
 import {
   BUSY_HINT,
   CHECK_TITLES,
-  FACT_STATUS_WORDS,
   METHOD_FACTS,
   NODE_DOWNLOAD_URL,
   STEP_CARD_TITLES,
@@ -95,11 +94,11 @@ import {
   type MethodArea,
 } from '../lib/gate-copy.js';
 import { installRunning, installSettled, isFixSettled } from '../lib/env-install-phase.js';
-import { copyToClipboard } from '../lib/clipboard.js';
 import { say } from '../lib/status-message.js';
 import GateNodeConfirm from './GateNodeConfirm.vue';
 import GateOutput from './GateOutput.vue';
 import GateActions from './GateActions.vue';
+import GateFacts from './GateFacts.vue';
 import GateFixConfirm from './GateFixConfirm.vue';
 import GateNodeChoice from './GateNodeChoice.vue';
 import GateResult from './GateResult.vue';
@@ -1175,54 +1174,23 @@ watch(fixConfirmAction, (action) => {
               @pick-channel="pickChannel"
             />
 
-            <!-- 事实行：进行中时由进度区占同一个槽位（视觉 §5.5） -->
-            <template v-if="!stepRunning">
-              <div class="gate-facts">
-                <div
-                  v-for="row in currentFacts"
-                  :key="row.key"
-                  class="gate-fact"
-                  :data-status="row.status"
-                >
-                  <span class="lamp"></span>
-                  <div class="gate-fact-main">
-                    <div class="gate-fact-head">
-                      <span class="gate-fact-title">{{ row.title }}</span>
-                      <span class="gate-fact-state">{{ FACT_STATUS_WORDS[row.status] }}</span>
-                    </div>
-                    <p class="gate-fact-detail">{{ row.detail }}</p>
-                  </div>
-                </div>
-              </div>
-            </template>
-
-            <!-- 进行中：状态行 + 进度（能算才画）+ 一个明确的按钮 -->
-            <div v-if="stepRunning" class="wizard-progress">
-              <div class="wizard-progress-line">
-                <span class="wizard-progress-dot" aria-hidden="true"></span>
-                <span class="wizard-progress-text">{{ progressText }}</span>
-              </div>
-              <div v-if="progressPercent !== null" class="wizard-progress-track">
-                <div class="wizard-progress-bar" :style="{ width: `${progressPercent}%` }"></div>
-              </div>
-              <p v-if="progressBytes" class="wizard-progress-bytes">{{ progressBytes }}</p>
-              <p v-if="progressNotice" class="wizard-notice">{{ progressNotice }}</p>
-              <div class="btn-row">
-                <button v-if="stopVisible" class="btn small" @click="stop">{{ stopLabel }}</button>
-                <button class="btn small ghost" @click="toggleOutput">显示详细输出</button>
-              </div>
-            </div>
-
-            <!-- 步骤 2：npm 还不能用时不给一个注定失败的门（交互 §5.3） -->
-            <template v-if="currentStep.id === 'pnpm' && npmMissing && !stepRunning">
-              <p class="gate-card-why">这台电脑上的 npm 还不能用，所以没法替你装 pnpm。</p>
-              <div class="gate-fact-more">
-                <code class="gate-detail-cmd">corepack enable pnpm</code>
-                <button class="btn tiny" @click="copyToClipboard('corepack enable pnpm')">
-                  复制
-                </button>
-              </div>
-            </template>
+            <!-- 事实行 / 进行中进度 / npm 那条交代：三者占同一个槽位（视觉 §5.5）。
+                 t63 起是 shell/GateFacts.vue：这一层只画，事实行与进度读数都由父级算。 -->
+            <GateFacts
+              v-if="!stepSettled"
+              :step-id="currentStep.id"
+              :step-running="stepRunning"
+              :current-facts="currentFacts"
+              :progress-text="progressText"
+              :progress-percent="progressPercent"
+              :progress-bytes="progressBytes"
+              :progress-notice="progressNotice"
+              :stop-label="stopLabel"
+              :stop-visible="stopVisible"
+              :npm-missing="npmMissing"
+              @stop="stop"
+              @toggle-output="toggleOutput"
+            />
 
             <!-- 操作行：一屏只有一处强调色实底（t62 起是 shell/GateActions.vue） -->
             <GateActions
@@ -1710,115 +1678,12 @@ watch(fixConfirmAction, (action) => {
   letter-spacing: -0.01em;
 }
 
-.gate-card-why {
-  max-width: var(--wizard-read);
-  margin-top: 4px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-}
-
 .gate-card-note {
   max-width: var(--wizard-read);
   margin-top: 10px;
   color: var(--ink-faint);
   font-size: var(--t-xs);
   line-height: 1.7;
-}
-
-.gate-facts {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.gate-fact {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.gate-fact .lamp {
-  margin-top: 5px;
-}
-
-.gate-fact[data-status='ok'] .lamp {
-  background: var(--run);
-  box-shadow: 0 0 0 3px var(--run-soft);
-}
-
-.gate-fact[data-status='warn'] .lamp {
-  background: transparent;
-  border: 1.5px solid var(--amber);
-}
-
-.gate-fact[data-status='missing'] .lamp {
-  background: var(--rose);
-  box-shadow: 0 0 0 3px var(--rose-soft);
-}
-
-/* 已跳过与测不出来都不是"这台电脑的事实"：只有墨色，不借 amber / rose */
-.gate-fact[data-status='skipped'] .lamp {
-  background: transparent;
-  border: 1.5px solid var(--ink-dim);
-}
-
-.gate-fact[data-status='unknown'] .lamp {
-  background: transparent;
-  border: 1.5px dashed var(--ink-faint);
-}
-
-.gate-fact-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.gate-fact-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.gate-fact-title {
-  color: var(--ink);
-  font-size: var(--t-md);
-  font-weight: 600;
-}
-
-.gate-fact-state {
-  color: var(--ink-faint);
-  font-size: var(--t-xs);
-}
-
-.gate-fact[data-status='ok'] .gate-fact-state {
-  color: var(--run);
-}
-
-.gate-fact[data-status='warn'] .gate-fact-state {
-  color: var(--amber);
-}
-
-.gate-fact[data-status='missing'] .gate-fact-state {
-  color: var(--rose);
-}
-
-.gate-fact-detail {
-  margin-top: 3px;
-  color: var(--ink-dim);
-  font-size: var(--t-sm);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-  user-select: text;
-}
-
-.gate-detail-cmd {
-  display: block;
-  margin-top: 4px;
-  color: var(--code-ink);
-  font-family: var(--mono);
-  overflow-wrap: anywhere;
-  user-select: text;
 }
 
 /* 提醒行 + 重新检测：都在卡片之下，右对齐的是那条次操作 */
