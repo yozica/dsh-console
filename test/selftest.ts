@@ -21,6 +21,7 @@
  *  10. 运行环境自检（判定 + 探测 + 一键修复）—— `checks/env-doctor.ts`
  *  11. 首启环境向导与门禁界面 —— `checks/env-wizard.ts`
  *  12. 安装引擎（提权 / nvm / 归属与档位）—— `checks/install-engine.ts`
+ *  13. 内嵌页诊断的 console 参数形状 —— `checks/embedded.ts`
  */
 
 import { report } from './harness';
@@ -33,6 +34,7 @@ import { runPlugin } from './checks/plugin';
 import { runEnvDoctor } from './checks/env-doctor';
 import { runEnvWizard } from './checks/env-wizard';
 import { runInstallEngine } from './checks/install-engine';
+import { runEmbedded } from './checks/embedded';
 
 async function main(): Promise<void> {
   const repo = createRepo();
@@ -45,6 +47,7 @@ async function main(): Promise<void> {
   runEnvDoctor(repo);
   runEnvWizard(repo);
   runInstallEngine(repo);
+  runEmbedded();
 
   report();
 }

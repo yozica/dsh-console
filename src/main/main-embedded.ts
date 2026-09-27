@@ -29,27 +29,57 @@ interface ConsoleMessageInfo {
   line: number;
 }
 
+/** console 的级别用数字表示（Electron 的 `MessageDetails.level`）：0 verbose / 1 info / 2 warning / 3 error */
+const CONSOLE_LEVELS = ['verbose', 'info', 'warning', 'error'] as const;
+
+function levelName(level: unknown): string {
+  return CONSOLE_LEVELS[Number(level)] ?? 'info';
+}
+
 /**
- * Electron 新旧版本的 console-message 参数形状不同（新版第一个参数是 details 对象，
- * 旧版是 level/message/line/sourceId 五个位置参数），这里统一取出来。
+ * Electron 的 `console-message` 事件有两种参数形状，**都要能读**：
+ *
+ * - 现在（Electron ≥ 30 左右，本仓跑的是 44）：`(event: Event, details: MessageDetails)`
+ *   —— 详情在**第二个**参数上，`details.level` 是数字、`details.sourceUrl` / `details.lineNumber` 有值；
+ * - 更早的版本：`(event, level, message, line, sourceId)` 五个位置参数。
+ *
+ * ⚠️ 这里踩过一次真坑：以前按 `args[0]` 取 details，于是新版下**每次都读成
+ * `level='info'`、`message=''`** → 所有 guest console 被静默丢弃（见下方 `wireGuestDiagnostics`
+ * 只记 error/warning），表现为"插件打什么日志都进不了应用日志"。判据是 Electron 类型声明
+ * 与真机实测（2026-09-27）。改动这里请同时跑 `test/checks/embedded.ts` 的用例。
  */
 export function readConsoleMessage(args: unknown[]): ConsoleMessageInfo {
-  const details = args[0] as
-    { level?: unknown; message?: unknown; sourceId?: unknown; lineNumber?: unknown } | undefined;
-  if (details && typeof details === 'object' && 'message' in details) {
+  // 判据取 `args[1]`：
+  // - 旧版那里是**数字**（level）→ 按五参数读（`args[0]` 是 event，不是 level！）
+  // - 现在那里是**详情对象**（且带 `message`）→ 详情就在 `args[1]`
+  // - 两种形状都没有（参数缺失 / 别的东西调用了）→ 返回空值，不抛
+  const second = args[1];
+  if (typeof second === 'number') {
+    const legacy = args as [unknown, unknown, unknown, unknown, unknown];
     return {
-      level: String(details.level ?? 'info'),
-      message: String(details.message ?? ''),
-      source: String(details.sourceId ?? ''),
-      line: Number(details.lineNumber ?? 0),
+      level: levelName(legacy[1]),
+      message: String(legacy[2] ?? ''),
+      source: String(legacy[4] ?? ''),
+      line: Number(legacy[3] ?? 0),
     };
   }
-  const legacy = args as [unknown, unknown, unknown, unknown, unknown];
+  const details = (typeof second === 'object' && second !== null ? second : undefined) as
+    | {
+        level?: unknown;
+        message?: unknown;
+        source?: unknown;
+        sourceUrl?: unknown;
+        lineNumber?: unknown;
+      }
+    | undefined;
+  if (details === undefined || !('message' in details)) {
+    return { level: 'info', message: '', source: '', line: 0 };
+  }
   return {
-    level: ['debug', 'info', 'warning', 'error'][Number(legacy[1])] || 'info',
-    message: String(legacy[2] ?? ''),
-    source: String(legacy[4] ?? ''),
-    line: Number(legacy[3] ?? 0),
+    level: levelName(details.level),
+    message: String(details.message),
+    source: String(details.sourceUrl ?? details.source ?? ''),
+    line: Number(details.lineNumber ?? 0),
   };
 }
 
