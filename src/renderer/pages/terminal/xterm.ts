@@ -141,7 +141,9 @@ export function shouldCopySelection(event: KeyboardEvent, hasSelection: boolean)
  * 复制走 `copyToClipboard`，它自己会说一句状态栏回话、失败也不抛。
  * 这里**不 await**：按键处理器必须是同步的，而复制是异步的 ——
  * 好在这条路径是用户手势的直接续写，剪贴板的写权限拿得到。
- * 两台终端都不加复制按钮：选中即复制是这个手势的全部交互面。
+ *
+ * 为什么是「选中即复制」而不是加个复制按钮：这个视图里能复制的东西就是屏幕上那段文字，
+ * 而用户为了复制已经在拖选了 —— 再让他把手移到工具栏点一下是多余的一步（用户的裁定）。
  */
 export function passAppShortcutsThrough(
   term: Terminal,
