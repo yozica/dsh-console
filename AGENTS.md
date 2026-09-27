@@ -418,6 +418,7 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 - **复制只走「选中后 Ctrl+C」这一个手势，不加按钮**（用户的裁定）。xterm 把内容画在 canvas 上，剪贴板得自己接：判定收在 `pages/terminal/xterm.ts` 的纯函数 `shouldCopySelection(event, hasSelection)` 里，命中时 `passAppShortcutsThrough` 取 `term.getSelection()` 交给 `utils/clipboard.ts` 并 **return false**（返回 true 的话 xterm 仍会把 `\x03` 发出去，等于复制与空转的中断同时发生）。
   两个条件缺一不可：**有选中**（否则 Ctrl+C 的"停 dsh"语义就没了）、**非 macOS**（那儿的 Ctrl+C 是中断键，复制是 ⌘C）。本地 Shell **不打开**这个开关 —— 它的 Ctrl+C 是正经中断，还能打断正在跑的命令。
   自检三条钉着「纯函数同时判平台与选中」「真调剪贴板并拦住 xterm」「只有 DshTerminal 打开」；`copyToClipboard` 自己说的话走状态栏那套 `say()`（`layout/StatusBar.vue` 在听），复制成功与失败都看得见。
+  工具条那句提示**只留「dsh web 不读键盘输入」** —— 曾经写过「选中文字后 Ctrl+C 是复制，没选中时 Ctrl+C 会让它退出」，用户看后裁定删掉：有选中就复制是终端的通用习惯，界面上不必教；而"不读键盘输入"是反直觉的，不说明才像坏了。**别把复制那句加回去**。
 
 ### 7.8 共享状态、挂载与 xterm
 
