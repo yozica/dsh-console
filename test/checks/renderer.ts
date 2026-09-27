@@ -17,6 +17,7 @@ import path from 'node:path';
 
 import { check } from '../harness';
 import type { PackageJson, Repo } from '../repo';
+import { blockOf } from '../text';
 
 export function runRenderer(repo: Repo): void {
   const { srcDir, rendererDir, html, vueFiles, markup, rendererCode, mountJs, root } = repo;
@@ -123,6 +124,51 @@ export function runRenderer(repo: Repo): void {
     noShortcutPassthrough.length
       ? `未放行：${noShortcutPassthrough.join(', ')}`
       : `${terminalUsers.length} 个页面`,
+  );
+  // dsh 终端要能复制。xterm 把内容画在 canvas 上，剪贴板得自己接 —— 而这个视图里
+  // 唯一的复制手势是"选中文字后 Ctrl+C"（不另加按钮）。
+  //
+  // 三条一起看，缺一条就不是那个行为：
+  //   1. 判断依据必须是纯函数 `shouldCopySelection`，且它同时看**平台**与**有没有选中**。
+  //      只看选中会让 macOS 上按 Ctrl+C 变成复制（那儿的中断键才是 Ctrl+C，复制是 ⌘C）；
+  //      只看平台则等于永远复制，把"用 Ctrl+C 停 dsh"这条路堵死。
+  //   2. 命中时要真的调用 copyToClipboard 并 return false —— return true 的话 xterm
+  //      仍会把 \x03 发给 dsh，等于复制与"空转的中断"同时发生。
+  //   3. 用终端的页面里只有 dsh 终端打开这个开关：本地 Shell 是交互式终端，
+  //      Ctrl+C 在那儿是正经的中断（还能打断正在跑的命令），抢过来会出事。
+  const xtermSource = fs.readFileSync(repo.tsPath('xterm.ts'), 'utf8');
+  const copyPredicateBody = blockOf(xtermSource, 'export function shouldCopySelection(');
+  check(
+    '渲染层：终端的"选中后 Ctrl+C 复制"由纯函数判定，且平台与选中都判',
+    copyPredicateBody.length > 0 &&
+      /isMac\.value/.test(copyPredicateBody) &&
+      /hasSelection/.test(copyPredicateBody) &&
+      /=== 'c'/.test(copyPredicateBody),
+    copyPredicateBody.length === 0
+      ? 'xterm.ts 里找不到 shouldCopySelection'
+      : `判定体 ${copyPredicateBody.split('\n').length} 行`,
+  );
+  // 注意**不要**对 `blockOf(xtermSource, 'export function passAppShortcutsThrough(')` 断言：
+  // 那个函数的签名里就有 `{ includeReload … } = {}`，`blockOf` 取的是锚点之后第一个 `{`
+  // 的配对块，于是切到的是**选项参数对象**而不是函数体（写这条断言时踩过：报"没有复制分支"，
+  // 实际实现是对的）。所以这几条对着整个文件的调用链断言。
+  check(
+    '渲染层：终端的复制分支真的调了剪贴板并拦住 xterm',
+    /shouldCopySelection\(event, term\.hasSelection\(\)\)/.test(xtermSource) &&
+      /void copyToClipboard\(term\.getSelection\(\)\)/.test(xtermSource),
+    /copyToClipboard\(term\.getSelection\(\)\)/.test(xtermSource)
+      ? '已接上'
+      : 'xterm.ts 里没有"取选中 → 复制"这条链',
+  );
+  const copyOnSelectionUsers = vueFiles
+    .filter((file) => /copyOnSelection:\s*true/.test(readVue(file.path)))
+    .map((file) => file.name);
+  check(
+    '渲染层：只有 dsh 终端打开选中复制（本地 Shell 的 Ctrl+C 留给 shell）',
+    copyOnSelectionUsers.length === 1 && copyOnSelectionUsers[0] === 'DshTerminal.vue',
+    copyOnSelectionUsers.length
+      ? `打开的有：${copyOnSelectionUsers.join(', ')}`
+      : '没有任何页面打开',
   );
   // 挂载点必须是"布局透明"的（display: contents）：否则组件渲染出的内容会多包一层块级元素，
   // 把父级的 flex/grid 链断掉 —— 症状是内嵌页只剩顶上一条（webview 退回默认高度）。

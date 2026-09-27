@@ -15,6 +15,7 @@ import { Terminal, type ITerminalOptions } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
+import { copyToClipboard } from '../../utils/clipboard.js';
 import { isAppModifier, isMac } from '../../utils/platform.js';
 import type { ResolvedTheme } from '../../../shared/ipc';
 
@@ -108,6 +109,23 @@ export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): Term
 }
 
 /**
+ * 这一次 Ctrl+C 该不该被当成"复制"（而不是发给 dsh 的控制字符）。
+ *
+ * 单独做成纯函数是为了能被自检直接断言：判断依据只有两个 —— **平台**与**有没有选中文字**。
+ * 两个都不要漏：
+ *  - macOS 上复制键是 ⌘C，Ctrl+C 在那儿仍是"中断"；不判平台的话，mac 用户选中文字后
+ *    按 Ctrl+C 会得到一个"复制"而不是他要的中断。
+ *  - 没有选中时必须落回原语义（把 \x03 发给 dsh），否则"用 Ctrl+C 停 dsh"这条路就没了。
+ *
+ * 只有 Ctrl+C，**不拦 Ctrl+Shift+C**（那是 GNOME 系终端的复制键位，留给 xterm 自己）。
+ */
+export function shouldCopySelection(event: KeyboardEvent, hasSelection: boolean): boolean {
+  if (event.type !== 'keydown' || isMac.value) return false;
+  if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return false;
+  return String(event.key).toLowerCase() === 'c' && hasSelection;
+}
+
+/**
  * 让应用级快捷键穿过终端。
  *
  * 不这么做的话，xterm 会把 Ctrl+2~8 / ⌘2~8 当成控制字符吃掉（^@、^[、^\、^]、^^、^_、^?）、
@@ -118,13 +136,28 @@ export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): Term
  * 修饰键按平台取（macOS 认 Cmd，其它平台认 Ctrl），与 app.ts 的处理器保持一致。
  * `includeReload` 用来决定 Ctrl+R / ⌘R 归谁：dsh 终端里输入本来就没用，交给应用重载；
  * 本地 Shell 里 Ctrl+R 是它自己的反向历史搜索，得留给 shell。
+ *
+ * `copyOnSelection` 打开后（目前只有 dsh 终端用）多一条：**有选中文字时 Ctrl+C 变成复制**。
+ * 复制走 `copyToClipboard`，它自己会说一句状态栏回话、失败也不抛。
+ * 这里**不 await**：按键处理器必须是同步的，而复制是异步的 ——
+ * 好在这条路径是用户手势的直接续写，剪贴板的写权限拿得到。
+ *
+ * 为什么是「选中即复制」而不是加个复制按钮：这个视图里能复制的东西就是屏幕上那段文字，
+ * 而用户为了复制已经在拖选了 —— 再让他把手移到工具栏点一下是多余的一步（用户的裁定）。
  */
 export function passAppShortcutsThrough(
   term: Terminal,
-  { includeReload = false }: { includeReload?: boolean } = {},
+  {
+    includeReload = false,
+    copyOnSelection = false,
+  }: { includeReload?: boolean; copyOnSelection?: boolean } = {},
 ): void {
   term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     if (event.type !== 'keydown') return true;
+    if (copyOnSelection && shouldCopySelection(event, term.hasSelection())) {
+      void copyToClipboard(term.getSelection());
+      return false;
+    }
     if (!isAppModifier(event) || event.shiftKey || event.altKey) return true;
     if (/^[1-7]$/.test(event.key)) return false;
     if (includeReload && String(event.key).toLowerCase() === 'r') return false;

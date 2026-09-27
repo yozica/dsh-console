@@ -36,8 +36,10 @@ const note = computed(() => {
   if (!own.value) return phaseInfo.value.title;
   return dsh.value?.pid ? `运行中，PID ${dsh.value.pid}` : '运行中，PID 识别中';
 });
-// 说清"为什么打字没反应"，否则这个终端看着像坏了
-const hint = computed(() => (own.value ? 'dsh web 不读键盘输入，Ctrl+C 可以让它退出' : ''));
+// 说清"为什么打字没反应"与"怎么复制"，否则这个终端看着像坏了
+const hint = computed(() =>
+  own.value ? 'dsh web 不读键盘输入；选中文字后 Ctrl+C 是复制，没选中时 Ctrl+C 会让它退出' : '',
+);
 const emptyVisible = computed(() => !own.value && !hasContent.value);
 
 function syncFit() {
@@ -94,8 +96,10 @@ async function startDsh() {
 function ensureTerminal() {
   if (entry || !host.value) return entry;
   entry = attachTerminal(host.value, resolvedTheme.value);
-  // 让 Ctrl+1~9 与 Ctrl+R 穿过终端交给应用（dsh 终端本来就不读键盘输入）
-  passAppShortcutsThrough(entry.term, { includeReload: true });
+  // 让 Ctrl+1~7 与 Ctrl+R 穿过终端交给应用（dsh 终端本来就不读键盘输入）；
+  // 同时把"有选中文字时的 Ctrl+C"接管为复制 —— dsh web 不读 stdin，那个 \x03
+  // 发过去本来就是空转（见 xterm.ts 的 shouldCopySelection）。
+  passAppShortcutsThrough(entry.term, { includeReload: true, copyOnSelection: true });
   entry.term.onData((data) => api.dshInput(data));
   entry.term.onResize(({ cols, rows }) => api.dshResize(cols, rows));
   syncFit();
