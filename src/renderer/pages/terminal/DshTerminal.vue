@@ -36,10 +36,10 @@ const note = computed(() => {
   if (!own.value) return phaseInfo.value.title;
   return dsh.value?.pid ? `运行中，PID ${dsh.value.pid}` : '运行中，PID 识别中';
 });
-// 说清"为什么打字没反应"与"怎么复制"，否则这个终端看着像坏了
-const hint = computed(() =>
-  own.value ? 'dsh web 不读键盘输入；选中文字后 Ctrl+C 是复制，没选中时 Ctrl+C 会让它退出' : '',
-);
+// 工具条上那句提示：**只保留"打字没反应"这一条**。
+// 不提复制 —— "有选中就复制"是终端里的通用习惯，界面上不必教；而"dsh web 不读键盘输入"
+// 是反直觉的，不说明这个终端看着就像坏了（用户裁定：不要再补复制那句）。
+const hint = computed(() => (own.value ? 'dsh web 不读键盘输入' : ''));
 const emptyVisible = computed(() => !own.value && !hasContent.value);
 
 function syncFit() {
