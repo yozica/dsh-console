@@ -170,6 +170,12 @@ export async function runRelease(repo: Repo): Promise<void> {
       composed.includes('`DSH.Console.Setup.0.3.0.exe`') &&
       composed.includes('## 安装'),
   );
+  check(
+    '发布正文：更新器那句说的是事实（Windows 安装版能自动更新、macOS 只能手动下）',
+    composed.includes('Windows 安装版会自动检查新版本') &&
+      composed.includes('macOS 因签名限制需手动下载') &&
+      !composed.includes('没接自动更新'),
+  );
   let assetGateThrew = false;
   try {
     releaseNotes.composeReleaseNotes({
