@@ -4,7 +4,7 @@
  * t51 从 `env-doctor.ts` 拆出来的；那个文件现在只做 barrel + 两个有状态的类（`EnvDoctor` /
  * `EnvFixRunner`），别的模块与两个反例脚本的 import 路径都不用改。
  */
-import type { EnvNodeOwner } from '../shared/ipc';
+import type { DshNpmBinding, EnvNodeOwner } from '../shared/ipc';
 import type { LocalDshRequirement } from './env-node-range';
 
 /** 探测子进程超时：与 `canRunDsh` 的 8000 一致 */
@@ -129,6 +129,14 @@ export interface EnvProbeRaw {
   nodeOwner?: EnvNodeOwner;
   /** 归属判定的证据（人话，逐条；进日志与确认区的「详情」，评审能对账"为什么是这一条"） */
   nodeOwnerEvidence?: string[];
+  /**
+   * 「更新 dsh」该用哪个 npm（方案 A，见 docs/env-doctor.md §3.5）。
+   *
+   * **由 `EnvDoctor.judge()` 解析一次**（`dsh-npm.ts` 的 `resolveDshNpmBinding`，按进程缓存）——
+   * 判定是纯函数，不许自己去问 `resolveDshLauncher`；执行侧（`EnvDoctor.fixPlan`）读同一份缓存，
+   * 这就是"显示 == 执行"的机械保证。老夹具没有这个字段时，判定按"沿用 npm 那一份"处理。
+   */
+  dshNpm?: DshNpmBinding;
   /** 采集本身有没有意外（例如读设置失败），有值时整份报告要带出来 */
   error: string | null;
 }

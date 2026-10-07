@@ -21,6 +21,7 @@
  * **不要在这里加新的纯函数** —— 放对应的叶子模块。
  */
 import { probeFixTarget } from './env-fix-plan';
+import { resolveDshNpmBinding, resolveNpmForDsh } from './dsh-npm';
 
 import { collectEnvProbe, readNpmPrefix } from './env-probe';
 
@@ -53,7 +54,7 @@ import { emptyProbe, findNpm, messageOf } from './env-probe';
 import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { envWithKnownBins, hasVcRuntime, homeDir } from './process-utils';
+import { cleanNpmEnv, envWithKnownBins, hasVcRuntime, homeDir } from './process-utils';
 
 export interface EnvDoctorHooks {
   /** 主进程注入的运行时事实（platform / isPackaged / process.versions） */
@@ -75,6 +76,30 @@ export interface EnvDoctorHooks {
   log?: (line: string) => void;
 }
 /**
+ * 本机这一份 dsh / pnpm 的版本（**复用已有探测事实，不新增探测路径**）。
+ *
+ * dsh 有两处来源，必须都看：
+ *   - `raw.localDsh.version`：离线读它安装树里的 `package.json`。**最常见的那条路（node + bin.js）
+ *     只有这个有值** —— `collectDshProbe` 对 `node-bin` 是复用 `canRunDsh` 的缓存结论，那里
+ *     只记"跑得动"、不记版本号（真机实测：`raw.dsh.version` 在这一路是 null）。
+ *   - `raw.dsh.version`：实测 `dsh --version` 的输出，覆盖 `npx` / shim 那几条路（那时候解析不出安装根）。
+ *
+ * pnpm 只有一处（`raw.pnpm.version`，就是 `pnpm -v` 的输出）。
+ */
+function installedVersionsOf(raw: EnvProbeRaw): InstalledVersions {
+  return {
+    dsh: raw.localDsh?.version ?? raw.dsh.version ?? null,
+    pnpm: raw.pnpm.version ?? null,
+  };
+}
+
+/** 本机这一份的版本（界面上那两个更新入口做比对用） */
+export interface InstalledVersions {
+  dsh: string | null;
+  pnpm: string | null;
+}
+
+/**
  * 自检的报告持有者：**缓存 + 采集 + 复检**。
  *
  * 缓存的就是那份 `EnvDoctorReport`，不额外找地方存：
@@ -88,8 +113,13 @@ export interface EnvDoctorHooks {
  */
 export class EnvDoctor {
   private cached: EnvDoctorReport | null = null;
-  /** `npm prefix -g` 的结果；undefined = 这一轮还没问过 */
-  private prefix: string | null | undefined;
+  /**
+   * `npm prefix -g` 的结果，**按 npm 路径**缓存（键 = npm 可执行文件）。
+   * 见 `npmPrefixFor` 的说明：dsh 与 pnpm 可能用两份不同的 npm，不能只缓存一份。
+   */
+  private prefixByNpm = new Map<string, string | null>();
+  /** 上一轮探测到的版本（`installedVersions()` 读它；跟着 `report()` 一起更新） */
+  private installed: InstalledVersions = { dsh: null, pnpm: null };
 
   constructor(
     private readonly settings: Settings,
@@ -102,26 +132,44 @@ export class EnvDoctor {
 
   invalidate(): void {
     this.cached = null;
-    this.prefix = undefined;
+    this.prefixByNpm.clear();
   }
 
   async report(refresh = false): Promise<EnvDoctorReport> {
     if (!refresh && this.cached) return this.cached;
-    this.prefix = undefined;
-    const { report: judged, raw } = await this.judge();
+    this.prefixByNpm.clear();
+    const { report: judged, raw } = await this.judge(refresh);
+    // 顺手接住本机版本：版本比对（`env:pkg-updates`）要用，但它**不该**再起一轮探测
+    this.installed = installedVersionsOf(raw);
     // 界面撤下去的那些原始错误在这里落日志（**只落日志**：界面文案仍是人话）。
     // 放在最前面：哪怕后面问 `npm prefix -g` 出了意外，这一轮的原文也已经记下来了。
     this.logTrouble(raw, judged);
-    // plans 里的 target 要问一次 npm（判定是纯函数，不问）；
-    // 没有可用的计划时连问都不问。
-    const target = judged.plans.length > 0 ? await this.npmPrefix() : null;
-    const report: EnvDoctorReport = {
-      ...judged,
-      plans: judged.plans.map((plan) => ({ ...plan, target })),
-    };
+    // plans 里的 target 要问一次 npm（判定是纯函数，不问）；没有可用的计划时连问都不问。
+    //
+    // **按计划里那一条 npm 分别问**（方案 A）：install-dsh 用的 npm 现在可能与 install-pnpm
+    // 那份不是同一个，用一份 prefix 糊弄两个计划会把"会装进 …"写错。
+    const plans = await Promise.all(
+      judged.plans.map(async (plan) => ({ ...plan, target: await this.npmPrefixFor(plan.file) })),
+    );
+    const report: EnvDoctorReport = { ...judged, plans };
     this.cached = report;
     this.hooks.onReport?.(report);
     return report;
+  }
+
+  /**
+   * 本机这一份的版本（只读）。没有缓存时先跑一轮 `report()` —— 调用它的
+   * `env:pkg-updates` 本来就只在详情层打开/重新检测时被调，那时报告通常已经在手上；
+   * 兜这一下是为了"先开详情层再查版本"这种顺序也不会拿到空读数。
+   *
+   * 已知的小代价：`report()` 自己不去重并发调用，所以"应用刚起来就有人打开详情层"时，
+   * 这一下可能与启动后的那一轮探测并跑（两轮探测，事实相同、结果一致）。窗口只有启动后那几秒，
+   * 而且 `canRunDsh` 这类子进程结论是按进程缓存的；真要收口得动 `report()`（门禁那条路也在用），
+   * 不划算。
+   */
+  async installedVersions(): Promise<InstalledVersions> {
+    if (!this.cached) await this.report();
+    return { ...this.installed };
   }
 
   /** 一键修复跑完后的复检（设计 3.3）：清缓存重跑一轮并把结果交给调用方 */
@@ -129,28 +177,48 @@ export class EnvDoctor {
     return await this.report(true);
   }
 
-  /** 现场重算一个动作的计划 —— `envFix` 只递 action，命令这边现算（安全模型第 1 条） */
+  /**
+   * 现场重算一个动作的计划 —— `envFix` 只递 action，命令这边现算（安全模型第 1 条：
+   * 渲染层递回来的路径一概不采信）。
+   *
+   * **用哪份 npm 与报告侧同一个来源**（方案 A）：`install-dsh` 读 `dsh-npm.ts` 的绑定缓存
+   * （所以界面上显示的那条命令与这里真正要跑的**必然是同一条**），`install-pnpm` 保持
+   * `findNpm()` 不变。绑定是 `unbound`（推不出该装进哪个 Node）时给 null → 没有计划 → 不给入口。
+   */
   async fixPlan(action: EnvFixAction): Promise<EnvFixPlan | null> {
     // VC++ 运行库这条事实**现场再认一次**（用户可能在两次点击之间装上了运行库）
-    const plan = envFixPlan(action, findNpm(), hasVcRuntime());
+    const npmPath = action === 'install-dsh' ? resolveNpmForDsh(this.settings.all()) : findNpm();
+    const plan = envFixPlan(action, npmPath, hasVcRuntime());
     if (!plan) return null;
-    return { ...plan, target: await this.npmPrefix() };
+    return { ...plan, target: await this.npmPrefixFor(plan.file) };
   }
 
-  private async npmPrefix(): Promise<string | null> {
-    if (this.prefix !== undefined) return this.prefix;
-    const npmPath = findNpm();
-    this.prefix = npmPath ? await readNpmPrefix(npmPath, this.platform) : null;
-    return this.prefix;
+  /**
+   * `npm prefix -g`，**按 npm 路径**缓存。
+   *
+   * 为什么按路径而不是缓存一份：一份 npm 对应一个全局目录，而 install-dsh 与 install-pnpm
+   * 现在可能用的是两份不同的 npm —— 缓存成一份就会把其中一条计划的"会装进 …"写成另一条的。
+   */
+  private async npmPrefixFor(npmPath: string | null): Promise<string | null> {
+    const key = String(npmPath ?? '').trim();
+    if (!key) return null;
+    if (this.prefixByNpm.has(key)) return this.prefixByNpm.get(key) ?? null;
+    const value = await readNpmPrefix(key, this.platform);
+    this.prefixByNpm.set(key, value);
+    return value;
   }
 
-  private async judge(): Promise<{ report: EnvDoctorReport; raw: EnvProbeRaw }> {
+  private async judge(refresh = false): Promise<{ report: EnvDoctorReport; raw: EnvProbeRaw }> {
     const runtime = this.hooks.runtime();
     try {
       const raw = await collectEnvProbe(this.settings.all(), runtime);
+      // 「更新 dsh」要用的那份 npm 在这里解析**一次**（`dsh-npm.ts`，按进程缓存）。
+      // 执行侧（`fixPlan`）读同一份缓存 —— 这就是"显示 == 执行"的机械保证，不靠"但愿 PATH 没变"。
+      raw.dshNpm = resolveDshNpmBinding(this.settings.all(), { refresh });
       return { report: judgeEnvironment(raw), raw };
     } catch (error) {
-      // 采集炸了也要给出一份能显示的报告：八行照常显示，error 非空由界面顶部说明
+      // 采集炸了也要给出一份能显示的报告：八行照常显示，error 非空由界面顶部说明。
+      // 这一路不解析绑定：`dshNpm` 缺省（判定按"沿用 npm 那一份"处理），也就不写那条诚实边界。
       const raw = emptyProbe(runtime, `这一轮没测全：${messageOf(error)}`);
       return { report: judgeEnvironment(raw), raw };
     }
@@ -195,8 +263,10 @@ export interface EnvFixHooks {
  * 安全模型（见 docs/env-doctor.md 第 3 节）：
  *   - 渲染层只递 `action`，argv 由这边用 `fixPlan()` + `npmLaunchSpec()` 现算；
  *   - `spawn(file, args)` + 数组，**没有 `shell: true`**；
- *   - PATH 用 `envWithKnownBins` 补齐（Windows 上保留系统原有的 `Path` 键名），
- *     安装源用 `pluginRegistryEnv` 注入（只影响这一次子进程）；
+ *   - PATH 用 `envWithKnownBins` 补齐（Windows 上保留系统原有的 `Path` 键名）；再用
+ *     `cleanNpmEnv` 丢掉**继承来的** `npm_config_*`（否则 `i -g` 的全局目录由父进程那套变量
+ *     决定、而不是由这份 npm 的位置决定，见 docs/env-doctor.md 的「根因」一节）；
+ *     最后才用 `pluginRegistryEnv` 注入安装源（只影响这一次子进程）；
  *   - 同一时刻只允许一个动作（两个 npm 同时改全局目录，结果不可预期）；
  *   - 可中断（`cancel()` → kill），到点自动中断（FIX_TIMEOUT_MS）。
  */
@@ -273,8 +343,13 @@ export class EnvFixRunner {
 
     // Windows 上 npm.cmd 不能直接 spawn、也不能让 Node 自己加引号：包装器统一处理
     const spec = npmLaunchSpec(plan.file, plan.args, this.doctor.platform);
+    // 顺序是有意的：**先清干净继承来的 npm 配置，再注入我们刻意给的那一项**。
+    //   - `cleanNpmEnv` 丢掉父进程漏进来的那套 `npm_config_*`（不清的话，`i -g` 的全局目录由
+    //     那些变量决定、而不是由这份 npm 的位置决定 —— 于是"装到别的 Node 那棵树上去"，
+    //     真机实测与根因见 docs/env-doctor.md 的「根因：继承的 npm_config_*」）；
+    //   - `pluginRegistryEnv` 必须排在后面，否则设置里填的安装源会被一起清掉。
     const env: NodeJS.ProcessEnv = {
-      ...envWithKnownBins(process.env),
+      ...cleanNpmEnv(envWithKnownBins(process.env)),
       ...pluginRegistryEnv(this.settings.all().pluginRegistry),
     };
 

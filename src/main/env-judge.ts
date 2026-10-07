@@ -5,6 +5,7 @@
  * `EnvFixRunner`），别的模块与两个反例脚本的 import 路径都不用改。
  */
 import type {
+  DshNpmBinding,
   EnvCheck,
   EnvCheckId,
   EnvCheckStatus,
@@ -181,6 +182,18 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
   };
 
   const npmPath = raw.npm.path;
+  /**
+   * 「更新 dsh」要用的那份 npm：采集侧解析好的绑定（方案 A，见 `dsh-npm.ts` 与 docs/env-doctor.md §3.5）。
+   *
+   * 判定是纯函数，所以这里**只搬运**，不自己去问 `resolveDshLauncher`。没有这个字段的老夹具
+   * 按"沿用 npm 那一份"处理 —— 也就是加这个字段之前的行为。
+   */
+  const dshNpm: DshNpmBinding = raw.dshNpm ?? {
+    kind: 'fallback',
+    path: npmPath,
+    evidence: '',
+    hint: null,
+  };
   const dshHint =
     '在「设置 → 启动方式 → dsh 命令」里写一条能跑的启动命令，或一键 `npm i -g @deepseek-ai/dsh`。';
 
@@ -484,7 +497,13 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
   // 缺 VC++ 运行库时一键装的是纯 JS 那条线（VM-09）；没探测过（`undefined`）按"有"处理
   const vcRuntime = raw.vcRuntime !== false;
   for (const action of ['install-pnpm', 'install-dsh'] as const) {
-    const plan = envFixPlan(action, npmPath, vcRuntime);
+    // install-pnpm 保持原样（方案 A 明确不动它的 npm 解析）；install-dsh 用上面那份绑定：
+    //   bound    → 与被升级的 dsh 同一个 Node 的 npm（显示与执行都是它）
+    //   fallback → findNpm() 的结果（还没装 / 只能靠 npx，谁都能装一份新的）
+    //   unbound  → path 为 null：`envFixPlan` 返回 null，于是**没有计划、也就没有入口**，
+    //              界面改用 `report.dshNpm.evidence` 写那条诚实边界
+    const actionNpm = action === 'install-dsh' ? dshNpm.path : npmPath;
+    const plan = envFixPlan(action, actionNpm, vcRuntime);
     if (plan) plans.push(plan);
   }
 
@@ -498,6 +517,8 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     // 归属：采集侧给的**事实**，这里只搬运（判定仍然是纯函数：`detectNodeOwner` 在采集侧算好）
     nodeOwner: raw.nodeOwner ?? 'unknown',
     nodeOwnerEvidence: arrayOf<string>(raw.nodeOwnerEvidence),
+    // 绑定事实原样带出去（界面据此决定给不给 dsh 的更新入口）
+    dshNpm,
     error: raw.error,
   };
 }

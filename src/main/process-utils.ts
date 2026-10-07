@@ -32,7 +32,12 @@ export {
   readProfilePnpmMajor,
   vcRuntimePaths,
 } from './process-pnpm';
-export { envWithKnownBins, findGlobalDshBinJs, pathWithKnownBins } from './process-path-env';
+export {
+  cleanNpmEnv,
+  envWithKnownBins,
+  findGlobalDshBinJs,
+  pathWithKnownBins,
+} from './process-path-env';
 export {
   canRunDsh,
   dshArgsFor,

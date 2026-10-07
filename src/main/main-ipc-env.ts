@@ -22,14 +22,33 @@ import {
   WIZARD_STEP_LABEL,
   WIZARD_STEP_SKIPPABLE,
 } from './env-doctor';
+import { PNPM_PURE_JS_SPEC, pnpmInstallSpec } from './env-fix-plan';
+import {
+  DSH_PACKAGE,
+  fetchPackageMetadata,
+  normalizeRegistryBase,
+  packageNameOfSpec,
+  pickPackageUpdate,
+} from './npm-registry';
+import { hasVcRuntime } from './process-utils';
 import type {
   EnvFixAction,
   EnvFixState,
   EnvInstallState,
   EnvNodePlan,
+  EnvPkgUpdates,
   EnvWizardState,
   EnvWizardStepId,
 } from '../shared/ipc';
+
+/**
+ * 版本比对的缓存时长：5 分钟。与模型目录缓存同量级 —— 这一轮查不到时不许把人长期锁在
+ * "查不到"上（用户装完再点一次「重新检测」就该重新问一遍）。
+ */
+const PKG_UPDATE_TTL_MS = 5 * 60 * 1000;
+
+/** 单次查询的超时：几秒。超时不是"已是最新"，是"这一轮查不到"（见 npm-registry.ts 的文件头） */
+const PKG_QUERY_TIMEOUT_MS = 8000;
 
 export function registerEnvIpc(ctx: IpcContext): void {
   const { settings, dshManager, envDoctor, envFixRunner, nodeInstaller, send } = ctx;
@@ -67,6 +86,66 @@ export function registerEnvIpc(ctx: IpcContext): void {
   );
 
   ipcMain.handle('env:fix-cancel', (): boolean => envFixRunner.cancel());
+
+  // ---------------------------------------------------------------- 版本比对（只读查询）
+  //
+  // 「更新 dsh / 更新 pnpm」那两个入口要在按钮上写出目标版本，而**目标必须是那条命令真的会
+  // 装到的版本** —— 否则会出现"提示有新版本、点了却装不到"，或者更糟：装完仍然提示有新版本
+  // （永远不收敛）。判据见 `npm-registry.ts` 的 `pickPackageUpdate`。
+  //
+  // 它**不进 `envDoctor.report()`**：那条路首启门禁也在读，往里塞网络请求会把门禁变成
+  // "断网就进不去"。所以是一条按需的只读通道 + 5 分钟内存缓存，只在详情层打开 / 重新检测 /
+  // 修复完成之后被调一次（渲染层 `state/env-doctor.ts` 的 `loadPkgUpdates`）。
+  //
+  // 失败一律降级：拿不到就当作"查不到"，界面退回不带版本号的更新入口，**不把错误当结论展示**。
+  let pkgUpdatesCache: { at: number; value: EnvPkgUpdates } | null = null;
+
+  ipcMain.handle(
+    'env:pkg-updates',
+    async (_event: IpcMainInvokeEvent, options?: { refresh?: boolean }): Promise<EnvPkgUpdates> => {
+      const now = Date.now();
+      if (!options?.refresh && pkgUpdatesCache && now - pkgUpdatesCache.at < PKG_UPDATE_TTL_MS) {
+        return pkgUpdatesCache.value;
+      }
+      const value = await collectPkgUpdates();
+      pkgUpdatesCache = { at: Date.now(), value };
+      return value;
+    },
+  );
+
+  /** 两项一起查（一次查询两个包，并行）。**只读**：不改用户的 .npmrc、不写任何配置文件。 */
+  async function collectPkgUpdates(): Promise<EnvPkgUpdates> {
+    const installed = await envDoctor.installedVersions();
+    const base = normalizeRegistryBase(settings.all().pluginRegistry);
+    // pnpm 装哪一档由 VC++ 运行库决定（VM-09）：缺运行库时那条线装的是 `pnpm@10`。
+    // 目标版本必须跟着**同一条线**取，否则会出现"提示有新版本、点了却装不到"。
+    const pnpmSpec = pnpmInstallSpec(hasVcRuntime());
+    const [dshMeta, pnpmMeta] = await Promise.all([
+      fetchPackageMetadata(DSH_PACKAGE, { base, timeoutMs: PKG_QUERY_TIMEOUT_MS }),
+      fetchPackageMetadata(packageNameOfSpec(pnpmSpec), { base, timeoutMs: PKG_QUERY_TIMEOUT_MS }),
+    ]);
+    const value: EnvPkgUpdates = {
+      checkedAt: Date.now(),
+      // 不带版本的 spec（`@deepseek-ai/dsh`）装的就是 registry 的 latest 标签，所以 allowMajor 不给
+      dsh: pickPackageUpdate({ current: installed.dsh, metadata: dshMeta }),
+      // `pnpm@10` 那条线装的是"10.x 里最高的已发布版本"，所以把主版本号递下去
+      pnpm: pickPackageUpdate({
+        current: installed.pnpm,
+        metadata: pnpmMeta,
+        allowMajor: pnpmSpec === PNPM_PURE_JS_SPEC ? '10' : null,
+      }),
+    };
+    // 一行证据落日志：排查"为什么行上没有版本读数"时，这条比问用户快
+    dshManager.log(
+      'info',
+      `版本比对：安装源 ${base} → dsh 本机 ${value.dsh.current ?? '（没测到）'} / 目标 ${
+        value.dsh.target ?? '（没查到）'
+      }；pnpm（${pnpmSpec}）本机 ${value.pnpm.current ?? '（没测到）'} / 目标 ${
+        value.pnpm.target ?? '（没查到）'
+      }`,
+    );
+    return value;
+  }
 
   // ---------------------------------------------------------------- 首启环境向导（门禁）
   // 门禁结论靠 `envWizard` 拉取，**复用既有的报告缓存**（不新增探测路径、不新增报告事件）；

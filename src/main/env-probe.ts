@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   canRunDsh,
+  cleanNpmEnv,
   dshArgsFor,
   envWithKnownBins,
   findNodeExe,
@@ -654,7 +655,11 @@ export async function readNpmPrefix(npmPath: string, platform: string): Promise<
       child = spawn(spec.file, spec.args, {
         windowsHide: true,
         windowsVerbatimArguments: spec.windowsVerbatimArguments,
-        env: envWithKnownBins(process.env),
+        // 这个答案会**显示给用户**（确认区里的「会装进 …」），而且必须与真正执行安装时那份 env
+        // 得出同一个前缀 —— 所以这里与 `EnvFixRunner` 一样先过 `cleanNpmEnv`：不清的话，父进程
+        // 漏进来的 `npm_config_prefix` 会让"显示的树"与"装进去的树"不是同一棵（真机实测：
+        // 显示 v22.17.1、实际装进 v24.14.1）。见 docs/env-doctor.md 的「根因」一节。
+        env: cleanNpmEnv(envWithKnownBins(process.env)),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch {

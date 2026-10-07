@@ -539,6 +539,411 @@ check(
   'null / "" / 空白都返回 null',
 );
 
+// ---------------------------------------------------------------- O2. 版本比对（纯函数，不联网）
+//
+// t79：环境自检页给 dsh / pnpm 两行加了**带版本比对**的更新入口。判定那一半必须是纯函数 ——
+// 这一节喂的全是字面量，**不发任何网络请求**（`fetchPackageMetadata` 只承诺"失败返回 null"，
+// 联网那一支没有可离线验证的语义）。夹具用的是真机形状的 registry 数据：
+//   - `@deepseek-ai/dsh` 一个稳定版都没有，latest = 0.2.0-rc.2，而列表里最新的是 0.2.1-alpha.1
+//   - `pnpm` 的 latest = 12.8.1，而 12.9.0 已经发布（挂在 next-12 标签下）
+// 这两条正是"目标必须等于那条命令真的会装到的版本"的由来（见 docs/env-doctor.md 的「版本比对」）。
+let npmRegistry;
+try {
+  npmRegistry = loadBackend('src/main/npm-registry.js');
+} catch (error) {
+  console.error('加载 npm-registry 失败：', error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
+const registryMissing = [
+  'normalizeRegistryBase',
+  'comparePackageVersions',
+  'pickTargetVersion',
+  'pickPackageUpdate',
+  'fetchPackageMetadata',
+  'packageNameOfSpec',
+  'versionFromText',
+  'isPrereleaseVersion',
+].filter((name) => typeof npmRegistry[name] !== 'function');
+if (registryMissing.length > 0) {
+  console.error(
+    `npm-registry 缺这些导出：${registryMissing.join('、')} —— 被重构挪走或改名了，验证脚本要跟着同步`,
+  );
+  process.exit(2);
+}
+const {
+  normalizeRegistryBase,
+  comparePackageVersions,
+  pickTargetVersion,
+  pickPackageUpdate,
+  packageNameOfSpec,
+  versionFromText,
+  isPrereleaseVersion,
+} = npmRegistry;
+
+check(
+  'O2 comparePackageVersions：按 semver 比（含预发布段），数字段按数值、预发布段逐标识符',
+  comparePackageVersions('0.2.0-rc.1', '0.2.0-rc.2') < 0 &&
+    comparePackageVersions('0.2.0-rc.2', '0.2.0') < 0 &&
+    comparePackageVersions('0.2.0', '0.2.1') < 0 &&
+    // 0.2.1-alpha.1 比 0.2.0-rc.2 新（主版本号先决）—— 这条是 dsh 那个坑的一半
+    comparePackageVersions('0.2.0-rc.2', '0.2.1-alpha.1') < 0 &&
+    comparePackageVersions('1.0.0', '1.0.0') === 0 &&
+    comparePackageVersions('10.9.0', '9.15.0') > 0 &&
+    comparePackageVersions('1.2.3', '1.2.3') === 0,
+  '约定：负数 = 前者更旧',
+  '0.2.0-rc.1 < 0.2.0-rc.2 < 0.2.0 < 0.2.1（且 0.2.0-rc.2 < 0.2.1-alpha.1）',
+);
+check(
+  'O2 comparePackageVersions：预发布段的两条细节（数字标识符 < 字母；前缀全同时更长者更大）',
+  comparePackageVersions('1.0.0-1', '1.0.0-alpha') < 0 &&
+    comparePackageVersions('1.0.0-alpha', '1.0.0-alpha.1') < 0 &&
+    comparePackageVersions('1.0.0-alpha.1', '1.0.0-alpha.beta') < 0 &&
+    // 数字标识符按数值比，不是按字符串（'10' < '9' 会是错的）
+    comparePackageVersions('1.0.0-rc.9', '1.0.0-rc.10') < 0,
+  `1<alpha：${comparePackageVersions('1.0.0-1', '1.0.0-alpha')}；alpha<alpha.1：${comparePackageVersions('1.0.0-alpha', '1.0.0-alpha.1')}；rc.9<rc.10：${comparePackageVersions('1.0.0-rc.9', '1.0.0-rc.10')}`,
+  '三条都 < 0',
+);
+check(
+  'O2 comparePackageVersions：构建元数据不参与比较；`v` 前缀认；垃圾输入给确定序且不抛',
+  comparePackageVersions('1.2.3+build.1', '1.2.3+build.2') === 0 &&
+    comparePackageVersions('v24.19.0', '24.19.0') === 0 &&
+    comparePackageVersions('不是版本号', '1.0.0') < 0 &&
+    comparePackageVersions('1.0.0', '不是版本号') > 0 &&
+    comparePackageVersions('乱码', '乱码') === 0 &&
+    Number.isFinite(comparePackageVersions('', '')),
+  `v 前缀=${comparePackageVersions('v24.19.0', '24.19.0')} 元数据=${comparePackageVersions('1.2.3+a', '1.2.3+b')}`,
+  '元数据不影响；v 前缀等价；垃圾项不抛',
+);
+check(
+  'O2 pickTargetVersion：includePrerelease 两支（关 = 只看稳定版；开 = 含预发布）',
+  pickTargetVersion(['1.0.0', '1.1.0', '2.0.0-rc.1'], { includePrerelease: false }) === '1.1.0' &&
+    pickTargetVersion(['1.0.0', '1.1.0', '2.0.0-rc.1'], { includePrerelease: true }) ===
+      '2.0.0-rc.1' &&
+    // 同一批里 2.0.0 稳定版比 2.0.0-rc.1 大（semver：稳定版 > 预发布版）
+    pickTargetVersion(['2.0.0-rc.1', '2.0.0'], { includePrerelease: true }) === '2.0.0',
+  `关=${pickTargetVersion(['1.0.0', '1.1.0', '2.0.0-rc.1'], { includePrerelease: false })} 开=${pickTargetVersion(['1.0.0', '1.1.0', '2.0.0-rc.1'], { includePrerelease: true })}`,
+  'false→1.1.0，true→2.0.0-rc.1',
+);
+check(
+  'O2 pickTargetVersion：allowMajor 只在该主版本里挑（`pnpm@10` 那条线靠它），垃圾项跳过、无候选给 null',
+  pickTargetVersion(['10.1.0', '10.34.6', '12.8.1'], {
+    includePrerelease: false,
+    allowMajor: '10',
+  }) === '10.34.6' &&
+    // allowMajor 与 includePrerelease 可以叠加
+    pickTargetVersion(['10.34.6', '10.35.0-rc.1'], {
+      includePrerelease: false,
+      allowMajor: '10',
+    }) === '10.34.6' &&
+    pickTargetVersion(['10.34.6', '10.35.0-rc.1'], {
+      includePrerelease: true,
+      allowMajor: '10',
+    }) === '10.35.0-rc.1' &&
+    pickTargetVersion(['不是版本号', 'latest'], { includePrerelease: true }) === null &&
+    pickTargetVersion([], { includePrerelease: true }) === null &&
+    pickTargetVersion(['9.9.9'], { includePrerelease: false, allowMajor: '10' }) === null,
+  `10.x=${pickTargetVersion(['10.1.0', '10.34.6', '12.8.1'], { includePrerelease: false, allowMajor: '10' })} 垃圾=${pickTargetVersion(['不是版本号', 'latest'], { includePrerelease: true })}`,
+  '10.34.6；跳过垃圾；无候选 null',
+);
+check(
+  'O2 normalizeRegistryBase：空 / 尾斜杠 / 带路径 / 非 http(s) 垃圾，四种都归一成能拼 URL 的基地址',
+  normalizeRegistryBase('') === 'https://registry.npmjs.org' &&
+    normalizeRegistryBase(null) === 'https://registry.npmjs.org' &&
+    normalizeRegistryBase('   ') === 'https://registry.npmjs.org' &&
+    normalizeRegistryBase('https://registry.npmmirror.com/') === 'https://registry.npmmirror.com' &&
+    normalizeRegistryBase('https://registry.npmmirror.com///') ===
+      'https://registry.npmmirror.com' &&
+    // 私有源挂在路径下面：路径前缀必须留着，只去尾斜杠
+    normalizeRegistryBase('https://host/artifactory/api/npm/npm-repo/') ===
+      'https://host/artifactory/api/npm/npm-repo' &&
+    // 非 http(s) / 认不出来的 —— 与 pluginRegistryEnv 同一条判据：当没填，走官方源
+    normalizeRegistryBase('ftp://host/npm') === 'https://registry.npmjs.org' &&
+    normalizeRegistryBase('registry.npmjs.org') === 'https://registry.npmjs.org' &&
+    normalizeRegistryBase('javascript:alert(1)') === 'https://registry.npmjs.org',
+  `空=${normalizeRegistryBase('')} 尾斜杠=${normalizeRegistryBase('https://a.com/')} 路径=${normalizeRegistryBase('https://host/a/b/')} 垃圾=${normalizeRegistryBase('registry.npmjs.org')}`,
+  '空/垃圾 → 官方源；尾斜杠去掉；路径保留',
+);
+check(
+  'O2 pickPackageUpdate：不带版本的 spec 取 latest 标签（不能取"列表里最新的"，否则永远不收敛）',
+  (() => {
+    // `@deepseek-ai/dsh` 的真机形状：没有稳定版，latest = 0.2.0-rc.2，最新发布却是 0.2.1-alpha.1
+    const dsh = pickPackageUpdate({
+      current: '0.1.5-rc.1',
+      metadata: {
+        versions: ['0.1.5-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-alpha.1'],
+        distTags: { latest: '0.2.0-rc.2', alpha: '0.2.1-alpha.1', next: '0.2.0-rc.2' },
+      },
+    });
+    // `pnpm` 的真机形状：latest = 12.8.1，而 12.9.0 已经发布（在别的标签下）
+    const pnpm = pickPackageUpdate({
+      current: '12.4.2',
+      metadata: { versions: ['12.8.1', '12.9.0'], distTags: { latest: '12.8.1' } },
+    });
+    // 本机已经在 alpha 上：装 latest 反而是降级 —— 不许说"已是最新版"
+    const ahead = pickPackageUpdate({
+      current: '0.2.1-alpha.1',
+      metadata: {
+        versions: ['0.2.0-rc.2', '0.2.1-alpha.1'],
+        distTags: { latest: '0.2.0-rc.2' },
+      },
+    });
+    // 已经就是 latest：newer 为假，界面走读数态
+    const same = pickPackageUpdate({
+      current: '12.8.1',
+      metadata: { versions: ['12.8.1'], distTags: { latest: '12.8.1' } },
+    });
+    return (
+      dsh.target === '0.2.0-rc.2' &&
+      dsh.current === '0.1.5-rc.1' &&
+      dsh.newer === true &&
+      dsh.ahead === false &&
+      dsh.error === null &&
+      pnpm.target === '12.8.1' &&
+      pnpm.newer === true &&
+      ahead.ahead === true &&
+      ahead.newer === false &&
+      same.newer === false &&
+      same.ahead === false
+    );
+  })(),
+  'dsh→0.2.0-rc.2（latest）而不是 0.2.1-alpha.1；pnpm→12.8.1 而不是 12.9.0',
+  '目标 = 那条命令真的会装到的版本；ahead 单独表达"比源上还新"',
+);
+check(
+  'O2 pickPackageUpdate：带区间的 spec（`pnpm@10`）按主版本挑最高已发布版；查不到就降级成"没目标 + 一句原因"',
+  (() => {
+    const pure = pickPackageUpdate({
+      current: '10.15.0',
+      metadata: { versions: ['10.15.0', '10.34.6', '12.8.1'], distTags: { latest: '12.8.1' } },
+      allowMajor: '10',
+    });
+    const offline = pickPackageUpdate({ current: '1.0.0', metadata: null });
+    const noTag = pickPackageUpdate({
+      current: '1.0.0',
+      metadata: { versions: ['1.1.0'], distTags: {} },
+    });
+    const noCurrent = pickPackageUpdate({
+      current: null,
+      metadata: { versions: ['1.0.0'], distTags: { latest: '1.0.0' } },
+    });
+    return (
+      pure.target === '10.34.6' &&
+      pure.newer === true &&
+      // 查询失败：目标为空 + 原因（界面据此退回不带版本号的入口，不显示错误当结论）
+      offline.target === null &&
+      offline.newer === false &&
+      Boolean(offline.error) &&
+      // 源上没有 latest 标签：同样是"没有目标"，但不必说"连不上"
+      noTag.target === null &&
+      noTag.error === null &&
+      // 本机版本没测出来：目标还是说清楚，但不给"有没有新版"的结论
+      noCurrent.target === '1.0.0' &&
+      noCurrent.current === null &&
+      noCurrent.newer === false
+    );
+  })(),
+  `10.x→${pickPackageUpdate({ current: '10.15.0', metadata: { versions: ['10.15.0', '10.34.6'], distTags: { latest: '10.34.6' } }, allowMajor: '10' }).target}；离线→${JSON.stringify(pickPackageUpdate({ current: '1.0.0', metadata: null }))}`,
+  '10.34.6；离线 target=null 且有 error',
+);
+check(
+  'O2 版本原文的抠取：`dsh --version` 的输出里可能混着 Node 告警，`v` 前缀 / 预发布都要认',
+  versionFromText('0.1.5-rc.1') === '0.1.5-rc.1' &&
+    versionFromText('v24.19.0\n') === '24.19.0' &&
+    versionFromText("(node:13838) Warning: The 'NO_COLOR' env is ignored\n0.2.0-rc.2\n") ===
+      '0.2.0-rc.2' &&
+    versionFromText('10.34.6') === '10.34.6' &&
+    versionFromText('没有版本号') === null &&
+    isPrereleaseVersion('0.1.5-rc.1') === true &&
+    isPrereleaseVersion('10.15.0') === false &&
+    isPrereleaseVersion(null) === false &&
+    // spec → 包名（带 scope 的也要对）
+    packageNameOfSpec('pnpm@10') === 'pnpm' &&
+    packageNameOfSpec('pnpm') === 'pnpm' &&
+    packageNameOfSpec('@deepseek-ai/dsh') === '@deepseek-ai/dsh' &&
+    packageNameOfSpec('@scope/name@1.2.3') === '@scope/name',
+  `告警混排=${versionFromText('(node:1) Warning: x\n0.2.0-rc.2')} 包名=${packageNameOfSpec('@scope/name@1.2.3')}`,
+  '抠得出版本号；带 scope 的包名去掉区间后缀',
+);
+
+// ---------------------------------------------------------------- O3. 「更新 dsh」的 npm 绑定（纯函数，不碰磁盘）
+//
+// 方案 A（真机 bug）：dsh 可能装在某个 Node 版本的全局树下（nvm / fnm / 官方安装包各有一份），
+// 拿**别的** npm 去 `i -g` 会装进另一棵树 —— 那份 dsh 一个字没变、界面却仍提示有新版本，
+// 于是永远不收敛。所以"要升级的那份 dsh 属于哪个 Node"必须先认出来。这一节钉那两步纯函数：
+// `dshNodeForLauncher`（判启动形状）与 `npmForNode`（推同目录的 npm）。
+// **存在性/可执行性不在这里**（那是 IO 层的 `isUsableNpm`），所以这一节只喂字面量、不碰磁盘。
+let dshNpmModule;
+try {
+  dshNpmModule = loadBackend('src/main/dsh-npm.js');
+} catch (error) {
+  console.error('加载 dsh-npm 失败：', error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
+const dshNpmMissing = ['npmForNode', 'dshNodeForLauncher', 'isDshBinJs'].filter(
+  (name) => typeof dshNpmModule[name] !== 'function',
+);
+if (dshNpmMissing.length > 0) {
+  console.error(`dsh-npm 缺少导出：${dshNpmMissing.join(' / ')}`);
+  process.exit(2);
+}
+const { npmForNode, dshNodeForLauncher, isDshBinJs } = dshNpmModule;
+
+check(
+  'O3 npmForNode：POSIX 取同目录的 npm，win32 取同目录的 npm.cmd（nvm 布局里 node.exe 旁边就是它）',
+  npmForNode('/Users/x/.nvm/versions/node/v24.14.1/bin/node', 'darwin') ===
+    '/Users/x/.nvm/versions/node/v24.14.1/bin/npm' &&
+    npmForNode('/usr/local/bin/node', 'linux') === '/usr/local/bin/npm' &&
+    npmForNode('C:\\Users\\x\\nvm\\v24.14.1\\node.exe', 'win32') ===
+      'C:\\Users\\x\\nvm\\v24.14.1\\npm.cmd' &&
+    // 带空格的路径（macOS 上很常见）不许被截断
+    npmForNode('/Applications/My Node/bin/node', 'darwin') === '/Applications/My Node/bin/npm',
+  `posix=${npmForNode('/x/bin/node', 'darwin')} win=${npmForNode('C:\\n\\node.exe', 'win32')}`,
+  '同目录 + 平台后缀（win32 那一支必须能在这台 macOS 上被测到）',
+);
+check(
+  'O3 npmForNode：空输入给 null（**不猜**，也不返回那个会指向当前目录的 "."）',
+  npmForNode('', 'darwin') === null &&
+    npmForNode('   ', 'darwin') === null &&
+    npmForNode(null, 'darwin') === null &&
+    npmForNode(undefined, 'win32') === null,
+  `空=${npmForNode('', 'darwin')} 空白=${npmForNode('   ', 'darwin')}`,
+  '空 / 只空白 / null / undefined 一律 null',
+);
+check(
+  'O3 npmForNode：没有 npm 的目录照样算出兄弟路径 —— 过滤在 IO 层，不在这条纯函数里',
+  // 这正是"那份 Node 旁边没有 npm"的输入形状：纯函数只负责算路径，
+  // 由 `isUsableNpm`（存在 + 可执行）决定要不要判成 unbound
+  npmForNode('/nonexistent/dir/without/npm/node', 'darwin') === '/nonexistent/dir/without/npm/npm',
+  `不存在的目录=${npmForNode('/nonexistent/dir/without/npm/node', 'darwin')}`,
+  '算出兄弟路径；存在性与可执行性由调用方查',
+);
+check(
+  'O3 dshNodeForLauncher：只认「node + @deepseek-ai/dsh/lib/bin.js」这一形状，推不出来给 null',
+  dshNodeForLauncher({
+    file: '/n/v24/bin/node',
+    prefixArgs: ['/n/v24/lib/node_modules/@deepseek-ai/dsh/lib/bin.js'],
+    viaCmd: false,
+    kind: 'node-bin',
+  }) === '/n/v24/bin/node' &&
+    // 用户在设置里手写的「node + bin.js」自定义命令是**同一形状** —— 按形状判，不按 kind 判
+    dshNodeForLauncher({
+      file: '/opt/node',
+      prefixArgs: ['/opt/dsh/lib/node_modules/@deepseek-ai/dsh/lib/bin.js'],
+      viaCmd: false,
+      kind: 'custom',
+    }) === '/opt/node' &&
+    // Windows 的 cmd 包装（viaCmd）= 拿不到 node 路径
+    dshNodeForLauncher({
+      file: 'cmd.exe',
+      prefixArgs: ['/d', '/s', '/c', '"C:\\nvm\\dsh.cmd"'],
+      viaCmd: true,
+      kind: 'shim',
+    }) === null &&
+    // shim / npx：没有 node 路径可推
+    dshNodeForLauncher({ file: '/n/v24/bin/dsh', prefixArgs: [], viaCmd: false, kind: 'shim' }) ===
+      null &&
+    dshNodeForLauncher({
+      file: '/usr/local/bin/npx',
+      prefixArgs: ['-y', '@deepseek-ai/dsh'],
+      viaCmd: false,
+      kind: 'npx',
+    }) === null &&
+    // 别人家的 bin.js 不算（防"随便一个 bin.js 都当 dsh"）
+    dshNodeForLauncher({
+      file: '/opt/node',
+      prefixArgs: ['/opt/other/lib/bin.js'],
+      viaCmd: false,
+      kind: 'custom',
+    }) === null &&
+    // Windows 路径也要认（反斜杠）
+    isDshBinJs('C:\\nvm\\v24\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js') === true &&
+    isDshBinJs('/x/lib/bin.js') === false,
+  `shim=${dshNodeForLauncher({
+    file: '/n/dsh',
+    prefixArgs: [],
+    viaCmd: false,
+    kind: 'shim',
+  })} npx=${dshNodeForLauncher({
+    file: '/npx',
+    prefixArgs: ['-y', '@deepseek-ai/dsh'],
+    viaCmd: false,
+    kind: 'npx',
+  })}`,
+  'node-bin / 自定义 node+bin.js 给 node 路径；shim / npx / cmd 包装 / 别人家的 bin.js 给 null',
+);
+
+// ---------------------------------------------------------------- O4. 修复子进程的 env 清洗（纯函数，不碰磁盘）
+//
+// 根因（真机实测）：Console 把父进程的环境原样传给修复子进程，而 Electron 常常是从一个已经
+// 带了整套 `npm_config_*` 的终端/工具里起来的。npm 的优先级是"环境变量 > 由自身位置推出的
+// 默认值"，于是 `i -g` 的全局目录由那些继承来的变量决定，而不是由**这份** npm 的位置决定 ——
+// 表现就是"拿 v24 的 npm 却装进 v22 那棵树"，界面于是永远提示有新版本。
+//
+// `cleanNpmEnv` 只做一件事：把 `npm_config_*` / `NPM_CONFIG_*` 全部丢掉，别的原样留着。
+// 这一节全部喂字面量、不碰磁盘；真正"装到哪棵树"的证据在 `.verify/npm-env-clean.mjs`（只读）。
+const cleanNpmEnv = processUtils?.cleanNpmEnv;
+check(
+  'O4 契约：cleanNpmEnv 在家里（process-utils 的公开面），不是散在调用点',
+  typeof cleanNpmEnv === 'function',
+  `typeof processUtils.cleanNpmEnv = ${typeof cleanNpmEnv}`,
+  'function',
+);
+if (typeof cleanNpmEnv === 'function') {
+  const leaked = {
+    PATH: '/usr/bin:/bin',
+    HOME: '/Users/someone',
+    npm_config_global_prefix: '/nvm/versions/node/v22.17.1',
+    npm_config_prefix: '/nvm/versions/node/v22.17.1',
+    npm_config_registry: 'https://registry.npmmirror.com',
+    npm_config_cache: '/Users/someone/.npm',
+    npm_config_node_gyp: '/x/node-gyp.js',
+    NPM_CONFIG_PREFIX: '/nvm/versions/node/v22.17.1',
+    HTTP_PROXY: 'http://127.0.0.1:7890',
+    NO_PROXY: '127.0.0.1,localhost',
+    LANG: 'zh_CN.UTF-8',
+  };
+  const cleaned = cleanNpmEnv(leaked);
+  const leftNpmKeys = Object.keys(cleaned).filter((key) =>
+    key.toLowerCase().startsWith('npm_config_'),
+  );
+  check(
+    'O4 cleanNpmEnv：丢掉全部 npm_config_* / NPM_CONFIG_*（大小写不敏感），PATH / HOME / 代理 / locale 原样留着',
+    leftNpmKeys.length === 0 &&
+      cleaned.PATH === '/usr/bin:/bin' &&
+      cleaned.HOME === '/Users/someone' &&
+      cleaned.HTTP_PROXY === 'http://127.0.0.1:7890' &&
+      cleaned.NO_PROXY === '127.0.0.1,localhost' &&
+      cleaned.LANG === 'zh_CN.UTF-8' &&
+      // 值也一起丢：不能只把值置空 —— 空串在 npm 眼里仍是"设过"
+      !Object.prototype.hasOwnProperty.call(cleaned, 'npm_config_prefix') &&
+      !Object.prototype.hasOwnProperty.call(cleaned, 'NPM_CONFIG_PREFIX') &&
+      !Object.prototype.hasOwnProperty.call(cleaned, 'npm_config_registry'),
+    `剩下的 npm 键=[${leftNpmKeys.join(',')}] 保留键数=${Object.keys(cleaned).length}/${Object.keys(leaked).length}`,
+    '剩下的 npm 键=[] 且 5 个非 npm 键一个不少（含大小写变体，键与值一起丢）',
+  );
+  check(
+    'O4 cleanNpmEnv：前缀匹配而不是固定清单（没见过的 npm_config_* 也要清），且不改动入参本身',
+    // 真机上漏进来的键远不止文档里列的那几个；列清单必然漏，漏一个就等于没修
+    cleanNpmEnv({ npm_config_whatever_new: '1', npm_config_: '2', npm_config: '3' }).npm_config ===
+      '3' &&
+      Object.keys(cleanNpmEnv({ npm_config_foo: 'x', npm_config_foo2: 'y' })).length === 0 &&
+      // 入参不许被改（调用点那份 env 还要继续用）
+      Object.keys(leaked).length === 11 &&
+      leaked.npm_config_prefix === '/nvm/versions/node/v22.17.1',
+    `未知键剩下=${JSON.stringify(cleanNpmEnv({ npm_config_whatever_new: '1' }))} 无下划线的 npm_config 保留=${cleanNpmEnv({ npm_config: '3' }).npm_config}`,
+    '前缀匹配清掉未知键；`npm_config`（没有下划线）不误伤；入参 11 个键原样',
+  );
+  check(
+    'O4 cleanNpmEnv：空对象 / undefined 不炸，返回空对象（不返回 undefined）',
+    Object.keys(cleanNpmEnv({})).length === 0 &&
+      Object.keys(cleanNpmEnv(undefined)).length === 0 &&
+      typeof cleanNpmEnv(undefined) === 'object' &&
+      cleanNpmEnv(undefined) !== undefined,
+    `{} → ${JSON.stringify(cleanNpmEnv({}))}；undefined → ${JSON.stringify(cleanNpmEnv(undefined))}`,
+    '两种都给一个新的空对象',
+  );
+}
+
 // ---------------------------------------------------------------- P. 契约静态检查
 // t55 起 shared/ipc.ts 是 barrel，契约按主题住在 ipc-*.ts 里：读整份（顺序与拆分前一致）
 const ipcSource = [

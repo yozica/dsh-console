@@ -46,8 +46,63 @@ export type EnvCheckId =
  * 装 Node 走独立通道 `envNodeInstall`（见 docs/env-wizard-freeze.md §3.2）：
  * 它不是 npm 包，而且"开始之后不杀"的停止语义与这里相反
  * （见 `EnvInstallState.cancellable` / `detached`）。
+ *
+ * **行内那两个「更新」入口（pnpm / dsh）复用这两个动作，不新增第三个。**
+ * 「更新」与「装一份」在命令上是同一件事（都装最新版），差别只在按钮文案与是否显示目标版本 ——
+ * 所以界面上那两条路都在这里，而不是另起一套动作（冻结 §3.5：不许第二条路）。
  */
 export type EnvFixAction = 'install-pnpm' | 'install-dsh';
+
+/**
+ * 一项的**版本读数**：本机现在这一份 vs 安装源上的目标（`env:pkg-updates` 的返回值）。
+ *
+ * 它是**按需查的只读快照**，不进 `EnvDoctorReport`：那条路首启门禁也在读，
+ * 往里塞网络请求会把门禁变成"断网就进不去"（见 docs/env-doctor.md 的「版本比对」一节）。
+ *
+ * - `current`：本机那一份的版本（探测来的原文里抠出来的；测不出来时 null）
+ * - `target`：那条更新命令**真的会装到**的版本；查不到 / 没有可用目标时为 null
+ * - `newer`：target 比 current 新（两边都拿得到时才可能为真）
+ * - `ahead`：current 比 target 还新（本机在 alpha 那条线上时真会发生）——
+ *   界面据此不写"已是最新版"，因为点了那个按钮反而是降级
+ * - `error`：这一轮没查到时的原因（给人看的一句话）；成功时为 null
+ */
+export interface EnvPkgUpdate {
+  current: string | null;
+  target: string | null;
+  newer: boolean;
+  ahead: boolean;
+  error: string | null;
+}
+
+/** dsh 与 pnpm 两项的版本读数（一次查询同时给，`checkedAt` 是这次查询的时刻） */
+export interface EnvPkgUpdates {
+  dsh: EnvPkgUpdate;
+  pnpm: EnvPkgUpdate;
+  checkedAt: number;
+}
+
+/**
+ * 「更新 dsh」该用哪个 npm 的**绑定事实**（方案 A，见 docs/env-doctor.md §3.5）。
+ *
+ * 为什么要有它：dsh 可能装在某个 Node 版本的全局树下（nvm / fnm / 官方安装包各有一份），
+ * 拿别的 npm 去 `i -g` 会装进**另一棵树** —— 那份 dsh 一个字没变，而界面仍提示有新版本，
+ * 于是永远不收敛（真机 bug）。所以"要升级的那份 dsh 属于哪个 Node"必须先认出来。
+ *
+ * - `bound`：`path` 是与被升级的 dsh **同一个 Node** 的 npm（同目录），更新入口可以用它；
+ * - `fallback`：没有"被升级的那份 dsh"可绑（还没装 / 只能靠 `npx`）→ `path` 是 `findNpm()` 的结果，
+ *   谁都能装一份新的，与既有行为一致；
+ * - `unbound`：定位到了 dsh，却推不出它属于哪个 Node（shim / 自定义命令），或那份 npm 不可用
+ *   → `path` 为 null，**不给更新入口**；界面改用 `evidence` 写一条诚实边界、`hint` 给可自己执行的命令。
+ */
+export interface DshNpmBinding {
+  kind: 'bound' | 'fallback' | 'unbound';
+  /** 要用的 npm 可执行文件；`unbound` 时为 null */
+  path: string | null;
+  /** 这句事实的依据（人话，进日志，也在 `unbound` 时当那条诚实边界的正文） */
+  evidence: string;
+  /** `unbound` 时给用户自己执行的命令；其余情况为 null */
+  hint: string | null;
+}
 
 /** 一项自检的结论（界面一行） */
 export interface EnvCheck {
@@ -102,6 +157,11 @@ export interface EnvDoctorReport {
   /** 归属判定的证据（人话，逐条：用了哪条路径 / 哪个变量 / 模型的哪条结论）；没有证据时是空数组。
    *  进日志，也进确认区的「详情」—— 评审时能对账"为什么是这一条" */
   nodeOwnerEvidence: string[];
+  /**
+   * 「更新 dsh」那份 npm 的绑定事实（方案 A）。界面据此决定**给不给** dsh 的更新入口：
+   * `unbound` 时不给，并在 dsh 那一行写一条诚实边界（说不准该装进哪个 Node 的全局目录）。
+   */
+  dshNpm: DshNpmBinding;
 }
 
 /** 一键修复的相位。一次只跑一个动作，与插件操作同构（可中断）。 */

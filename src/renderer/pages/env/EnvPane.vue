@@ -24,7 +24,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { envFocus } from '../../state/env-anchor.js';
 import { detailSegments } from './env-detail.js';
-import { closeEnvDetail } from '../../state/env-layer.js';
+import { closeEnvDetail, envDetailOpen } from '../../state/env-layer.js';
 import { restartThenOpenHarness } from '../../state/restart-flow.js';
 import EnvUpdateConfirm from './EnvUpdateConfirm.vue';
 import {
@@ -36,6 +36,8 @@ import {
   envReportError,
   envReportLoading,
   loadEnvReport,
+  loadPkgUpdates,
+  pkgUpdates,
   runEnvFix,
   wireEnvDoctor,
 } from '../../state/env-doctor.js';
@@ -60,6 +62,7 @@ import {
 import { platform } from '../../utils/platform.js';
 import { currentTab, dsh, phase, settings } from '../../state/store.js';
 import type {
+  DshNpmBinding,
   EnvCheck,
   EnvCheckId,
   EnvCheckStatus,
@@ -69,6 +72,7 @@ import type {
   EnvNodeChannel,
   EnvNodeOwner,
   EnvNodePlan,
+  EnvPkgUpdate,
   EnvWizardStepId,
 } from '../../../shared/ipc.js';
 
@@ -104,8 +108,8 @@ const sourceRef = ref<HTMLInputElement | null>(null);
 /** 每 30 秒自增一次，让「x 分钟前」自己走字（判定的时刻由主进程给，界面只负责说人话） */
 const tick = ref(0);
 
-/** 正在展开确认区的是哪一项的更新入口（Node / pnpm） */
-const updateOpen = ref<'node' | 'pnpm' | null>(null);
+/** 正在展开确认区的是哪一项的更新入口（Node / pnpm / dsh） */
+const updateOpen = ref<'node' | 'pnpm' | 'dsh' | null>(null);
 const nodeUpdatePlan = ref<EnvNodePlan | null>(null);
 /** 这次更新用户**显式指名**的档位；null = 跟随当前档位（默认，也是 VM-15 的修法） */
 const nodeUpdateChannel = ref<EnvNodeChannel | null>(null);
@@ -178,7 +182,7 @@ function fixLabel(check: EnvCheck): string {
 
 /** 行内的版本更新入口：只在对应项**可用**时出现（缺失时给的是"一键安装"）。
  *  Node 的更新只在 Windows 出现（冻结 §1 R-20：自动安装只在 win32 生效）。 */
-function updateKindOf(check: EnvCheck): 'node' | 'pnpm' | null {
+function updateKindOf(check: EnvCheck): 'node' | 'pnpm' | 'dsh' | null {
   if (check.status === 'missing') return null;
   if (check.id === 'node') {
     if (platform.value !== 'win32') return null;
@@ -187,7 +191,117 @@ function updateKindOf(check: EnvCheck): 'node' | 'pnpm' | null {
     return nodeOwner.value === 'unknown' ? null : 'node';
   }
   if (check.id === 'pnpm') return 'pnpm';
+  // dsh 本体：`ok`（定位到了）就有更新入口。缺失给的是「一键安装 dsh」，走上面那条分支；
+  // 只能靠 `npx` 临时跑的那一档也有 `fixAction`（同样是一键装一份），所以到不了这里。
+  // 「定位到了但实测跑不动」（`dsh-run` 不过）也照样给 —— 重装一份正是那种坏法的出路之一。
+  if (check.id === 'dsh') return 'dsh';
   return null;
+}
+
+/** 这一项查来的版本读数（主进程查的；还没查 / 查不到 / 不是 pnpm|dsh 时是 null） */
+function pkgUpdateOf(kind: 'node' | 'pnpm' | 'dsh' | null): EnvPkgUpdate | null {
+  if (kind !== 'pnpm' && kind !== 'dsh') return null;
+  return pkgUpdates.value ? pkgUpdates.value[kind] : null;
+}
+
+/** 按钮上那个目标版本：只在**确实有新版**时才有值（`更新 dsh → 0.2.0-rc.2`） */
+function pkgTargetOf(kind: 'node' | 'pnpm' | 'dsh' | null): string | null {
+  const update = pkgUpdateOf(kind);
+  return update && update.newer && update.target ? update.target : null;
+}
+
+/** 本机这一份 dsh 是不是**实测跑不动**（`dsh-run` 那一项不是 ok）；报告还没到时不认这条 */
+const dshNotRunnable = computed<boolean>(() => {
+  const run = checks.value.find((check) => check.id === 'dsh-run');
+  return run !== undefined && run.status !== 'ok';
+});
+
+/**
+ * dsh 的更新入口**用不了**：定位到了 dsh，却说不准该装进哪个 Node 的全局目录（方案 A 的
+ * `unbound` —— 例如它由 shim / 自定义命令启动，或启动它的那份 Node 旁边没有 npm）。
+ *
+ * 判据在主进程（`dsh-npm.ts` 解析、`report.dshNpm` 带出来），这里只读结论 —— 与
+ * `nodeUpdateRefused` 读 `nodeOwner` 是同一个分工：渲染层不自己拼路径、不自己猜归属。
+ *
+ * `missing` 那一档不受这条影响：那时候没有"被升级的那份 dsh"可绑，给的是既有的「一键安装 dsh」。
+ */
+function dshUpdateRefused(check: EnvCheck): boolean {
+  return (
+    check.id === 'dsh' && check.status !== 'missing' && dshNpmBinding.value?.kind === 'unbound'
+  );
+}
+
+/** 报告里那条绑定事实（界面只读它；不在渲染层拼路径） */
+const dshNpmBinding = computed<DshNpmBinding | null>(() => envReport.value?.dshNpm ?? null);
+
+/** 那条诚实边界的正文（主进程给的 facts：为什么推不出它属于哪个 Node） */
+const dshRefusedNote = computed<string>(() => dshNpmBinding.value?.evidence ?? '');
+
+/** 旁边那条可自己执行的命令；主进程没给就不显示这一段 */
+const dshRefusedHint = computed<string>(() => dshNpmBinding.value?.hint ?? '');
+
+/**
+ * 这一行的「更新」按钮**该不该出现**。用户裁定（2026-10-03）：**只有真有新版本才出现按钮**。
+ *
+ * 于是下面这三种情况一律不给按钮（连"点了什么都不会发生"的都不给）：
+ *
+ *   - **还没拿到读数**（详情层刚打开、这一轮 registry 查询还没回来）—— 就是"初始状态"；
+ *   - **已经是最新版**（目标 == 当前）：按钮位上只留一句读数，那不是按钮；
+ *   - **这一轮没查到**（离线 / 源不可达 / 没有可用目标）：不编结论，也**不给**按钮。
+ *     代价是这条路下界面上没有更新入口 —— 这是刻意的：宁可什么都不显示，
+ *     也不要给一个不知道会装到哪一版的按钮。
+ *
+ * **唯一例外：本机这一份实测跑不动时给「重装」**（`dshNotRunnable`）。那不是"更新"，是"修" ——
+ * 一份定位得到、却跑不起来的 dsh，重装正是最直接的出路，删掉它等于把这种坏法堵死在界面外。
+ * pnpm 不需要这条例外：它跑不动时那一项本身就是 `missing`，走的是既有的「一键安装 pnpm」。
+ *
+ * **方案 A 的 `unbound` 优先级最高**：说不准装到哪棵树时一个入口都不给（连"重装"也不给）——
+ * 那条诚实边界会写在行下方，出路是让用户自己拿对的那份 npm 装。
+ */
+function pkgUpdateVisible(check: EnvCheck): boolean {
+  const kind = updateKindOf(check);
+  if (kind !== 'pnpm' && kind !== 'dsh') return false;
+  if (kind === 'dsh' && dshUpdateRefused(check)) return false;
+  if (pkgTargetOf(kind)) return true;
+  return kind === 'dsh' && dshNotRunnable.value;
+}
+
+/**
+ * 行上的读数态文案（无按钮）：目标就是本机这一份时，写清"已经是最新版"。
+ *
+ * 「比安装源上的最新版还新」要单独说 —— 本机在 `alpha` 那条线上时真会发生（`@deepseek-ai/dsh`
+ * 的 `latest` 是 0.2.0-rc.2，而 0.2.1-alpha.1 已经发布在 `alpha` 标签下）。那时候写
+ * "已是最新版"会与"换了反而是降级"矛盾，所以由主进程的 `ahead` 分开说。
+ *
+ * 两个版本号缺一个就不给读数（空字符串 = 这一行什么都不显示）：拿不到事实时不编结论。
+ */
+function pkgReadoutOf(check: EnvCheck): string {
+  const kind = updateKindOf(check);
+  if (kind !== 'pnpm' && kind !== 'dsh') return '';
+  // 说不准装到哪棵树时连读数也不给：旁边那句"说不准该装进哪个 Node"与"已经是最新版"摆在一起只会打架
+  if (kind === 'dsh' && dshUpdateRefused(check)) return '';
+  const update = pkgUpdateOf(kind);
+  if (!update || update.newer || !update.target || !update.current) return '';
+  return update.ahead
+    ? `比安装源上的最新版还新（${update.current}）`
+    : `已经是最新版（${update.current}）`;
+}
+
+/** 行上按钮的文案：Node 有自己的档位说法；pnpm / dsh 有新版是"更新 X → 版本"，只修是"重装 X" */
+function updateLabelOf(check: EnvCheck): string {
+  const kind = updateKindOf(check);
+  if (kind === 'node') return nodeUpdateLabel.value;
+  const base = kind === 'dsh' ? '更新 dsh' : '更新 pnpm';
+  const target = pkgTargetOf(kind);
+  if (target) return `${base} → ${target}`;
+  return kind === 'dsh' ? '重装 dsh' : '重装 pnpm';
+}
+
+/** 「重装」那条例外的悬停解释：说明为什么给的是一个不带版本号的按钮 */
+function updateTargetHint(check: EnvCheck): string {
+  if (busy.value) return BUSY_HINT;
+  if (pkgTargetOf(updateKindOf(check))) return '';
+  return '这一份 dsh 实测跑不起来 —— 重装一份是最直接的出路';
 }
 
 /** 这一页的 Node 那一行（报告里的事实行） */
@@ -338,6 +452,9 @@ async function copyHint(text: string): Promise<void> {
 function refresh(): void {
   if (busy.value) return;
   void loadEnvReport(true);
+  // 版本读数跟着一起重算：用户点「重新检测」的意思就是"现在这些结论都重来一遍"，
+  // 而版本读数是主进程那边缓存 5 分钟的另一份东西（不跟着刷的话它会停在旧值上）。
+  void loadPkgUpdates(true);
 }
 
 /** 逃生之后回到向导的那条明路（交互 §2.8 第 2 条）：不写盘、不改判定，只是把覆盖层再显示出来 */
@@ -377,14 +494,16 @@ function openUpdateRow(check: EnvCheck, otherChannel = false): void {
 }
 
 async function openUpdate(
-  kind: 'node' | 'pnpm',
+  kind: 'node' | 'pnpm' | 'dsh',
   channel: EnvNodeChannel | null = null,
 ): Promise<void> {
   if (busy.value) return;
   confirming.value = null;
   restartDismissed.value = false;
   updateOpen.value = kind;
-  if (kind === 'pnpm') return;
+  // pnpm 与 dsh 都走"复用既有的确认区"那一条路（同一条 envFix 计划，冻结 §3.5）：
+  // 命令原文与目标目录由主进程现算，这里不需要再取任何计划。
+  if (kind !== 'node') return;
   // 不记住上次选了哪一档：每次打开都回到"跟随现在这一份"（只有显式换档才带值进来）
   nodeUpdateChannel.value = channel;
   await loadNodeUpdatePlan();
@@ -443,6 +562,19 @@ async function startPnpmUpdate(): Promise<void> {
   updateOpen.value = null;
   confirming.value = null;
   await startFix('install-pnpm');
+}
+
+/**
+ * 「更新 dsh」同样复用既有的 install-dsh（`npm i -g @deepseek-ai/dsh` 装的就是最新版）。
+ *
+ * 与 Node 那条路的关键差别：**升级 dsh 之前不停 dsh**。npm 换的是磁盘上的文件，正在跑的那个
+ * 进程早就把模块加载完了；更新完再让用户重启（那时新版本才生效）—— 不像"更新 Node"，
+ * 那种是真的必须先停（安装器要覆盖 node.exe）。
+ */
+async function startDshUpdate(): Promise<void> {
+  updateOpen.value = null;
+  confirming.value = null;
+  await startFix('install-dsh');
 }
 
 /** 「更新 Node.js」/「换成…」：只递选择，地址与校验值由主进程现场重算 */
@@ -572,6 +704,27 @@ function dismissRestart(): void {
   restartDismissed.value = true;
 }
 
+/**
+ * dsh 刚被更新过：新版本要**重启 dsh 之后才生效**（npm 换的是磁盘上的文件，正在跑的那个进程
+ * 里还是更新前加载的那一份）。
+ *
+ * 判据与 Node 那一路**正好相反**，这一点很容易看错：Node 更新会先停 dsh，所以那句提示出现在
+ * `phase !== 'running'` 之后；而这里**没有停 dsh**，"dsh 正在跑"恰恰是要重启的前提。
+ * 只有本应用启动的 dsh 才轮得到我们管（同一个 `owned` 判据）。
+ */
+const asksRestartDshAfterFix = computed(() => {
+  if (restartDismissed.value) return false;
+  const state = envFix.value;
+  if (state.phase !== 'done' || state.action !== 'install-dsh') return false;
+  return Boolean(dsh.value?.owned) && phase.value === 'running';
+});
+
+/** 更新完的那次重启：走完整的 restart（停 → 等端口释放 → 起），不是 Node 那一路的 `'start'` */
+async function restartDshAfterUpdate(): Promise<void> {
+  restartDismissed.value = true;
+  await restartThenOpenHarness(api, () => dsh.value, 'env');
+}
+
 // ------------------------------------------------------------ 被跳过步骤的恢复
 
 async function restoreStep(step: EnvWizardStepId): Promise<void> {
@@ -651,6 +804,21 @@ onMounted(() => {
   sourceSaved.value = sourceDraft.value;
   tickTimer = setInterval(() => (tick.value += 1), 30_000);
 });
+
+/**
+ * 版本读数是**按需**查的（一次 registry 往返）：只在详情层真的打开时拉一次。
+ *
+ * 这一页常驻挂载（所有页面都靠 visibility 隐藏），所以不能在 `onMounted` 里查 ——
+ * 用户没打开过环境自检就不该替他发这个请求。`immediate` 是为了"挂载时层已经开着"这种
+ * 顺序（控制台横幅先开层、再挂载）也拉得到。
+ */
+watch(
+  () => envDetailOpen.value,
+  (open) => {
+    if (open) void loadPkgUpdates();
+  },
+  { immediate: true },
+);
 
 // 主进程改了设置（例如向导里跳过 / 恢复）时跟着更新草稿，免得用户把旧值又写回去
 watch(
@@ -746,7 +914,13 @@ onUnmounted(() => {
           <!-- 行右侧的操作槽：缺失给"一键安装"、可用给"更新"、已跳过给"加回来"（视觉 §5.9）。
                没有动作的行不渲染这个容器 —— 空容器也会占掉一个 gap，把行挤窄。 -->
           <div
-            v-if="fixActionOf(check) || updateKindOf(check) || skippedStepOf(check)"
+            v-if="
+              fixActionOf(check) ||
+              updateKindOf(check) === 'node' ||
+              pkgUpdateVisible(check) ||
+              pkgReadoutOf(check) ||
+              skippedStepOf(check)
+            "
             class="env-actions"
           >
             <button
@@ -758,8 +932,8 @@ onUnmounted(() => {
             >
               {{ fixLabel(check) }}
             </button>
-            <!-- 目标 == 当前：按钮位改成读数态（不给一个点了什么都不会发生的按钮），
-                 旁边留一个**显式换档**的入口 —— 换到另一档不是「更新」 -->
+            <!-- 目标 == 当前：按钮位改成读数态（不给一个点了什么都不会发生的按钮）。
+                 Node 在这句读数旁边留一个入口 —— 那是**显式换档**（换到另一档不是「更新」）。 -->
             <template v-else-if="updateKindOf(check) === 'node' && nodeUpToDate">
               <span class="wizard-readout">{{ nodeUpToDateText }}</span>
               <button
@@ -771,14 +945,31 @@ onUnmounted(() => {
                 {{ nodeOtherChannelLabel }}
               </button>
             </template>
+            <!-- pnpm / dsh：**只有真有新版本才出现按钮**（用户裁定）。没有新版时最多留一句读数；
+                 还没拿到读数、或这一轮没查到，就什么都不显示 —— 宁可空着，也不给一个
+                 不知道会装到哪一版的按钮。唯一例外是这一份实测跑不动（那时给的是「重装」）。 -->
+            <template v-else-if="updateKindOf(check) === 'pnpm' || updateKindOf(check) === 'dsh'">
+              <span v-if="pkgReadoutOf(check)" class="wizard-readout">
+                {{ pkgReadoutOf(check) }}
+              </span>
+              <button
+                v-if="pkgUpdateVisible(check)"
+                class="btn small"
+                :disabled="busy"
+                :title="updateTargetHint(check) || undefined"
+                @click="openUpdateRow(check)"
+              >
+                {{ updateLabelOf(check) }}
+              </button>
+            </template>
             <button
               v-else-if="updateKindOf(check)"
               class="btn small"
               :disabled="busy"
-              :title="busy ? BUSY_HINT : undefined"
+              :title="updateTargetHint(check) || undefined"
               @click="openUpdateRow(check)"
             >
-              {{ updateKindOf(check) === 'node' ? nodeUpdateLabel : '更新 pnpm' }}
+              {{ updateLabelOf(check) }}
             </button>
             <template v-if="skippedStepOf(check)">
               <span class="env-skip">已跳过</span>
@@ -795,11 +986,27 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- dsh 的更新入口用不了（方案 A 的 unbound）：说不准该装进哪个 Node 的全局目录。
+               照 nodeUpdateRefused 那一套写法与样式：一句事实 + 一条可自己执行的命令 + 重新检测。 -->
+          <div v-if="dshUpdateRefused(check)" class="env-owner-note">
+            <span class="env-owner-note-text">{{ dshRefusedNote }}</span>
+            <p v-if="dshRefusedHint" class="env-hint">
+              <code>{{ dshRefusedHint }}</code>
+              <button class="btn tiny" @click="copyHint(dshRefusedHint)">复制</button>
+            </p>
+            <div class="btn-row">
+              <button class="btn tiny ghost" @click="refresh">重新检测</button>
+            </div>
+          </div>
+
           <!-- 更新确认区：原地展开，不弹原生对话框。两条风险说明是需求 §8.3 的硬要求。
                t60 起它是 pages/env/EnvUpdateConfirm.vue：这一层只把计划与档位递下去、把
                "开始 / 取消 / 换档 / 换源"接回来 —— 同一份计划父级那一行也在读，所以留在父级。 -->
           <EnvUpdateConfirm
-            v-if="(check.id === 'node' || check.id === 'pnpm') && updateOpen === check.id"
+            v-if="
+              (check.id === 'node' || check.id === 'pnpm' || check.id === 'dsh') &&
+              updateOpen === check.id
+            "
             :kind="check.id"
             :check="check"
             :busy="busy"
@@ -808,16 +1015,30 @@ onUnmounted(() => {
             :node-update-channel="nodeUpdateChannel"
             :node-update-error="nodeUpdateError"
             :pnpm-plan="planFor('install-pnpm')"
+            :dsh-plan="planFor('install-dsh')"
+            :dsh-update="pkgUpdates?.dsh ?? null"
             :report-owner="nodeOwner"
             :node-affects-dsh-text="nodeAffectsDshText"
             @cancel="cancelUpdate"
             @start-pnpm="startPnpmUpdate"
+            @start-dsh="startDshUpdate"
             @start-node="startNodeUpdate"
             @pick-channel="pickUpdateChannel"
             @refresh="refresh"
             @focus-source="focusSource"
             @open-download="openDownloadPage"
           />
+
+          <!-- dsh 更新完：npm 换的是磁盘上的文件，正在跑的那个进程里还是旧的 —— 新版本要
+               重启 dsh 之后才生效。这一路**没有先停 dsh**（见 startDshUpdate 的说明），
+               所以提示出现在"dsh 正在跑"的时候。 -->
+          <div v-if="check.id === 'dsh' && asksRestartDshAfterFix" class="wizard-decide">
+            新版本的 dsh 要重新启动之后才会生效。
+            <div class="btn-row">
+              <button class="btn small" @click="restartDshAfterUpdate">重新启动 dsh</button>
+              <button class="btn small" @click="dismissRestart">先不用</button>
+            </div>
+          </div>
 
           <!-- 更新进行中 / 更新结果：与安装共用同一套进度与结论（视觉 §5.9） -->
           <div

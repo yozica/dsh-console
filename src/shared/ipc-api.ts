@@ -32,6 +32,7 @@ import type {
   EnvFixAction,
   EnvFixOutputEvent,
   EnvFixState,
+  EnvPkgUpdates,
   EnvWizardState,
   EnvWizardStepId,
 } from './ipc-env';
@@ -165,6 +166,11 @@ export interface DshConsoleApi {
   onEnvFixState: (handler: (state: EnvFixState) => void) => () => void;
   /** 修复过程中 npm 的输出片段 */
   onEnvFixOutput: (handler: (payload: EnvFixOutputEvent) => void) => () => void;
+  /**
+   * dsh / pnpm 的**版本读数**（本机这一份 vs 安装源上的目标），给行内那两个「更新」入口用。
+   * 主进程按需查 registry 并缓存 5 分钟，`refresh: true` 绕过缓存；失败一律降级成"查不到"。
+   */
+  envPkgUpdates: (options?: { refresh?: boolean }) => Promise<EnvPkgUpdates>;
 
   // 首启环境向导（门禁）+ Node 安装 / 更新通道（见 docs/env-wizard-freeze.md）
   /** 拉一份门禁状态；refresh = true 时清掉报告缓存重跑一轮完整探测 */

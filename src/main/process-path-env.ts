@@ -44,6 +44,43 @@ export function envWithKnownBins(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
+/**
+ * 丢掉环境里所有 `npm_config_*` / `NPM_CONFIG_*`（**大小写不敏感地按前缀匹配**），其余原样保留。
+ *
+ * 为什么要它（真机实测的根因，见 docs/env-doctor.md 的「根因：继承的 npm_config_*」）：
+ * Electron 是被人从某个终端 / 工具里拉起来的，那个环境里往往已经有一整套 npm 的配置变量
+ * （`npm_config_global_prefix`、`npm_config_prefix`、`npm_config_registry`…）。我们 spawn 修复
+ * 子进程时是 `{ ...process.env }` 再补 PATH，于是这些键**原样传给了 npm**。而 npm 的优先级是
+ * "环境变量 > 由自身位置推出的默认值"，结果就是：不管用哪一份 npm 执行 `i -g`，全局目录都由
+ * **父进程那套变量**决定，而不是由 npm 自己的位置决定。实测（v24.14.1 那份 npm）：
+ *
+ * | 试验                                            | `npm prefix -g`            |
+ * | ----------------------------------------------- | -------------------------- |
+ * | 现状（继承的 env）                              | `…/node/**v22.17.1**` ❌    |
+ * | 只清 `npm_config_global_prefix` + `_prefix`     | 仍是 v22.17.1 ❌（不够）    |
+ * | `env -i`（只给 PATH / HOME）                    | `…/node/**v24.14.1**` ✅    |
+ * | `env -i` + 只放回 `npm_config_prefix=…`         | v22.17.1（**单这一键就能翻转**） |
+ *
+ * 所以修复子进程的 env 要清到"让 npm 从它自己的位置推全局目录"：**只留我们刻意注入的那一项**
+ * （`pluginRegistryEnv()` 给的 `npm_config_registry`，由调用方在 `cleanNpmEnv` **之后**合成，
+ * 见 `EnvFixRunner.execute`）。用户写在 `~/.npmrc` 里的源不受影响 —— npm 仍会读 userconfig，
+ * 清掉的只是"从父进程继承来的那一份"。
+ *
+ * **判据是前缀，不是一张固定清单**：npm 的配置键是开放的（任何 `npm_config_<key>` 都会被读成
+ * 一项配置），列清单必然漏，而漏掉一个就等于没修（上表第二行就是这么翻车的）。
+ *
+ * **不丢别的**：PATH、HOME、代理（`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`）、locale 一律保留
+ * —— 清的是 npm 的配置键，不是"环境"。`base` 给 `undefined` / 空对象也不炸（返回空对象）。
+ */
+export function cleanNpmEnv(base: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(base ?? {})) {
+    if (key.toLowerCase().startsWith('npm_config_')) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
 /** 全局 node_modules 的候选目录（PATH 里没有 shim 时直接来这里找包） */
 function globalNodeModulesRoots(): string[] {
   const home = homeDir();
