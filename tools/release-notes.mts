@@ -116,10 +116,16 @@ export function composeReleaseNotes(params: {
       throw new Error(`产物不全，缺：${missing.join('、')} —— 不发产物不全的 Release（宁可不发）`);
     }
     const rows = downloads.map((item) => `| ${item.label} | \`${item.file}\` |`).join('\n');
+    // 更新器那句**必须与事实一致**（用户 2026-10-07 抓出来的：v0.6.7 的正文里写着"应用当前没接
+    // 自动更新"，而 Windows 那条早就通了）。事实的两半分别在 README 的「自动更新」一条与
+    // `main/updater.ts` 的平台分支里：**Windows 安装版能自动查 / 下 / 装**（`quitAndInstall()` 由
+    // 用户在底栏确认），**macOS 是 ad-hoc 签名只能查不能装**（取 `latest-mac.yml` 比版本，底栏
+    // 提示后手动下载）。自检「发布正文：更新器那句说的是事实」钉着这两半与那个错说法的缺席。
     const metadataLine =
       metadata.length > 0
         ? `\n另有 ${metadata.map((name) => `\`${name}\``).join(' / ')}：更新器用的元数据与差分索引` +
-          '（应用当前没接自动更新，下载上面的安装包即可）。\n'
+          '（**Windows 安装版会自动检查新版本**，下载与安装都由你确认；' +
+          '**macOS 因签名限制需手动下载**，底栏会提示有新版本并给「打开下载页」）。\n'
         : '';
     parts.push(
       [
