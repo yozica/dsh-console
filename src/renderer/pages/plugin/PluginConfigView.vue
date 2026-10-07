@@ -272,13 +272,9 @@ function isMyLayer(source: string): boolean {
   font-size: var(--t-xs);
 }
 
-/* 详情里每一行都自己带 16px 内边距（条目行要整行 hover / 分隔线，不能靠父级 padding），
-   所以这里的说明句必须单独补 —— 漏了就会像"贴到面板边上"那样顶头。 */
-.plugin-entries > .hint,
-.plugin-detail-body > .hint,
-.plugin-config-body > .hint {
-  padding: 0 16px;
-}
+/* 详情里"说明句"的 16px 左右内边距挪到全局表了（`.plugin-entries > .hint` /
+   `.plugin-detail-body > .hint` / `.plugin-config-body > .hint`）：这三个容器分属两个组件，
+   写在任何一个的 `<style scoped>` 里都够不着另一个 —— 见 styles.css 里那段注释与 AGENTS §7.41。 */
 
 /* ---- 视图二：生效配置 ---- */
 .plugin-config {

@@ -1776,6 +1776,52 @@ renderer/
 AGENTS 与 `docs/{env-doctor,plugin-restart,env-wizard}.md` 这类"现在怎么跑"的说明全部改成新路径，
 尚未发布的 `.changeset/*.md` 也一起改（它们会被汇总进 CHANGELOG）。
 
+### 7.41 跨组件的样式**必须在全局表**：scoped 只够得到"本组件渲染的元素"
+
+**现象**（2026-09-30 用户抓图，原话"这里的间距怎么没了"）：插件页「你的层」的详情里，那句
+"这一层还没有生效的内容（文件里是 `[]`）。它的用途是三件事：…" **贴着卡片的左右边缘**，
+而同一张卡上面的 meta 行（`6px 16px 14px`）、下面的条目行（`6px 16px`）都缩进 16px。
+
+**原因**：那句是 `.plugin-detail-body > .hint`（全局零件 `.hint` 自己**不带**左右内边距），
+而它的内边距规则当年写在**另一个组件**里：
+
+```css
+/* PluginConfigView.vue 的 <style scoped> —— 当年就写在这儿 */
+.plugin-entries > .hint,
+.plugin-detail-body > .hint,
+.plugin-config-body > .hint {
+  padding: 0 16px;
+}
+```
+
+`<style scoped>` 编译出来是 `选择器[data-v-<本组件 hash>]`，所以它**只匹配 PluginConfigView 自己
+渲染的元素**；这三个容器里有两个（`.plugin-entries` / `.plugin-detail-body`）是
+`PluginStackView.vue` 画的，一条都匹配不上 —— 于是那句说明一直顶头。
+
+**为什么既有自检没抓住**：`test/checks/styles.ts` 的 t66 那条只管**自成一条规则**的类选择器
+（`.foo {`），而 `.plugin-detail-body > .hint` 是**带上下文的复合选择器**，被有意排除在"够不够得着"
+之外（那类通常是"只在本组件内生效"的覆盖）。这个缺陷正好落在盲区里，而且工具本身没错 ——
+是**分层判断的依据错了**：不是看"这个 class 在几个组件里出现"，而是看"这条规则要够到几个组件渲染的元素"。
+
+**做法**：把那三条选择器搬进**全局表**（`styles.css` 里 `.hint` 那一段，带完整解释），并在
+`styleLayers` 的 `staysGlobal` 里各钉一条：`PluginStackView.vue` → `.plugin-detail-body > .hint`、
+`PluginConfigView.vue` → `.plugin-config-body > .hint`。机制自带的两半都有用：一半查"没留在全局表"、
+一半查"被搬进组件了"。
+
+**守着它的**：`test/checks/styles.ts` 的「样式分层…」那条（`staysGlobal`）。**2026-09-30 用一次变异
+验过牙齿**：把全局表里那条选择器改名成 `.plugin-detail-body > .hint-MUTATED` → 立刻红，
+原话是 `PluginStackView.vue: 共享件 .plugin-detail-body > .hint 没留在全局表`。
+
+**推论**：判断一条规则该放哪张表，只看一个问题 —— **它要够到几个组件渲染的元素**。
+≥2 个就进全局表，哪怕这些 class 名字只在一个组件里出现（`.plugin-detail-body` 就只出现在
+`PluginStackView.vue` 里，规则却写在另一个组件里）。反过来，"这个 class 被两个组件用了"不等于
+"规则要跨组件"（`.plugin-entry` 是共享件、确实跨组件，所以它也该在全局表 —— 两者结论一致，
+但理由不同）。
+
+> 小节号说明：本条从分支 `feat/phone-connect-qr` 的 `8a1e0a5` cherry-pick 过来，
+> 那里它是 §7.41（前面 7.38~7.40 是还没合并的「手机连接」）。留着同样的号，两条 PR 先后落地时
+> 不用互相改号。
+
 ## 8. 调试手段
 
 ### 自检
