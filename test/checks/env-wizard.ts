@@ -110,6 +110,8 @@ export function runEnvWizard(repo: Repo): void {
     // t29：归属是**采集侧给的事实**（判定只搬运）。门禁判定不看它，所以这里是占位值
     nodeOwner: 'unknown',
     nodeOwnerEvidence: [],
+    // 方案 A：「更新 dsh」的 npm 绑定也是采集侧给的事实。门禁判定不看它，占位用 fallback
+    dshNpm: { kind: 'fallback', path: null, evidence: '', hint: null },
     ...over,
   });
   const wizardSkips = (...ids: string[]): EnvWizardStepId[] =>

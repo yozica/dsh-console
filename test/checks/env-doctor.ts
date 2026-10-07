@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import * as envDoctor from '../../src/main/env-doctor';
+import * as npmRegistry from '../../src/main/npm-registry';
 import * as pluginManager from '../../src/main/plugin-manager';
 import * as processUtils from '../../src/main/process-utils';
 import { DEFAULTS } from '../../src/main/settings';
@@ -1214,7 +1215,9 @@ export function runEnvDoctor(repo: Repo): void {
         // 判定侧读的是同一条事实（探到的 vcRuntime 决定装哪一档）
         /vcRuntime: hasVcRuntime\(\)/.test(envCode) &&
         /const vcRuntime = raw\.vcRuntime !== false;/.test(envCode) &&
-        /envFixPlan\(action, findNpm\(\), hasVcRuntime\(\)\)/.test(envCode) &&
+        // 方案 A 把"用哪份 npm"换成了三元（dsh 用绑定那份、pnpm 不变），但这一条的意图不变：
+        // 一键修复的计划**现场**用当前探测到的 vcRuntime 重算，不吃报告里的旧值
+        /const plan = envFixPlan\(action, npmPath, hasVcRuntime\(\)\);/.test(envCode) &&
         // 认出来的结论会进日志（出路也一并记下来）
         /describePnpmRunFailure\(\{/.test(envCode) &&
         /出路：\$\{verdict\.hints\.join/.test(envCode)
@@ -1342,5 +1345,317 @@ export function runEnvDoctor(repo: Repo): void {
       /statusOf\('dsh'\) === 'ok' && statusOf\('dsh-run'\) === 'ok'/.test(envCode) &&
       // 主进程把日志位置注入进去，界面才说得清"细节在哪"
       /logFile: \(\) => fileLog\.file \|\| null/.test(envMainCode),
+  );
+
+  // ---------------------------------------------------------- t79. 版本比对的更新入口
+  //    需求：环境自检页里给 dsh / pnpm 两行各加一个**带版本比对**的更新入口。
+  //    这一组是静态文本 + 纯函数断言（真查一次 registry 要联网，沙箱里没有）。纯函数那几条
+  //    的详细反例在 `scripts/env-doctor-cases.mjs`；`fetchPackageMetadata` 只承诺"失败返回 null"。
+  const registrySource = fs.readFileSync(path.join(srcDir, 'main', 'npm-registry.ts'), 'utf8');
+  const registryCode = stripComments(registrySource);
+  const confirmCode = stripComments(fs.readFileSync(repo.vuePath('EnvUpdateConfirm.vue'), 'utf8'));
+  const preloadCode = fs.readFileSync(path.join(srcDir, 'preload', 'preload.ts'), 'utf8');
+  check(
+    '环境自检（t79）：dsh 那一行有更新入口，确认区也认这一档（pnpm 与 dsh 复用同一份确认区）',
+    // 入口：`missing` 时给「一键安装」，其余给「更新」—— dsh 那一行也要有
+    /if \(check\.id === 'dsh'\) return 'dsh';/.test(envPaneCode) &&
+      // 确认区：那个条件要带上 dsh，否则按钮点开什么都不出来
+      /check\.id === 'dsh'/.test(envPaneCode) &&
+      /planFor\('install-dsh'\)/.test(envPaneCode) &&
+      /startDshUpdate/.test(envPaneCode) &&
+      // 子组件那一侧：kind 认三档、dsh 有自己的计划与版本读数 prop
+      /kind: 'node' \| 'pnpm' \| 'dsh';/.test(confirmCode) &&
+      /dshPlan: EnvFixPlan \| null;/.test(confirmCode) &&
+      /dshUpdate: EnvPkgUpdate \| null;/.test(confirmCode) &&
+      // 命令原文仍然只来自主进程给的计划（渲染层不自己拼命令，同 7.18）
+      /dshPlan\?\.display/.test(confirmCode) &&
+      // 「要重启 dsh 才生效」这句必须在：升级 dsh 之前不停它，这就是唯一的收口
+      /重新启动之后新版本才会生效/.test(confirmCode) &&
+      // 两个更新入口共用既有的计划来源，没有另起一套
+      /planFor\('install-pnpm'\)/.test(envPaneCode),
+  );
+  check(
+    '环境自检（t79）：pnpm / dsh 的更新按钮**只在真有新版本时**才出现（用户裁定）',
+    // 显示条件与"有新版"绑在一起，而不是"这一项可用就给按钮"。三种情况都不给：
+    // 还没拿到读数（初始态）、已经是最新版、这一轮没查到 —— 都退回 `false`。
+    /function pkgUpdateVisible\(check: EnvCheck\): boolean \{/.test(envPaneCode) &&
+      /if \(pkgTargetOf\(kind\)\) return true;/.test(envPaneCode) &&
+      /return kind === 'dsh' && dshNotRunnable\.value;/.test(envPaneCode) &&
+      // 唯一例外只对 dsh 开，而且判据是"sibling 的 dsh-run 不是 ok"（本机那一份真跑不动）
+      /const dshNotRunnable = computed<boolean>\(\(\) => \{/.test(envPaneCode) &&
+      /check\.id === 'dsh-run'/.test(envPaneCode) &&
+      // 模板里按钮挂在这个条件上，不再挂在 `updateKindOf(check)` 上（那会给初始态也画一个）
+      /v-if="pkgUpdateVisible\(check\)"/.test(envPaneCode) &&
+      // 没有新版时只能留**读数**（一句 span），不许再跟一个「重装」按钮
+      /v-if="pkgReadoutOf\(check\)" class="wizard-readout"/.test(envPaneCode) &&
+      !/>\s*重装\s*<\/button>/.test(envPaneCode) &&
+      // 「重装」只可能由没有目标版本那条分支产出，且文案带上一份的名字
+      /return kind === 'dsh' \? '重装 dsh' : '重装 pnpm';/.test(envPaneCode),
+  );
+
+  // ---- 方案 A（真机 bug）：dsh 的更新入口必须用「被升级的那份 dsh 所属 Node」的 npm ----
+  //    现场：console 用的是 nvm 的 v24.14.1 那份 dsh，而 `findNpm()` 在 macOS 上撞上了 PATH 里
+  //    vite-plus 的 `vp` symlink → 升级装进了 v22.17.1 那棵树，界面仍写着「更新 dsh → …」→ 不收敛。
+  const dshNpmCode = stripComments(
+    fs.readFileSync(path.join(srcDir, 'main', 'dsh-npm.ts'), 'utf8'),
+  );
+  const judgeCode = stripComments(
+    fs.readFileSync(path.join(srcDir, 'main', 'env-judge.ts'), 'utf8'),
+  );
+  const doctorCode = stripComments(
+    fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8'),
+  );
+  check(
+    '环境自检（方案 A）：更新 dsh 只用"被升级的那份 dsh 所属 Node"的 npm，且按进程缓存',
+    // 两步纯函数：判启动形状（node + dsh 的 bin.js）→ 推同目录的 npm
+    /export function dshNodeForLauncher\(launcher: DshLauncherShape\): string \| null \{/.test(
+      dshNpmCode,
+    ) &&
+      /export function npmForNode\([\s\S]{0,80}?platform: string\): string \| null \{/.test(
+        dshNpmCode,
+      ) &&
+      // 必须按**目标平台**选 path 实现：否则在 macOS 上跑反例脚本测不到 win32 那一支（§7.23）
+      /const impl = platform === 'win32' \? path\.win32 : path\.posix;/.test(dshNpmCode) &&
+      // 三档绑定都在，且只有 bound 那份是被升级的 dsh 自己的 npm
+      /kind: 'bound'/.test(dshNpmCode) &&
+      /kind: 'fallback'/.test(dshNpmCode) &&
+      /kind: 'unbound'/.test(dshNpmCode) &&
+      // 按进程缓存 = "显示 == 执行"的机械保证（先例：canRunDsh）；refresh 只给「重新检测」
+      /let bindingCache: DshNpmBinding \| null = null;/.test(dshNpmCode) &&
+      /if \(!options\.refresh && bindingCache\) return bindingCache;/.test(dshNpmCode) &&
+      // 不可用就不绑（**不回退**到 findNpm —— 那正是这个 bug 的成因）
+      /if \(isUsableNpm\(npmPath, platform\)\) \{/.test(dshNpmCode) &&
+      // 判定侧只搬运：install-dsh 用绑定那份，install-pnpm 保持原来的 npmPath 不动
+      /const actionNpm = action === 'install-dsh' \? dshNpm\.path : npmPath;/.test(judgeCode) &&
+      // 执行侧与报告侧同一个来源（收口成一份解析）
+      /action === 'install-dsh' \? resolveNpmForDsh\(this\.settings\.all\(\)\) : findNpm\(\)/.test(
+        doctorCode,
+      ) &&
+      /raw\.dshNpm = resolveDshNpmBinding\(this\.settings\.all\(\), \{ refresh \}\);/.test(
+        doctorCode,
+      ),
+  );
+  check(
+    '环境自检（方案 A）：报告带出绑定事实；界面据此不给入口并写一条诚实边界；两条计划各问自己的 prefix',
+    /export interface DshNpmBinding \{/.test(flatIpc) &&
+      /kind: 'bound' \| 'fallback' \| 'unbound';/.test(flatIpc) &&
+      /dshNpm: DshNpmBinding;/.test(flatIpc) &&
+      // 渲染层：unbound 时**一个入口都不给**（优先级高于"重装"那条例外）
+      /function dshUpdateRefused\(check: EnvCheck\): boolean \{/.test(envPaneCode) &&
+      /dshNpmBinding\.value\?\.kind === 'unbound'/.test(envPaneCode) &&
+      /if \(kind === 'dsh' && dshUpdateRefused\(check\)\) return false;/.test(envPaneCode) &&
+      // 那条诚实边界：照 nodeUpdateRefused / .env-owner-note 那套写法，正文与命令都由主进程给
+      /v-if="dshUpdateRefused\(check\)" class="env-owner-note"/.test(envPaneCode) &&
+      /env-owner-note-text">\{\{ dshRefusedNote \}\}/.test(envPaneCode) &&
+      /copyHint\(dshRefusedHint\)/.test(envPaneCode) &&
+      // 「会装进 …」按**计划里那一条 npm**分别问，不能拿一份 prefix 糊弄两个计划
+      /target: await this\.npmPrefixFor\(plan\.file\)/.test(doctorCode) &&
+      /private prefixByNpm = new Map<string, string \| null>\(\);/.test(doctorCode),
+  );
+  check(
+    '环境自检（t79）：两个动作仍然只有 install-pnpm / install-dsh（更新复用它们，不新增第三个）',
+    /export type EnvFixAction = 'install-pnpm' \| 'install-dsh';/.test(flatIpc) &&
+      // 更新那一侧也只是把 kind 传下去，没有第二套动作名
+      !/install-dsh-update|install-update|update-dsh/.test(flatIpc + envPaneCode) &&
+      // 回归：更新 dsh **不先停 dsh**（npm 换的是磁盘上的文件），界面也不许自己调停止
+      !/stopDshForUpdate/.test(envPaneCode) &&
+      /await startFix\('install-dsh'\)/.test(envPaneCode),
+  );
+  check(
+    '环境自检（t79）：`env:pkg-updates` 在契约 / preload / 主进程三边都在，且不在自检报告里（门禁要离线读报告）',
+    /export interface EnvPkgUpdate \{/.test(flatIpc) &&
+      /export interface EnvPkgUpdates \{/.test(flatIpc) &&
+      /dsh: EnvPkgUpdate;/.test(flatIpc) &&
+      /pnpm: EnvPkgUpdate;/.test(flatIpc) &&
+      /current: string \| null;/.test(flatIpc) &&
+      /newer: boolean;/.test(flatIpc) &&
+      /ahead: boolean;/.test(flatIpc) &&
+      /envPkgUpdates: \(options\?: \{ refresh\?: boolean \}\) => Promise<EnvPkgUpdates>;/.test(
+        flatIpc,
+      ) &&
+      /ipcRenderer\.invoke\('env:pkg-updates'/.test(preloadCode) &&
+      /ipcMain\.handle\(\s*'env:pkg-updates'/.test(envMainCode) &&
+      // 它**不进**报告：首启门禁也读那条路，往里塞网络请求会把门禁变成"断网就进不去"
+      !/pkgUpdates: EnvPkgUpdates/.test(flatIpc) &&
+      // 报告形态（八项 + plans）没有被这一轮改动动过
+      /plans: EnvFixPlan\[\];/.test(flatIpc),
+  );
+  check(
+    '环境自检（t79）：registry 查询只读、纯函数与 IO 分开、不 import electron（反例脚本要能直接加载）',
+    // 只读：一次 GET，不写用户的任何配置
+    /Accept: 'application\/vnd\.npm\.install-v1\+json'/.test(registryCode) &&
+      !/\bfs\b/.test(registryCode) &&
+      !/from 'electron'/.test(registryCode) &&
+      // 四个纯函数 + 一个 IO，名字就是契约
+      /export function normalizeRegistryBase\(/.test(registryCode) &&
+      /export function comparePackageVersions\(/.test(registryCode) &&
+      /export function pickTargetVersion\(/.test(registryCode) &&
+      /export function pickPackageUpdate\(/.test(registryCode) &&
+      /export async function fetchPackageMetadata\(/.test(registryCode) &&
+      // 超时那条路：AbortSignal.timeout + 失败一律 null（错误不当结论）
+      /AbortSignal\.timeout\(/.test(registryCode),
+  );
+  check(
+    '环境自检（t79）：目标版本跟着 spec 走 —— 不带版本时取 latest 标签，`pnpm@10` 那条线按主版本挑',
+    // 判据在内核里（pickPackageUpdate 是纯函数），这里钉的是"调用方把两条线分开传了"
+    /allowMajor: pnpmSpec === PNPM_PURE_JS_SPEC \? '10' : null/.test(envMainCode) &&
+      /pnpmInstallSpec\(hasVcRuntime\(\)\)/.test(envMainCode) &&
+      // 安装源只从设置里取，且只用于这一次查询（不改用户的 .npmrc）
+      /normalizeRegistryBase\(settings\.all\(\)\.pluginRegistry\)/.test(envMainCode) &&
+      // 按需查 + 5 分钟内存缓存
+      /PKG_UPDATE_TTL_MS = 5 \* 60 \* 1000/.test(envMainCode) &&
+      // 渲染层那边只在详情层打开 / 重新检测 / 修复完成之后拉（不在启动时替用户发请求）
+      /envDetailOpen\.value/.test(envPaneCode) &&
+      /loadPkgUpdates\(true\)/.test(envPaneCode),
+  );
+  check(
+    '环境自检（t79）：版本比对的纯函数就是 semver 那一套（预发布序），不是 Console 自己更新那份',
+    // 两份实现方向相反：updater.ts 那个故意把预发布当同版本，这里必须区分
+    npmRegistry.comparePackageVersions('0.2.0-rc.1', '0.2.0-rc.2') < 0 &&
+      npmRegistry.comparePackageVersions('0.2.0-rc.2', '0.2.0') < 0 &&
+      npmRegistry.comparePackageVersions('0.2.0', '0.2.1') < 0 &&
+      npmRegistry.comparePackageVersions('1.0.0', '1.0.0') === 0 &&
+      // 预发布段：数字标识符 < 字母标识符；前缀全同时标识符多的更大
+      npmRegistry.comparePackageVersions('1.0.0-1', '1.0.0-alpha') < 0 &&
+      npmRegistry.comparePackageVersions('1.0.0-alpha', '1.0.0-alpha.1') < 0 &&
+      // 构建元数据不参与比较；`v` 前缀认（node -v / pnpm -v 的写法）
+      npmRegistry.comparePackageVersions('1.2.3+a', '1.2.3+b') === 0 &&
+      npmRegistry.comparePackageVersions('v24.19.0', '24.19.0') === 0 &&
+      // 认不出来的输入不抛：给确定序（垃圾项不许把整份列表搞乱）
+      Number.isFinite(npmRegistry.comparePackageVersions('不是版本号', '1.0.0')),
+  );
+  check(
+    '环境自检（t79）：挑目标版本的两支（含预发布 / 主版本区间），跳过垃圾项',
+    npmRegistry.pickTargetVersion(['1.0.0', '1.1.0', '2.0.0-rc.1'], {
+      includePrerelease: false,
+    }) === '1.1.0' &&
+      npmRegistry.pickTargetVersion(['1.0.0', '1.1.0', '2.0.0-rc.1'], {
+        includePrerelease: true,
+      }) === '2.0.0-rc.1' &&
+      // 区间那一支：只在这个主版本里挑（`pnpm@10` 装的是 10.x 里最高的）
+      npmRegistry.pickTargetVersion(['10.1.0', '10.34.6', '12.8.1'], {
+        includePrerelease: false,
+        allowMajor: '10',
+      }) === '10.34.6' &&
+      // 垃圾项跳过；没有候选给 null
+      npmRegistry.pickTargetVersion(['不是版本号', 'latest'], { includePrerelease: true }) === null,
+  );
+  check(
+    '环境自检（t79）：`npm i -g` 的假承诺防线 —— 目标必须是那条命令真的会装到的版本',
+    // `@deepseek-ai/dsh` 真机数据：一个稳定版都没有，latest = 0.2.0-rc.2，而列表里最新的是
+    // 0.2.1-alpha.1。取"列表里最新的"就会显示一个点下去装不到、而且**永远不收敛**的目标。
+    (() => {
+      const metadata = {
+        versions: ['0.1.5-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-alpha.1'],
+        distTags: { latest: '0.2.0-rc.2', alpha: '0.2.1-alpha.1' },
+      };
+      const dsh = npmRegistry.pickPackageUpdate({ current: '0.1.5-rc.1', metadata });
+      // pnpm 真机形状：latest = 12.8.1，而 12.9.0 已经发布（在 `next-12` 标签下）
+      const pnpm = npmRegistry.pickPackageUpdate({
+        current: '12.4.2',
+        metadata: { versions: ['12.8.1', '12.9.0'], distTags: { latest: '12.8.1' } },
+      });
+      const pure = npmRegistry.pickPackageUpdate({
+        current: '10.15.0',
+        metadata: { versions: ['10.15.0', '10.34.6', '12.8.1'], distTags: { latest: '12.8.1' } },
+        allowMajor: '10',
+      });
+      // 查不到：目标为空 + 一句原因，界面退回不带版本号的入口
+      const offline = npmRegistry.pickPackageUpdate({ current: '1.0.0', metadata: null });
+      return (
+        dsh.target === '0.2.0-rc.2' &&
+        dsh.newer === true &&
+        dsh.ahead === false &&
+        pnpm.target === '12.8.1' &&
+        pure.target === '10.34.6' &&
+        // 本机比安装源还新：不写"已是最新版"（点了反而是降级）
+        npmRegistry.pickPackageUpdate({ current: '0.2.1-alpha.1', metadata }).ahead === true &&
+        offline.target === null &&
+        offline.newer === false &&
+        Boolean(offline.error)
+      );
+    })(),
+  );
+
+  // ---------------------------------------------------------- t80. 修复子进程的 env 清洗（根因修复）
+  //    根因（真机实测）：Electron 把父进程那套 `npm_config_*` 原样传给了修复子进程，而 npm 的
+  //    优先级是"环境变量 > 由自身位置推出的默认值" —— 于是 `i -g` 的全局目录由**继承来的变量**
+  //    决定，而不是由这份 npm 的位置决定。表现是"拿 v24 的 npm 装进 v22 那棵树"：装是成功了，
+  //    可要升级的那份 dsh 一个字没变，界面于是永远提示有新版本。
+  //    这一组钉三件事：清洗在家里、调用点真的用了它、刻意注入的安装源排在它**之后**。
+  const doctorSource = fs.readFileSync(path.join(srcDir, 'main', 'env-doctor.ts'), 'utf8');
+  const runnerEnvBlock =
+    /const env: NodeJS\.ProcessEnv = \{([\s\S]*?)\n {4}\};/.exec(doctorSource)?.[1] ?? '';
+  const cleanAt = runnerEnvBlock.indexOf('cleanNpmEnv(envWithKnownBins(process.env))');
+  const registryAt = runnerEnvBlock.indexOf(
+    'pluginRegistryEnv(this.settings.all().pluginRegistry)',
+  );
+  check(
+    '环境自检（t80）：修复子进程的 env 先过 cleanNpmEnv，再注入安装源（顺序反了会丢源）',
+    cleanAt >= 0 &&
+      registryAt >= 0 &&
+      // 注入必须排在清洗**之后**：反过来的话，设置里填的安装源会被一起清掉
+      cleanAt < registryAt &&
+      // PATH 补齐那一步没被顺手拿掉（清洗只删 npm 配置键，不该动 PATH）
+      /cleanNpmEnv\(envWithKnownBins\(process\.env\)\)/.test(doctorSource),
+    `env 块里 cleanNpmEnv@${cleanAt} < pluginRegistryEnv@${registryAt}（都要 >= 0）`,
+  );
+  // 「会装进 …」那一行读的是 `readNpmPrefix`（它跑一次 `npm prefix -g`），它必须与执行安装时
+  // 那份 env 得出**同一个**答案 —— 否则会错位成"显示 v22、实际装进 v24"，比原来更难查。
+  const probeSource = fs.readFileSync(path.join(srcDir, 'main', 'env-probe.ts'), 'utf8');
+  const prefixBody = stripComments(blockOf(probeSource, 'async function readNpmPrefix('));
+  const runVersionBody = stripComments(blockOf(probeSource, 'function runVersion('));
+  check(
+    '环境自检（t80）：显示的「会装进」与执行走同一份干净 env（readNpmPrefix 也过 cleanNpmEnv）',
+    prefixBody.length > 0 &&
+      runVersionBody.length > 0 &&
+      /cleanNpmEnv\(envWithKnownBins\(process\.env\)\)/.test(prefixBody) &&
+      // 只钉"读数"这条路；`runVersion` 那条（`npm -v` 之类，结果不进"会装进"）本轮刻意没动
+      /envWithKnownBins\(process\.env\)/.test(runVersionBody) &&
+      !/cleanNpmEnv/.test(runVersionBody),
+    `readNpmPrefix=${prefixBody.length} 字符（cleanNpmEnv=${/cleanNpmEnv/.test(prefixBody)}）、runVersion=${runVersionBody.length} 字符（没动=${!/cleanNpmEnv/.test(runVersionBody)}）`,
+  );
+  check(
+    '环境自检（t80）：cleanNpmEnv 在家里（process-utils 的公开面），判据是前缀、大小写不敏感',
+    typeof processUtils.cleanNpmEnv === 'function' &&
+      (() => {
+        const base: NodeJS.ProcessEnv = {
+          PATH: '/usr/bin:/bin',
+          HOME: '/Users/someone',
+          npm_config_prefix: '/nvm/versions/node/v22.17.1',
+          NPM_CONFIG_PREFIX: '/nvm/versions/node/v22.17.1',
+          npm_config_registry: 'https://registry.npmmirror.com',
+          npm_config_cache: '/Users/someone/.npm',
+          HTTP_PROXY: 'http://127.0.0.1:7890',
+          LANG: 'zh_CN.UTF-8',
+        };
+        const cleaned = processUtils.cleanNpmEnv(base);
+        const leftNpmKeys = Object.keys(cleaned).filter((key) =>
+          key.toLowerCase().startsWith('npm_config_'),
+        );
+        return (
+          leftNpmKeys.length === 0 &&
+          // 非 npm 键一律留着：清的是 npm 的配置，不是"环境"（代理与 locale 都得在）
+          cleaned.PATH === '/usr/bin:/bin' &&
+          cleaned.HOME === '/Users/someone' &&
+          cleaned.HTTP_PROXY === 'http://127.0.0.1:7890' &&
+          cleaned.LANG === 'zh_CN.UTF-8' &&
+          // 键与值一起丢：留个空串在 npm 眼里仍然算"设过"
+          !Object.prototype.hasOwnProperty.call(cleaned, 'npm_config_prefix') &&
+          !Object.prototype.hasOwnProperty.call(cleaned, 'NPM_CONFIG_PREFIX') &&
+          // 前缀匹配而不是固定清单（漏一个键就等于没修）；没有下划线的 npm_config 不误伤
+          Object.keys(processUtils.cleanNpmEnv({ npm_config_whatever_new: '1' })).length === 0 &&
+          processUtils.cleanNpmEnv({ npm_config: '3' }).npm_config === '3' &&
+          // 入参不许被改（调用点那份 env 还要继续用）
+          Object.keys(base).length === 8 &&
+          base.npm_config_prefix === '/nvm/versions/node/v22.17.1' &&
+          // 空对象 / undefined 不炸，且返回的是对象不是 undefined
+          Object.keys(processUtils.cleanNpmEnv({})).length === 0 &&
+          Object.keys(processUtils.cleanNpmEnv(undefined)).length === 0
+        );
+      })(),
+    `typeof=${typeof processUtils.cleanNpmEnv}；清洗后只剩 ${Object.keys(
+      processUtils.cleanNpmEnv({ npm_config_prefix: 'x', PATH: '/bin' }),
+    ).join(',')}`,
   );
 }

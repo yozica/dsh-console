@@ -1,15 +1,20 @@
 <script setup lang="ts">
 /**
- * 环境自检页里**更新 Node / pnpm 的确认区**（t60 从 `EnvPane.vue` 拆出来）。
+ * 环境自检页里**更新 Node / pnpm / dsh 的确认区**（t60 从 `EnvPane.vue` 拆出来）。
  *
- * 两张"将要执行"：一张给 pnpm（就是装最新版），一张给 Node（版本档位、归属、下载来源、装到哪、
- * 要不要管理员权限、会改什么，以及跨档时必须说清的那几句）。**它不持有状态**：计划、档位、
- * 忙位、报告里的归属都由父级拿着 —— 父级那边同一个计划还画在"这一行"上（读数态 / 更新按钮），
- * 拆开就会变成两个真源。这里只做"计划 → 人话"与"按钮 → 事件"。
+ * 三张"将要执行"：一张给 pnpm（就是装最新版），一张给 dsh（装最新版，但要重启 dsh 才生效），
+ * 一张给 Node（版本档位、归属、下载来源、装到哪、要不要管理员权限、会改什么，以及跨档时
+ * 必须说清的那几句）。**它不持有状态**：计划、档位、忙位、报告里的归属、版本读数都由父级
+ * 拿着 —— 父级那边同一份计划还画在"这一行"上（读数态 / 更新按钮），拆开就会变成两个真源。
+ * 这里只做"计划 → 人话"与"按钮 → 事件"。
  *
  * 搬过来时只改了三处：两段各自的 `updateOpen === … && check.id === …` 合成 `kind` 一个开关、
  * `planFor('install-pnpm')` 换成 `pnpmPlan` 这个 prop，其余连模板带文案逐字未动（`cancelUpdate`
  * 这些名字在子组件里是同名的本地转发函数，模板因此不用改）。
+ *
+ * dsh 那一张是后加的（t79）：`pnpm` 与 `dsh` 的**命令形状相同**（`npm i -g <包>`），所以两张
+ * 卡长得一样，差别只在两句话 —— 目标那一栏（pnpm 写"最新版（由你的安装源决定）"，dsh 写主进程
+ * 查来的具体版本号）与收尾那句（dsh 要重启才生效）。
  */
 import { computed } from 'vue';
 
@@ -20,11 +25,12 @@ import type {
   EnvNodeChannel,
   EnvNodeOwner,
   EnvNodePlan,
+  EnvPkgUpdate,
 } from '../../../shared/ipc.js';
 
 const props = defineProps<{
-  /** 这一行是哪一项：`node` = 更新 Node（带档位控件），`pnpm` = 更新 pnpm（一句话 + 命令） */
-  kind: 'node' | 'pnpm';
+  /** 这一行是哪一项：`node` = 更新 Node（带档位控件），`pnpm` / `dsh` = 一句话 + 命令 */
+  kind: 'node' | 'pnpm' | 'dsh';
   /** 这一行的事实（pnpm 那张读出的是这一行的 detail） */
   check: EnvCheck;
   /** 全局忙位：安装 / 修复 / 后台还在装 */
@@ -39,6 +45,10 @@ const props = defineProps<{
   nodeUpdateError: string;
   /** pnpm 那张要用的修复计划（命令与目标目录都由主进程给） */
   pnpmPlan: EnvFixPlan | null;
+  /** dsh 那张要用的修复计划（与 pnpm 同一份东西，只是 action 是 install-dsh） */
+  dshPlan: EnvFixPlan | null;
+  /** dsh 的版本读数（查不到时 null）：目标写具体版本号，不写就只能说"最新版" */
+  dshUpdate: EnvPkgUpdate | null;
   /** 报告里这份 Node 的归属（计划里没有时兜底） */
   reportOwner: EnvNodeOwner;
   /** 「会先停掉 dsh」那句话：跨档与同档说法不同，父级的进行中/结果区也要用同一句 */
@@ -48,6 +58,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   cancel: [];
   'start-pnpm': [];
+  'start-dsh': [];
   'start-node': [];
   'pick-channel': [channel: EnvNodeChannel];
   refresh: [];
@@ -62,6 +73,10 @@ function cancelUpdate(): void {
 
 function startPnpmUpdate(): void {
   emit('start-pnpm');
+}
+
+function startDshUpdate(): void {
+  emit('start-dsh');
 }
 
 function startNodeUpdate(): void {
@@ -160,6 +175,22 @@ const nodeUpdateActionLabel = computed(() => {
   if (plan?.switchesChannel) return plan.channel === 'current' ? '换成当前版' : '换成稳定版';
   return '开始';
 });
+
+// ---------------------------------------------------------------- dsh 那张（t79）
+
+/** dsh 现在这一份的版本（主进程的探测事实；查不到时为 null，那一行就不写"现在"） */
+const dshCurrentText = computed(() => props.dshUpdate?.current ?? '');
+
+/**
+ * 这次要装的目标版本。
+ *
+ * 查得到就写具体版本号 —— 那正是"带版本比对"这个需求的意思；查不到（离线 / 源不可达）就退回
+ * 一句"最新版"，**不编版本号**（与不编命令同一条原则）。
+ */
+const dshTargetText = computed(() => {
+  const target = props.dshUpdate?.target ?? '';
+  return target || '最新版（由你的安装源决定）';
+});
 </script>
 
 <template>
@@ -184,6 +215,32 @@ const nodeUpdateActionLabel = computed(() => {
     <p class="wizard-notice">就是给这台电脑上的 pnpm 装最新版，不改别的东西。</p>
     <div class="btn-row">
       <button class="btn small primary" :disabled="busy" @click="startPnpmUpdate">开始</button>
+      <button class="btn small" @click="cancelUpdate">取消</button>
+    </div>
+  </div>
+
+  <div v-else-if="kind === 'dsh'" class="env-confirm">
+    <div class="env-confirm-title">将要执行</div>
+    <code class="env-confirm-cmd">
+      {{ dshPlan?.display || '（命令由主进程现算）' }}
+    </code>
+    <div class="wizard-versions">
+      <div class="wizard-version-line">
+        <span class="wizard-version-label">这一项现在</span>
+        <span class="wizard-version-old">{{ dshCurrentText || check.detail }}</span>
+        <span class="wizard-version-arrow" aria-hidden="true">→</span>
+        <span class="wizard-version-new">{{ dshTargetText }}</span>
+      </div>
+    </div>
+    <p class="env-confirm-line">
+      会装进：{{ dshPlan?.target || '（全局 npm 目录）' }}；不需要管理员权限；需要联网。
+    </p>
+    <p class="wizard-notice">
+      就是给这台电脑上的 dsh 装最新版，不改别的东西。装完会自动复检一次；
+      <b>正在运行的 dsh 不受影响，但要重新启动之后新版本才会生效。</b>
+    </p>
+    <div class="btn-row">
+      <button class="btn small primary" :disabled="busy" @click="startDshUpdate">开始</button>
       <button class="btn small" @click="cancelUpdate">取消</button>
     </div>
   </div>

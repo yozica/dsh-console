@@ -14,7 +14,7 @@
 
 import { ref, type Ref } from 'vue';
 
-import type { EnvDoctorReport, EnvFixAction, EnvFixState } from '../../shared/ipc';
+import type { EnvDoctorReport, EnvFixAction, EnvFixState, EnvPkgUpdates } from '../../shared/ipc';
 
 const api = window.dshConsole;
 
@@ -41,7 +41,20 @@ export const envFix: Ref<EnvFixState> = ref({
 /** 一键修复的流式输出（尾部 64 KB） */
 export const envFixOutput = ref('');
 
+/**
+ * dsh / pnpm 的版本读数（本机这一份 vs 安装源上的目标）。
+ *
+ * 与报告分开的理由：报告是**离线探测**（首启门禁也读它），而这一份要上网查 registry。
+ * 所以它是**按需**拉的（详情层打开 / 重新检测 / 一键修复完成之后），启动时不查 ——
+ * 用户没打开这一页就不该替他发这个请求。null = 还没查过。
+ *
+ * 没有单独的 loading 位：这一份只决定按钮上**写不写目标版本**，不决定按钮能不能点
+ * （"装最新版"这件事本来就不依赖它）——给它一个 busy 态只会让按钮在开页那一两秒里闪一下。
+ */
+export const pkgUpdates = ref<EnvPkgUpdates | null>(null);
+
 let inflight: Promise<EnvDoctorReport | null> | null = null;
+let pkgInflight: Promise<EnvPkgUpdates | null> | null = null;
 let wired = false;
 
 /** 建立唯一的订阅。幂等：重复调用不做第二次 */
@@ -56,8 +69,12 @@ export function wireEnvDoctor(): void {
 
 /** 把一份修复状态并进共享状态；带复检报告时顺手刷新报告 */
 export function applyEnvFixState(state: EnvFixState): void {
+  const before = envFix.value;
   envFix.value = state;
   if (state.report) envReport.value = state.report;
+  // 刚装完的那一份是**新版本**：行上的目标读数必须重算，否则"更新 dsh"会一直挂着
+  // 装之前那个目标版本（用户会以为没装上）。只在相位真的翻到 done 时拉，running 时不动。
+  if (state.phase === 'done' && before.phase !== 'done') void loadPkgUpdates(true);
 }
 
 /**
@@ -94,6 +111,37 @@ export function loadEnvReport(refresh = false): Promise<EnvDoctorReport | null> 
 /** 开始一轮修复前清掉上一轮的输出（主进程每轮从头发，这边也跟着从头贴） */
 export function clearEnvFixOutput(): void {
   envFixOutput.value = '';
+}
+
+/**
+ * 查一次版本读数（主进程那边还有 5 分钟缓存）。
+ *
+ * `refresh` 为真时请主进程绕过缓存重查。同一时刻只发一次（并发调用共用同一次往返）；
+ * 已经有读数且不是强制刷新时直接给 —— 详情层每次打开都会调它，这一层再挡一道是为了少发 IPC。
+ *
+ * 查询失败**不是"这一页坏了"**：这里吞掉异常（界面按"查不到"降级，入口照旧、只是不写目标版本），
+ * 与主进程"失败返回 null"是同一条口径。
+ */
+export function loadPkgUpdates(refresh = false): Promise<EnvPkgUpdates | null> {
+  if (!refresh && pkgUpdates.value) return Promise.resolve(pkgUpdates.value);
+  if (pkgInflight) return pkgInflight;
+  const task = (async (): Promise<EnvPkgUpdates | null> => {
+    try {
+      const next = await api.envPkgUpdates(refresh ? { refresh: true } : undefined);
+      pkgUpdates.value = next;
+      return next;
+    } catch {
+      // 界面与主进程半新半旧时（`envPkgUpdates` 还不存在）也是走这一条：按"查不到"降级
+      return null;
+    }
+  })();
+  pkgInflight = task;
+  // 与 loadEnvReport 同一个理由：清在赋值之后，别写在 finally 里（否则失败过的那一轮会被
+  // 重新挂回去，之后每次"有读数就直接给"都拿到那个旧结果）。
+  void task.then(() => {
+    if (pkgInflight === task) pkgInflight = null;
+  });
+  return task;
 }
 
 /** 跑一个动作：返回值就是最终状态，事件也会到，两条路都并进同一份状态 */

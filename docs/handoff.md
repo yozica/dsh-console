@@ -7,15 +7,21 @@
 
 ## 1. 一句话现状
 
-- 最新发布 **v0.6.5**（2026-09-26，GitHub Release 已发布，13 个产物：Windows 安装包 + 便携版、macOS arm64 / x64 的 dmg + zip、`latest.yml` / `latest-mac.yml` 与 blockmap）。
-- `main` = `6053066`（`chore: 发布 0.6.5`）；工作区干净、无 stash；远端只有 `main`（PR 合入自动删分支）。
-- 自 v0.6.4 起合入 **36 个 PR（#47–#82）**：先是"每个文件行数太多"的模块化拆分，接着是渲染层目录与样式分层整理，再是一批用户真机抓出来的界面小修。
+- 最新发布 **v0.6.6**（2026-09-27，GitHub Release 已发布）。
+- `main` = `9fe9032`（`Merge pull request #88`）；远端只有 `main`（PR 合入自动删分支）。
+- 自 v0.6.5 起合入 **5 个 PR（#84–#88）**：内嵌页 console 日志修复 → 终端选中复制（本地 Shell 与 macOS 键位）→ 插件页内边距，最后发布 v0.6.6。
+- **有一个待合并的 PR**：`feat/env-pkg-update-entry` —— 环境自检里给 dsh / pnpm 加**带版本比对**的更新入口。**用户已在真机上验过**：自检页点「更新 dsh」把 dsh 从 `0.1.5-rc.1` 升到 `0.2.0-rc.2`，而且落在 **console 实际使用的那棵 Node 树**下（见 §5 那条环境变量的坑）。
 - **下一件要做什么由人指定**（目前还没有定）。
 
 ## 2. 这条线上最近做了什么（时间倒序，都能在 `git log` 与 CHANGELOG 里核到）
 
 | PR      | 做了什么                                                                                            |
 | ------- | --------------------------------------------------------------------------------------------------- |
+| #88     | 本地 Shell（自建终端）也能复制：有选中时 `Ctrl+C` 就是复制，没选中照旧是中断                        |
+| #87     | 插件页「你的层」说明句的 16px 内边距（规则写在了另一个组件的 scoped 里）                            |
+| #86     | 终端工具条提示只留「dsh web 不读键盘输入」（复制那句用户裁定删掉）                                  |
+| #85     | 终端页支持选中后 `Ctrl+C` 复制（macOS 一条都不拦，判据收在 `xterm.ts` 的纯函数里）                  |
+| #84     | 内嵌页 console 日志全丢 —— `readConsoleMessage` 读错了参数位置                                      |
 | #82     | 应用内全屏时顶栏那句「发现新版本…」挪到地址**左边**（用户真机抓图指出；有自检钉住三者的位置关系）   |
 | #81     | 开发态「假装更新相位」：设置页「关于」卡一排按钮 + `⌘+Shift+U`，两条入口共用 `state/update-fake.ts` |
 | #80     | 应用内全屏时更新提示补一份到顶栏（底栏被 `display:none` 藏起来了）                                  |
@@ -54,7 +60,8 @@
 - **headless Chrome**：这台机器上截图后它**不会自己退出**、`--dump-dom` 会挂住。用 `--headless --disable-gpu --no-sandbox --no-first-run --hide-scrollbars --force-device-scale-factor=2 --user-data-dir=<仓内临时目录> --screenshot=<png>`，轮询到 PNG 落盘就 kill；量像素用 PIL。
 - `node scripts/selftest-sandbox.mjs` 会**就地**生成 `.js`（编译产物），跑完它自己按清单清掉；这就是它不能与 `npm run lint` 并发的理由。
 - 换环境后 `node_modules/`、`dist/`、`.verify/` 都不在：先 `npm ci`，证据要重新生成。
+- **这台机器的 Node / dsh 分布很绕，升级 dsh 时踩过一个大坑**：PATH 上排第一的 npm 来自 `~/.vite-plus/bin`（是指向 `vp` 的符号链接），而 nvm 下有 v16–v24 七个版本、**dsh 分别装在各自版本目录里**。解析器按"版本号倒序"挑，所以 console 用的是 **v24.14.1** 那份 dsh。而 `npm i -g` 装到哪棵树**并不由 npm 自己的位置决定** —— 从父进程继承来的 `npm_config_prefix`（一个键就够）就能把它翻到 v22.17.1。修法是 `cleanNpmEnv()`：起修复子进程前丢掉**整套** `npm_config_*` / `NPM_CONFIG_*`（只清 `prefix` 那两个不够，实测过），再注入我们自己的 registry 覆盖。同类风险在插件装卸那条 pnpm 链上**仍在**（见 `docs/env-doctor.md` 的已知问题）。
 
 ## 6. 快照
 
-写于 **2026-09-26**，对应 `main` = `6053066`、发布 **v0.6.5**。之后再有人动过，以 `git log` 与 CHANGELOG 为准。
+写于 **2026-10-07**，对应 `main` = `9fe9032`、发布 **v0.6.6**。之后再有人动过，以 `git log` 与 CHANGELOG 为准。
