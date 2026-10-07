@@ -625,6 +625,23 @@ main {
   line-height: 1.7;
 }
 
+/*
+  插件页那三个容器的**每一行都自己带 16px 左右内边距**（条目行要整行 hover / 分隔线，不能靠父级
+  padding），所以里面直接挂着的说明句要单独补 —— 漏了就会贴着卡片边缘顶头。
+  （用户抓图的原话："这里的间距怎么没了" —— 指 `.plugin-detail-body` 下那句"这一层还没有生效的内容…"。）
+
+  ⚠️ 这一条**必须留在全局表**：这三个容器分属两个组件（`.plugin-entries` / `.plugin-detail-body` 在
+  `PluginStackView.vue`，`.plugin-config-body` 在 `PluginConfigView.vue`），而 `<style scoped>` 编译出来
+  是 `选择器[data-v-<本组件hash>]` —— 写在 A 组件里，B 组件渲染的同名容器**一条都匹配不上**。
+  它原来就写在 `PluginConfigView.vue` 的 scoped 块里，于是 `PluginStackView.vue` 那个 `v-else` 的
+  说明句一直贴着卡片左右边缘（2026-09-30 用户抓图发现）。详见 AGENTS §7.41。
+*/
+.plugin-entries > .hint,
+.plugin-detail-body > .hint,
+.plugin-config-body > .hint {
+  padding: 0 16px;
+}
+
 /* 更新提示（t72 起两个组件都在用：底栏那条 + 应用内全屏时顶栏那格 → 进全局表，见 §7.33） */
 .update-hint {
   padding: 0;

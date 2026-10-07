@@ -365,10 +365,9 @@ const ownLayerWhy = (layer: PluginLayer): string =>
   padding: 0 16px;
 }
 
-/* 末尾那句"还有 N 条…"用的是全局零件 `.hint`（它没有左右内边距），而上面每一行条目是
-   `.plugin-entry { padding: 6px 16px }`、小标题也是 16px —— 不补这一条，这句会比上面所有
-   内容左移 16px（真机翻看时被发现）。 */
-.plugin-entries .hint {
-  padding: 0 16px;
-}
+/* 这里原本有一条 `.plugin-entries .hint { padding: 0 16px }` —— 现在统一在全局表里
+   （`.plugin-entries > .hint` 等三条，见 styles.css）：说明句的 16px 左右内边距横跨两个组件，
+   留在任意一个组件的 scoped 块里都够不着另一个（AGENTS §7.41）。
+   注意上面 `/plugin-entry { padding: 6px 16px }` 那条**不能**并进全局表 —— 它不是"共享件"而是
+   `PluginConfigView.vue` 与这里共同使用的条目行形状，两边都要有（`staysGlobal` 里钉着）。 */
 </style>

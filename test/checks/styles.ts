@@ -305,7 +305,12 @@ export function runStyles(repo: Repo): void {
       // t64：PluginPane 拆出来的生效配置视图（搜索 / 过滤 + 分组条目 + 行内改补丁层）
       pane: 'PluginConfigView.vue',
       scoped: ['.plugin-config', '.plugin-config-bar', '.plugin-search', '.plugin-group'],
-      staysGlobal: ['.plugin-tag', '.plugin-entry', '.plugin-entry-list'],
+      staysGlobal: [
+        '.plugin-tag',
+        '.plugin-entry',
+        '.plugin-entry-list',
+        '.plugin-config-body > .hint',
+      ],
     },
     {
       // t59：插件页拆出来的层栈视图（左边列表 + 右边详情）
@@ -320,7 +325,13 @@ export function runStyles(repo: Repo): void {
         '.plugin-entries',
       ],
       // 与父组件的"生效配置"视图共用同一种条目 / 标签 → 进全局表（t59 收进去的）
-      staysGlobal: ['.plugin-tag', '.plugin-entry', '.plugin-entry-list'],
+      // `.plugin-detail-body > .hint`：这一句的 16px 左右内边距横跨两个组件，必须留全局表（§7.41）
+      staysGlobal: [
+        '.plugin-tag',
+        '.plugin-entry',
+        '.plugin-entry-list',
+        '.plugin-detail-body > .hint',
+      ],
     },
     {
       // t59：插件页拆出来的操作输出面板（原文照贴 + 中断 / 收起 / 插进我的层）
