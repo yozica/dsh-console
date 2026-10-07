@@ -1,5 +1,5 @@
 ---
-'dsh-console': minor
+'dsh-console': patch
 ---
 
 环境自检里 dsh 那一行也有「更新」入口了，而且和 pnpm 一样**带版本比对**。
