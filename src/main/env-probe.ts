@@ -12,11 +12,13 @@ import type { LocalDshRequirement, NodeEngineDeclaration } from './env-node-rang
 import { EMPTY_VERSION_PROBE, PROBE_TIMEOUT_MS, STDERR_TAIL_CHARS } from './env-probe-types';
 import type { DshProbe, EnvProbeRaw, EnvRuntime, VersionProbe } from './env-probe-types';
 import { nodeOwnershipFacts } from './env-wizard';
+import { pluginProfileDir } from './plugin-parse';
 import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  PNPM_MANUAL_STEPS,
   canRunDsh,
   cleanNpmEnv,
   dshArgsFor,
@@ -31,6 +33,7 @@ import {
   isWindows,
   killTreeSync,
   launchSpec,
+  pnpmBindingForProfile,
   resolveDshLauncher,
   resolveShell,
   stripAnsi,
@@ -528,6 +531,11 @@ export async function collectEnvProbe(
   const npmPath = findNpm();
   const pnpmPath = findPnpmPath();
 
+  // 「更新 pnpm」的对象：**插件页真正会用的那一份**（`findPnpmForProfile`，不是上面那份 PATH 优先的）。
+  // 同步、不起子进程：读 profile 的 `.modules.yaml` + 一次 realpath + 归属纯函数；
+  // 版本号走 `pnpmVersionOf` 的进程内缓存（插件路径本来就会调用它，这里通常是一次命中）。
+  const pnpmBinding = pnpmBindingForProfile(pluginProfileDir());
+
   // 「外部 Node」这一行的语义（用户裁决，见 §7.25）：报**真正会被用来跑 dsh 的那一份**。
   // dsh 那条路按"版本管理器里配套安装"优先（`dshInterpreterCandidates`），而通用搜索
   // （`findNodePath`）是另一套顺序 —— 两者不一致时，用户拿终端里的 `node -v` 对账就会对不上。
@@ -599,6 +607,8 @@ export async function collectEnvProbe(
     nodeFromVersionManager: looksVersionManagerNode(nodeForRow),
     nodeOwner: ownership.owner,
     nodeOwnerEvidence: ownership.evidence,
+    // 「更新 pnpm」的归属事实（见上面那段说明：对象是 profile 匹配到的那一份）
+    pnpmBinding,
     error,
   };
 }
@@ -627,6 +637,18 @@ export function emptyProbe(runtime: EnvRuntime, error: string): EnvProbeRaw {
     // 采集本身炸了：归属只能是"判不出来"（证据里写清原因，不假装知道）
     nodeOwner: 'unknown',
     nodeOwnerEvidence: [error],
+    // pnpm 的归属同理：一律 unknown、不给自动动作（与 nodeOwner 同款）
+    pnpmBinding: {
+      owner: 'unknown',
+      file: null,
+      version: null,
+      expectedMajor: null,
+      matched: true,
+      canAutoUpdate: false,
+      blockedReason: '这一轮没能采集到 pnpm 的归属事实。',
+      evidence: [error],
+      hint: PNPM_MANUAL_STEPS,
+    },
     error,
   };
 }

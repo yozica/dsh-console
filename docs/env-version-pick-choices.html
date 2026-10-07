@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <title>dsh 版本下拉：三个摆法（自绘，替代原生 select）</title>
+    <style>
+      /* 令牌原样抄自 src/renderer/styles.css（:root 是暗色，[data-theme='light'] 覆盖） */
+      :root {
+        --t-xs: 11.5px;
+        --t-sm: 12.5px;
+        --t-md: 13.5px;
+        --t-lg: 15px;
+        --r-card: 14px;
+        --r-panel: 10px;
+        --r-control: 8px;
+        --dur: 140ms;
+        --sans:
+          'IBM Plex Sans', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei', system-ui,
+          sans-serif;
+        --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+        --bg: #0a0c10;
+        --surface: #12151b;
+        --surface-2: #181c24;
+        --well: #0c0f14;
+        --rail: #0e1117;
+        --hairline: rgba(255, 255, 255, 0.07);
+        --hairline-strong: rgba(255, 255, 255, 0.13);
+        --ink: #e8eaf0;
+        --ink-dim: #a3aabb;
+        --ink-faint: #767e90;
+        --accent: #22d3ee;
+        --accent-ink: #04262c;
+        --accent-soft: rgba(34, 211, 238, 0.13);
+        --run: #34d399;
+        --run-soft: rgba(52, 211, 153, 0.13);
+        --sky: #38bdf8;
+        --sky-soft: rgba(56, 189, 248, 0.13);
+        --amber: #fbbf24;
+        --amber-soft: rgba(251, 191, 36, 0.13);
+        --rose: #fb7185;
+        --focus: rgba(34, 211, 238, 0.45);
+        --scroll-thumb: rgba(255, 255, 255, 0.14);
+        --shadow-focus: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -24px rgba(0, 0, 0, 0.8);
+      }
+      :root[data-theme='light'] {
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-2: #f5f7fb;
+        --well: #f2f5f9;
+        --rail: #e6ebf2;
+        --hairline: rgba(16, 24, 40, 0.12);
+        --hairline-strong: rgba(16, 24, 40, 0.2);
+        --ink: #101828;
+        --ink-dim: #4a566b;
+        --ink-faint: #6b7688;
+        --accent: #0e7490;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(8, 145, 178, 0.16);
+        --run: #047857;
+        --run-soft: rgba(4, 120, 87, 0.15);
+        --sky: #0369a1;
+        --sky-soft: rgba(3, 105, 161, 0.15);
+        --amber: #92400e;
+        --amber-soft: rgba(146, 64, 14, 0.14);
+        --rose: #be123c;
+        --focus: rgba(14, 116, 144, 0.35);
+        --scroll-thumb: rgba(16, 24, 40, 0.22);
+        --shadow-focus: 0 1px 2px rgba(16, 24, 40, 0.06), 0 18px 40px -26px rgba(16, 24, 40, 0.35);
+      }
+
+      /* 暗色示例要单独再声明一遍：亮色的值钉在 :root[data-theme='light'] 上，
+         子元素写 data-theme="dark" 是盖不回来的（那一段就是干这个用的） */
+      [data-theme='dark'] {
+        --bg: #0a0c10;
+        --surface: #12151b;
+        --surface-2: #181c24;
+        --well: #0c0f14;
+        --rail: #0e1117;
+        --hairline: rgba(255, 255, 255, 0.07);
+        --hairline-strong: rgba(255, 255, 255, 0.13);
+        --ink: #e8eaf0;
+        --ink-dim: #a3aabb;
+        --ink-faint: #767e90;
+        --accent: #22d3ee;
+        --accent-ink: #04262c;
+        --accent-soft: rgba(34, 211, 238, 0.13);
+        --run: #34d399;
+        --run-soft: rgba(52, 211, 153, 0.13);
+        --sky: #38bdf8;
+        --sky-soft: rgba(56, 189, 248, 0.13);
+        --amber: #fbbf24;
+        --amber-soft: rgba(251, 191, 36, 0.13);
+        --scroll-thumb: rgba(255, 255, 255, 0.14);
+        --shadow-focus: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 40px -24px rgba(0, 0, 0, 0.8);
+        /* 颜色也必须在这里重新声明：`color` 在 body 上已按亮色算过一次，是按**计算值**继承的，
+           只改自定义属性盖不回来（真机上主题挂在 html 上，所以没这个问题） */
+        color: var(--ink);
+        background: var(--bg);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 26px 30px 40px;
+        background: var(--bg);
+        color: var(--ink);
+        font: var(--t-md) / 1.55 var(--sans);
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .lede {
+        margin: 0 0 22px;
+        color: var(--ink-dim);
+        font-size: var(--t-sm);
+        max-width: 78ch;
+      }
+      .lede code {
+        font-family: var(--mono);
+        color: var(--ink);
+      }
+
+      .row {
+        display: flex;
+        gap: 22px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .cand {
+        flex: 1 1 340px;
+        min-width: 330px;
+      }
+      .cand > h2 {
+        margin: 0 0 3px;
+        font-size: var(--t-md);
+        font-weight: 600;
+      }
+      .cand > h2 span {
+        color: var(--ink-faint);
+        font-weight: 400;
+      }
+      .cand > p {
+        margin: 0 0 10px;
+        color: var(--ink-dim);
+        font-size: var(--t-xs);
+        min-height: 44px;
+      }
+      .cand .pro {
+        color: var(--run);
+      }
+      .cand .con {
+        color: var(--amber);
+      }
+
+      /* 模拟"将要执行"那张卡：与确认区同一套表面与发丝线 */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-card);
+        padding: 12px 13px 14px;
+        position: relative;
+      }
+      .card .k {
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+      .card .cmd {
+        margin: 4px 0 10px;
+        padding: 7px 9px;
+        background: var(--well);
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-control);
+        font-family: var(--mono);
+        font-size: var(--t-sm);
+        color: var(--ink);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .picklabel {
+        color: var(--ink-dim);
+        font-size: var(--t-xs);
+        margin: 0 0 6px;
+      }
+
+      /* ── 触发按钮（三个候选共用）────────────────────────────── */
+      .trigger {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 7px 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-control);
+        color: var(--ink);
+        font: var(--t-sm) / 1.4 var(--sans);
+        cursor: pointer;
+        text-align: left;
+      }
+      .trigger .v {
+        font-family: var(--mono);
+      }
+      .trigger .caret {
+        margin-left: auto;
+        color: var(--ink-faint);
+      }
+      .trigger.is-open {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--focus);
+      }
+
+      /* 版本号 + 标签 */
+      .ver {
+        font-family: var(--mono);
+        font-size: var(--t-sm);
+      }
+      .tags {
+        display: inline-flex;
+        gap: 4px;
+        margin-left: 7px;
+      }
+      .tag {
+        padding: 1px 5px;
+        border-radius: 5px;
+        font-size: 10px;
+        letter-spacing: 0.02em;
+        background: var(--surface-2);
+        color: var(--ink-dim);
+        border: 1px solid var(--hairline);
+      }
+      .tag.latest {
+        background: var(--run-soft);
+        color: var(--run);
+        border-color: transparent;
+      }
+      .tag.next {
+        background: var(--sky-soft);
+        color: var(--sky);
+        border-color: transparent;
+      }
+      .tag.alpha {
+        background: var(--amber-soft);
+        color: var(--amber);
+        border-color: transparent;
+      }
+      .tag.cur {
+        background: var(--accent-soft);
+        color: var(--accent);
+        border-color: transparent;
+      }
+
+      /* ── A：自绘浮层（absolute 定位 + 内部滚动）─────────────── */
+      .pop {
+        position: absolute;
+        z-index: 5;
+        left: 13px;
+        right: 13px;
+        margin-top: 6px;
+        background: var(--surface-2);
+        border: 1px solid var(--hairline-strong);
+        border-radius: var(--r-panel);
+        box-shadow: var(--shadow-focus);
+        padding: 5px;
+        max-height: 232px;
+        overflow: auto;
+      }
+      .pop::-webkit-scrollbar {
+        width: 9px;
+      }
+      .pop::-webkit-scrollbar-thumb {
+        background: var(--scroll-thumb);
+        border-radius: 9px;
+        border: 2px solid transparent;
+        background-clip: content-box;
+      }
+      .opt {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .opt:hover {
+        background: var(--accent-soft);
+      }
+      .opt.on {
+        background: var(--accent-soft);
+      }
+      .opt.on .ver {
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .opt .right {
+        margin-left: auto;
+        color: var(--ink-faint);
+        font-size: var(--t-xs);
+      }
+
+      /* ── B：卡片内联展开（不浮层，把卡片撑高）──────────────── */
+      .inline {
+        margin-top: 6px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: var(--well);
+        max-height: 196px;
+        overflow: auto;
+      }
+      .inline .opt {
+        border-radius: 0;
+        padding: 6px 10px;
+      }
+      .inline .opt + .opt {
+        border-top: 1px solid var(--hairline);
+      }
+
+      /* ── C：版本时间轴（推荐）───────────────────────────────── */
+      .rail {
+        margin-top: 6px;
+        padding: 2px 0;
+      }
+      .rel {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .rel .axis {
+        position: relative;
+        width: 14px;
+        align-self: stretch;
+        flex: 0 0 14px;
+      }
+      /* 竖轴本体：一条发丝线，贯穿整列 */
+      .rel .axis::before {
+        content: '';
+        position: absolute;
+        left: 6px;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: var(--hairline-strong);
+      }
+      .rel:first-child .axis::before {
+        top: 11px;
+      }
+      .rel:last-child .axis::before {
+        bottom: calc(100% - 12px);
+      }
+      .rel .node {
+        position: absolute;
+        left: 3px;
+        top: 9px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--surface);
+        border: 1.5px solid var(--hairline-strong);
+      }
+      .rel .body {
+        flex: 1 1 auto;
+        padding: 5px 8px 5px 0;
+        border-radius: 6px;
+      }
+      /* 当前：实心绿点 + 当前 chip；目标：accent 环 + 目标 chip */
+      .rel.is-cur .node {
+        background: var(--run);
+        border-color: var(--run);
+      }
+      .rel.is-target .node {
+        background: var(--surface);
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      .rel.is-cur .body .ver {
+        color: var(--run);
+      }
+      .rel.is-target .body .ver {
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .rel.is-target .body {
+        background: var(--accent-soft);
+      }
+      .rel .who {
+        margin-left: 7px;
+        font-size: var(--t-xs);
+        color: var(--ink-dim);
+      }
+      /* 降级方向：从当前到目标之间那一段轴换成琥珀色实线，并挂一个 ↓ */
+      .rel.is-down .axis::before {
+        background: var(--amber);
+        opacity: 0.75;
+        width: 2px;
+        left: 6px;
+      }
+      .sign {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 7px 0 0 24px;
+        color: var(--amber);
+        font-size: var(--t-xs);
+      }
+      .sign b {
+        font-weight: 600;
+      }
+
+      .note {
+        margin-top: 14px;
+        padding: 9px 11px;
+        border: 1px solid var(--hairline);
+        border-radius: var(--r-panel);
+        background: var(--surface-2);
+        color: var(--ink-dim);
+        font-size: var(--t-xs);
+      }
+      .h2dark {
+        margin: 30px 0 10px;
+        font-size: var(--t-md);
+        font-weight: 600;
+      }
+      .darkwrap {
+        display: flex;
+        gap: 22px;
+        padding: 18px 20px;
+        border-radius: var(--r-card);
+        background: var(--bg);
+      }
+      .darkwrap .cand {
+        flex: 0 1 380px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>dsh 版本下拉：三个自绘摆法</h1>
+    <p class="note">
+      <b>2026-10-07 裁定：A 已采纳，并把 C 的<u>时间轴</u>与<u>粘性摘要行</u>合进浮层</b> ——
+      用户先选了 A（自绘浮层），随后要求"ac 的能力不能结合吗"，于是落地的是**A 的形态 + C
+      的画法**：A 的机制 （Teleport 到 body +
+      <code>--z-pop</code>、键盘、点外关闭、ARIA）一个字没动，只把列表换成时间轴， 顶上多一条 sticky
+      摘要。见 <code>src/renderer/pages/env/EnvUpdateConfirm.vue</code> 与
+      <code>docs/env-doctor.md</code> §3.6。<b>B 未采用</b>；这份预览按仓库惯例保留，作为摆法记录。
+      <br />
+      <b>2026-10-07 后续裁定：这个版本下拉<u>只有 dsh 那一档有</u> —— pnpm 不做选版本。</b>
+      用户问过"为什么 pnpm 不支持跨版本切换"，听完理由（pnpm 的 store 布局按大版本走，跨大版本要连同
+      profile 的依赖一起迁移，那是一次单独的迁移动作）之后决定 pnpm 固定在线内最新。下面这些摆法仍然
+      适用于 dsh 那一档。
+    </p>
+    <p class="lede">
+      目的是替掉现在的原生 <code>&lt;select&gt;</code>（它的弹出列表由操作系统画，样式插不进去，
+      所以那一片和整个界面都不搭）。三个候选都用你们现有的令牌与控件语汇：
+      <code>--surface-2</code> / <code>--hairline-strong</code> / <code>--r-panel</code> /
+      <code>--shadow-focus</code>，版本号一律 <code>--mono</code>。
+    </p>
+
+    <div class="row">
+      <!-- ── A ─────────────────────────────────────────────── -->
+      <section class="cand">
+        <h2>A · 自绘浮层 <span>（最接近原生行为）</span></h2>
+        <p>
+          点触发器弹一层，宽同卡片、限高 <b>232px</b> 内部滚动。<br />
+          <span class="pro">＋</span> 不挤动卡片；键盘 ↑↓ / Enter / Esc 与点外关闭。<br />
+          <span class="con">−</span> 仍然是浮层，卡片窄时会被裁（要 Teleport 或调层号）。
+        </p>
+        <div class="card">
+          <p class="k">将要执行</p>
+          <p class="cmd">…/v24.14.1/bin/npm i -g @deepseek-ai/dsh@0.2.0-rc.2</p>
+          <p class="picklabel">选择版本</p>
+          <button class="trigger is-open">
+            <span class="v">0.2.0-rc.2</span>
+            <span class="tags"><span class="tag latest">latest</span></span>
+            <span class="caret">▾</span>
+          </button>
+          <div class="pop">
+            <div class="opt on">
+              <span class="ver">0.2.1-alpha.1</span>
+              <span class="tags"><span class="tag alpha">alpha</span></span>
+            </div>
+            <div class="opt">
+              <span class="ver">0.2.0-rc.2</span>
+              <span class="tags"
+                ><span class="tag latest">latest</span><span class="tag next">next</span></span
+              >
+              <span class="right">当前</span>
+            </div>
+            <div class="opt"><span class="ver">0.2.0-rc.1</span></div>
+            <div class="opt">
+              <span class="ver">0.1.7-rc.2</span
+              ><span class="tags"><span class="tag next">next</span></span>
+            </div>
+            <div class="opt"><span class="ver">0.1.7-rc.1</span></div>
+            <div class="opt"><span class="ver">0.1.5-rc.3</span></div>
+            <div class="opt"><span class="ver">0.1.5-rc.1</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── B ─────────────────────────────────────────────── -->
+      <section class="cand">
+        <h2>B · 卡片内联展开 <span>（不开浮层）</span></h2>
+        <p>
+          列表直接长在卡片里，把下面的内容顶下去。<br />
+          <span class="pro">＋</span> 没有裁剪与层号问题；滚动条就是页面自己的。<br />
+          <span class="con">−</span> 30 个版本会把卡片撑得很高，"将要执行"被顶出视野。
+        </p>
+        <div class="card">
+          <p class="k">将要执行</p>
+          <p class="cmd">…/v24.14.1/bin/npm i -g @deepseek-ai/dsh@0.2.0-rc.2</p>
+          <p class="picklabel">选择版本</p>
+          <button class="trigger is-open">
+            <span class="v">0.2.0-rc.2</span>
+            <span class="tags"><span class="tag latest">latest</span></span>
+            <span class="caret">▾</span>
+          </button>
+          <div class="inline">
+            <div class="opt">
+              <span class="ver">0.2.1-alpha.1</span
+              ><span class="tags"><span class="tag alpha">alpha</span></span>
+            </div>
+            <div class="opt on">
+              <span class="ver">0.2.0-rc.2</span
+              ><span class="tags"><span class="tag latest">latest</span></span
+              ><span class="right">当前</span>
+            </div>
+            <div class="opt"><span class="ver">0.2.0-rc.1</span></div>
+            <div class="opt"><span class="ver">0.1.7-rc.2</span></div>
+            <div class="opt"><span class="ver">0.1.5-rc.1</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── C ─────────────────────────────────────────────── -->
+      <section class="cand">
+        <h2>C · 版本时间轴 <span>（推荐）</span></h2>
+        <p>
+          把发行列表画成一条<b>轴</b>：节点串起来，<b>当前</b>是实心绿点、<b>目标</b>是 accent 环；
+          从当前往目标走的那一段轴变色，并在旁边挂一个 <b>↓ 降级</b>。<br />
+          <span class="pro">＋</span> 一眼看出"我在哪、要去哪、是升是降"——原生 select
+          永远给不了这个。<br />
+          <span class="con">−</span> 比纯列表多一点绘制成本（一条伪元素线 + 两个节点态）。
+        </p>
+        <div class="card">
+          <p class="k">将要执行</p>
+          <p class="cmd">…/v24.14.1/bin/npm i -g @deepseek-ai/dsh@0.1.7-rc.2</p>
+          <p class="picklabel">选择版本</p>
+          <button class="trigger is-open">
+            <span class="v">0.1.7-rc.2</span>
+            <span class="caret">▾</span>
+          </button>
+          <div class="rail">
+            <div class="rel">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"
+                ><span class="ver">0.2.1-alpha.1</span
+                ><span class="tags"><span class="tag alpha">alpha</span></span></span
+              >
+            </div>
+            <div class="rel is-cur">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"
+                ><span class="ver">0.2.0-rc.2</span
+                ><span class="tags"
+                  ><span class="tag latest">latest</span><span class="tag next">next</span></span
+                ><span class="who">当前</span></span
+              >
+            </div>
+            <div class="rel is-down">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"><span class="ver">0.2.0-rc.1</span></span>
+            </div>
+            <div class="rel is-target is-down">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"
+                ><span class="ver">0.1.7-rc.2</span><span class="who">目标</span></span
+              >
+            </div>
+            <div class="rel">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"><span class="ver">0.1.5-rc.3</span></span>
+            </div>
+            <div class="rel">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"><span class="ver">0.1.5-rc.1</span></span>
+            </div>
+          </div>
+          <div class="sign">↓ <b>这是一次降级</b>：0.2.0-rc.2 → 0.1.7-rc.2</div>
+        </div>
+      </section>
+    </div>
+
+    <p class="note">
+      三个候选都保留现在的行为：默认落在主进程算出的目标、只允许列表里存在的版本（主进程会拿这一轮的
+      版本列表再校验一次）、选中值仍由父级转成一次 <code>env:fix-plan</code> 取定向命令。
+      差别只在"列表怎么画"：A 浮层 / B 内联 / C 时间轴。
+    </p>
+
+    <h2 class="h2dark">同一个控件在暗色主题下（C 时间轴 + 折叠态触发器）</h2>
+    <div class="darkwrap">
+      <div data-theme="dark" class="cand">
+        <div class="card">
+          <p class="picklabel">选择版本（折叠态）</p>
+          <button class="trigger">
+            <span class="v">0.2.0-rc.2</span
+            ><span class="tags"><span class="tag latest">latest</span></span
+            ><span class="caret">▾</span>
+          </button>
+        </div>
+      </div>
+      <div data-theme="dark" class="cand" style="flex: 0 1 400px">
+        <div class="card">
+          <div class="rail">
+            <div class="rel">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"
+                ><span class="ver">0.2.1-alpha.1</span
+                ><span class="tags"><span class="tag alpha">alpha</span></span></span
+              >
+            </div>
+            <div class="rel is-cur">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"
+                ><span class="ver">0.2.0-rc.2</span
+                ><span class="tags"
+                  ><span class="tag latest">latest</span><span class="tag next">next</span></span
+                ><span class="who">当前</span></span
+              >
+            </div>
+            <div class="rel is-down">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"><span class="ver">0.2.0-rc.1</span></span>
+            </div>
+            <div class="rel is-target is-down">
+              <span class="axis"><span class="node"></span></span
+              ><span class="body"
+                ><span class="ver">0.1.7-rc.2</span><span class="who">目标</span></span
+              >
+            </div>
+          </div>
+          <div class="sign">↓ <b>这是一次降级</b>：0.2.0-rc.2 → 0.1.7-rc.2</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

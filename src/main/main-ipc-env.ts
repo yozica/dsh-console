@@ -23,16 +23,11 @@ import {
   WIZARD_STEP_SKIPPABLE,
 } from './env-doctor';
 import { PNPM_PURE_JS_SPEC, pnpmInstallSpec } from './env-fix-plan';
-import {
-  DSH_PACKAGE,
-  fetchPackageMetadata,
-  normalizeRegistryBase,
-  packageNameOfSpec,
-  pickPackageUpdate,
-} from './npm-registry';
+import { loadPkgUpdates } from './pkg-updates';
 import { hasVcRuntime } from './process-utils';
 import type {
   EnvFixAction,
+  EnvFixPlan,
   EnvFixState,
   EnvInstallState,
   EnvNodePlan,
@@ -41,17 +36,79 @@ import type {
   EnvWizardStepId,
 } from '../shared/ipc';
 
-/**
- * 版本比对的缓存时长：5 分钟。与模型目录缓存同量级 —— 这一轮查不到时不许把人长期锁在
- * "查不到"上（用户装完再点一次「重新检测」就该重新问一遍）。
- */
-const PKG_UPDATE_TTL_MS = 5 * 60 * 1000;
-
-/** 单次查询的超时：几秒。超时不是"已是最新"，是"这一轮查不到"（见 npm-registry.ts 的文件头） */
-const PKG_QUERY_TIMEOUT_MS = 8000;
-
 export function registerEnvIpc(ctx: IpcContext): void {
   const { settings, dshManager, envDoctor, envFixRunner, nodeInstaller, send } = ctx;
+
+  /**
+   * 取一份版本读数。缓存与查询都在 `pkg-updates.ts`（**执行侧要用同一份** ——
+   * `EnvDoctor.fixPlan('update-pnpm')` 把目标版本钉进 argv，两边不一致就会"显示装到 A、实际装 B"）。
+   *
+   * 只在详情层打开 / 重新检测 / 修复完成之后被调（渲染层 `state/env-doctor.ts`），
+   * **不进 `EnvDoctorReport`**（那条路首启门禁也在读，塞网络请求会把门禁变成"断网就进不去"）。
+   */
+  async function pkgUpdates(refresh = false): Promise<EnvPkgUpdates> {
+    const report = await envDoctor.report();
+    return await loadPkgUpdates({
+      settings: settings.all(),
+      installed: await envDoctor.installedVersions(),
+      // pnpm 那一项的目标：有 pnpm 时按"同一大版本内最新"（更新路径），
+      // 没有 pnpm 时按**安装线**（缺 VC++ 运行库那就是纯 JS 的 10.x）—— 后者由这里算好传进去
+      pnpmBinding: report.pnpmBinding,
+      pnpmInstallMajor: pnpmInstallSpec(hasVcRuntime()) === PNPM_PURE_JS_SPEC ? '10' : null,
+      refresh,
+    });
+  }
+
+  /**
+   * 校验渲染层递回来的**版本号**（安全模型：递回来的字符串一概不采信，与"不采信它递回来的路径"同一条）。
+   *
+   * 四道闸门，缺一不可：
+   *   ① **只有 `install-dsh` 接受它**（版本下拉只存在于 dsh 那一档）；`update-pnpm` / `install-pnpm`
+   *      一律拒绝 —— 收下再悄悄忽略就是"显示 A、执行 B"，与方案 A 立下的不变量相反；
+   *   ② 形状必须严格是 semver（`x.y.z` 可带预发布后缀）；
+   *   ③ **必须落在这一轮从安装源取到的版本列表里**；
+   *   ④ 列表拿不到（离线）时**拒绝**。绝不放一个没校验过的字符串进 argv。
+   *
+   * 为什么 pnpm 那一档不选版本（t84 用户裁定）：它的目标固定在 profile 那条**大版本线内的最新**，
+   * 而跨大版本要连同 profile 的依赖一起迁移（store 布局按大版本走，见 `parseProfilePnpmMajor`），
+   * 那是一次**单独的迁移动作**，不属于"更新 pnpm"。
+   */
+  async function resolveFixVersion(request: {
+    action?: EnvFixAction;
+    version?: unknown;
+  }): Promise<{ ok: true; version: string | null } | { ok: false; message: string }> {
+    const raw = request.version;
+    if (raw === undefined || raw === null || raw === '') return { ok: true, version: null };
+    if (typeof raw !== 'string') return { ok: false, message: '版本号必须是字符串。' };
+    const wanted = raw.trim();
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(wanted)) {
+      return { ok: false, message: `版本号的形状不对：${wanted}（要像 0.2.0-rc.2 这样）` };
+    }
+    if (request.action !== 'install-dsh') {
+      return {
+        ok: false,
+        message:
+          request.action === 'update-pnpm'
+            ? 'pnpm 那一档不选版本：它的目标固定在 profile 那条大版本线内的最新版（跨大版本要连同 profile 的依赖一起迁移，那是一次单独的迁移动作）。'
+            : '这个动作不接受版本参数。',
+      };
+    }
+    const updates = await pkgUpdates(false);
+    const list = updates.dsh.versions;
+    if (list.length === 0) {
+      return {
+        ok: false,
+        message: '这一轮没能从安装源取到版本列表，没法校验这个版本号；点「重新检测」再试一次。',
+      };
+    }
+    if (!list.includes(wanted)) {
+      return {
+        ok: false,
+        message: `安装源上没有这个版本：${wanted}（以这一轮取到的版本列表为准）`,
+      };
+    }
+    return { ok: true, version: wanted };
+  }
   // ---------------------------------------------------------------- 运行环境自检 + 一键修复
   // 报告不进快照：探测要起子进程（各 8 秒超时），塞进 app:snapshot 会把它拖成秒级。
   // 渲染层走 envCheck() 拉一份（有缓存立刻给），修复过程中的复检结果随 env:fix-state 回来。
@@ -62,21 +119,27 @@ export function registerEnvIpc(ctx: IpcContext): void {
     },
   );
 
-  // 只接受 action：命令（file / args）由主进程用 fixPlan() 现场重算，
-  // 渲染层递回来的路径一概不采信（与 7.18「救援时渲染层递来的路径不可信」同一条原则）。
+  // 只接受 action（+ 可选的、**已校验**的版本号）：命令（file / args）由主进程用 fixPlan() 现场重算，
+  // 渲染层递回来的路径与版本号一概不采信（与 7.18「救援时渲染层递来的路径不可信」同一条原则）。
   ipcMain.handle(
     'env:fix',
     async (_event: IpcMainInvokeEvent, request: unknown): Promise<EnvFixState> => {
-      const { action } = (request ?? {}) as { action?: EnvFixAction };
-      if (action !== 'install-pnpm' && action !== 'install-dsh') {
+      const parsed = (request ?? {}) as { action?: EnvFixAction; version?: unknown };
+      const action = parsed.action;
+      if (action !== 'install-pnpm' && action !== 'install-dsh' && action !== 'update-pnpm') {
         return { ...envFixRunner.state(), phase: 'error', message: '不认识的修复动作' };
+      }
+      const checked = await resolveFixVersion({ action, version: parsed.version });
+      if (!checked.ok) {
+        dshManager.log('warn', `环境修复的版本号被拒绝：${checked.message}`);
+        return { ...envFixRunner.state(), phase: 'error', message: checked.message };
       }
       // 与安装通道共用一把锁（冻结 §4.4）：忙则一个字都不写，把当前状态与原因回给界面
       if (anyoneBusy(ctx)) {
         return { ...envFixRunner.state(), phase: 'error', message: BUSY_MESSAGE };
       }
       try {
-        return await envFixRunner.run(action);
+        return await envFixRunner.run(action, checked.version);
       } catch (error) {
         const message = `修复没能开始：${messageOf(error)}`;
         dshManager.log('error', `环境修复失败：${message}`);
@@ -91,61 +154,32 @@ export function registerEnvIpc(ctx: IpcContext): void {
   //
   // 「更新 dsh / 更新 pnpm」那两个入口要在按钮上写出目标版本，而**目标必须是那条命令真的会
   // 装到的版本** —— 否则会出现"提示有新版本、点了却装不到"，或者更糟：装完仍然提示有新版本
-  // （永远不收敛）。判据见 `npm-registry.ts` 的 `pickPackageUpdate`。
+  // （永远不收敛）。判据见 `npm-registry.ts` 的 `pickPackageUpdate`，缓存与查询在 `pkg-updates.ts`。
   //
-  // 它**不进 `envDoctor.report()`**：那条路首启门禁也在读，往里塞网络请求会把门禁变成
-  // "断网就进不去"。所以是一条按需的只读通道 + 5 分钟内存缓存，只在详情层打开 / 重新检测 /
-  // 修复完成之后被调一次（渲染层 `state/env-doctor.ts` 的 `loadPkgUpdates`）。
-  //
-  // 失败一律降级：拿不到就当作"查不到"，界面退回不带版本号的更新入口，**不把错误当结论展示**。
-  let pkgUpdatesCache: { at: number; value: EnvPkgUpdates } | null = null;
-
+  // 失败一律降级：拿不到就当作"查不到"，界面不给按钮、也不编结论，**不把错误当结论展示**。
   ipcMain.handle(
     'env:pkg-updates',
     async (_event: IpcMainInvokeEvent, options?: { refresh?: boolean }): Promise<EnvPkgUpdates> => {
-      const now = Date.now();
-      if (!options?.refresh && pkgUpdatesCache && now - pkgUpdatesCache.at < PKG_UPDATE_TTL_MS) {
-        return pkgUpdatesCache.value;
-      }
-      const value = await collectPkgUpdates();
-      pkgUpdatesCache = { at: Date.now(), value };
-      return value;
+      return await pkgUpdates(Boolean(options?.refresh));
     },
   );
 
-  /** 两项一起查（一次查询两个包，并行）。**只读**：不改用户的 .npmrc、不写任何配置文件。 */
-  async function collectPkgUpdates(): Promise<EnvPkgUpdates> {
-    const installed = await envDoctor.installedVersions();
-    const base = normalizeRegistryBase(settings.all().pluginRegistry);
-    // pnpm 装哪一档由 VC++ 运行库决定（VM-09）：缺运行库时那条线装的是 `pnpm@10`。
-    // 目标版本必须跟着**同一条线**取，否则会出现"提示有新版本、点了却装不到"。
-    const pnpmSpec = pnpmInstallSpec(hasVcRuntime());
-    const [dshMeta, pnpmMeta] = await Promise.all([
-      fetchPackageMetadata(DSH_PACKAGE, { base, timeoutMs: PKG_QUERY_TIMEOUT_MS }),
-      fetchPackageMetadata(packageNameOfSpec(pnpmSpec), { base, timeoutMs: PKG_QUERY_TIMEOUT_MS }),
-    ]);
-    const value: EnvPkgUpdates = {
-      checkedAt: Date.now(),
-      // 不带版本的 spec（`@deepseek-ai/dsh`）装的就是 registry 的 latest 标签，所以 allowMajor 不给
-      dsh: pickPackageUpdate({ current: installed.dsh, metadata: dshMeta }),
-      // `pnpm@10` 那条线装的是"10.x 里最高的已发布版本"，所以把主版本号递下去
-      pnpm: pickPackageUpdate({
-        current: installed.pnpm,
-        metadata: pnpmMeta,
-        allowMajor: pnpmSpec === PNPM_PURE_JS_SPEC ? '10' : null,
-      }),
-    };
-    // 一行证据落日志：排查"为什么行上没有版本读数"时，这条比问用户快
-    dshManager.log(
-      'info',
-      `版本比对：安装源 ${base} → dsh 本机 ${value.dsh.current ?? '（没测到）'} / 目标 ${
-        value.dsh.target ?? '（没查到）'
-      }；pnpm（${pnpmSpec}）本机 ${value.pnpm.current ?? '（没测到）'} / 目标 ${
-        value.pnpm.target ?? '（没查到）'
-      }`,
-    );
-    return value;
-  }
+  // 确认区**按用户选的版本**再取一次计划 —— 与执行侧同一个 builder、同一份校验，
+  // 所以"确认区里显示的那条命令"与"真正跑的那条"必然一致（显示 == 执行，方案 A 立下的不变量）。
+  // 与 `envNodePlan` 同一套做法：计划类的走 invoke，过程类的走事件。
+  ipcMain.handle(
+    'env:fix-plan',
+    async (_event: IpcMainInvokeEvent, request: unknown): Promise<EnvFixPlan | null> => {
+      const parsed = (request ?? {}) as { action?: EnvFixAction; version?: unknown };
+      const action = parsed.action;
+      if (action !== 'install-pnpm' && action !== 'install-dsh' && action !== 'update-pnpm') {
+        return null;
+      }
+      const checked = await resolveFixVersion({ action, version: parsed.version });
+      if (!checked.ok) return null;
+      return await envDoctor.fixPlan(action, checked.version);
+    },
+  );
 
   // ---------------------------------------------------------------- 首启环境向导（门禁）
   // 门禁结论靠 `envWizard` 拉取，**复用既有的报告缓存**（不新增探测路径、不新增报告事件）；

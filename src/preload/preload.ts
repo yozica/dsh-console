@@ -86,6 +86,8 @@ const api: DshConsoleApi = {
   envCheck: (options) => ipcRenderer.invoke('env:check', options || {}),
   envFix: (request) => ipcRenderer.invoke('env:fix', request),
   envFixCancel: () => ipcRenderer.invoke('env:fix-cancel'),
+  // 确认区按用户选的版本再取一次计划（与执行侧同一个 builder、同一份校验；拿不到给 null）
+  envFixPlan: (request) => ipcRenderer.invoke('env:fix-plan', request),
   // 版本读数（本机 vs 安装源）也是"拉"的：一次 registry 只读查询，主进程按需缓存
   envPkgUpdates: (options) => ipcRenderer.invoke('env:pkg-updates', options || {}),
   onEnvFixState: (handler) => subscribe('env:fix-state', handler),

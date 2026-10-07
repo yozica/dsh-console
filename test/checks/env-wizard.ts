@@ -112,6 +112,18 @@ export function runEnvWizard(repo: Repo): void {
     nodeOwnerEvidence: [],
     // 方案 A：「更新 dsh」的 npm 绑定也是采集侧给的事实。门禁判定不看它，占位用 fallback
     dshNpm: { kind: 'fallback', path: null, evidence: '', hint: null },
+    // t81：「更新 pnpm」的归属同理（采集侧给的事实，门禁判定不看它）—— 占位用"认不出来"
+    pnpmBinding: {
+      owner: 'unknown',
+      file: null,
+      version: null,
+      expectedMajor: null,
+      matched: true,
+      canAutoUpdate: false,
+      blockedReason: null,
+      evidence: [],
+      hint: null,
+    },
     ...over,
   });
   const wizardSkips = (...ids: string[]): EnvWizardStepId[] =>
@@ -119,7 +131,7 @@ export function runEnvWizard(repo: Repo): void {
 
   // 契约增量：新联合的成员、7 个新 API、两个设置项、ipc.ts 仍然零 import
   check(
-    '环境向导：契约增量都在（新联合成员 / 7 个 API / 两个设置项 / 契约零运行时 import）',
+    '环境向导：契约增量都在（新联合成员 / 8 个 API（t81 多了 envFixPlan）/ 两个设置项 / 契约零运行时 import）',
     (() => {
       const wizardApiNames = [
         'envWizard',
@@ -127,6 +139,7 @@ export function runEnvWizard(repo: Repo): void {
         'envNodePlan',
         'envNodeInstall',
         'envNodeStop',
+        'envFixPlan',
         'onEnvInstallState',
         'onEnvInstallOutput',
       ];
@@ -181,13 +194,14 @@ export function runEnvWizard(repo: Repo): void {
           );
         })() &&
         wizardApiNames.every((name) => new RegExp(`\\n\\s{2}${name}:`).test(ipcSource)) &&
-        // EnvFixAction 仍是两个成员（Node 不走它，见冻结 §3.5）
+        // EnvFixAction 三个成员：Node 不走它（冻结 §3.5），t81 起多了 update-pnpm（按归属更新 pnpm）
         (() => {
           const actionUnion = /export type EnvFixAction =([\s\S]*?);/.exec(flatIpc)?.[1] ?? '';
           return (
-            membersOf(actionUnion).length === 2 &&
+            membersOf(actionUnion).length === 3 &&
             actionUnion.includes("'install-pnpm'") &&
-            actionUnion.includes("'install-dsh'")
+            actionUnion.includes("'install-dsh'") &&
+            actionUnion.includes("'update-pnpm'")
           );
         })()
       );
@@ -478,6 +492,7 @@ export function runEnvWizard(repo: Repo): void {
         'envNodePlan',
         'envNodeInstall',
         'envNodeStop',
+        'envFixPlan',
         'onEnvInstallState',
         'onEnvInstallOutput',
       ];
@@ -538,7 +553,7 @@ export function runEnvWizard(repo: Repo): void {
       !/sha256/.test(wizardSource),
   );
   check(
-    '环境向导：「更新 pnpm」就是既有的 install-pnpm（全局 npm 安装 argv 全仓库只有一处）',
+    '环境向导：「更新 pnpm」按归属走新动作 update-pnpm（全局 npm 安装 argv 仍只有那两处、都有据可依）',
     (() => {
       const tsFiles: string[] = [];
       const collect = (dir: string): void => {
@@ -549,19 +564,25 @@ export function runEnvWizard(repo: Repo): void {
         }
       };
       collect(srcDir);
-      // 全局 npm 安装的 argv 只有一处：`['i', '-g', <spec>]`。`<spec>` 现在由 `pnpmInstallSpec()`
-      // 按"有没有 VC++ 运行库"现算（VM-09），所以这里认 `'i', '-g'` 这一对字面量，
-      // 再单独钉住"pnpm 那一档不是写死的版本、而是走 pnpmInstallSpec()"。
+      // 全局 npm 安装的 argv：`['i', '-g', <spec>]`。
+      //   - **安装一份**在 env-fix-plan.ts：`<spec>` 由 `pnpmInstallSpec()` 按"有没有 VC++ 运行库"现算（VM-09）；
+      //   - t81 起**按归属更新 npm 全局装的那份**在 process-pnpm.ts：`i -g pnpm@<目标版本>`（版本钉死）。
+      // 两处都有据可依，且都不是渲染层拼的 —— 数量与位置一起钉住，多出第三处就要问一句"为什么"。
       const owners = tsFiles.filter((file) =>
         /['"]i['"],\s*['"]-g['"]/.test(fs.readFileSync(file, 'utf8')),
       );
-      // t51 起 `pnpmInstallSpec` / `npmLaunchSpec` 住在 env-fix-plan.ts（env-doctor.ts 已变成 barrel）
-      const envDoctorSource = envSource;
+      const processPnpmSource = stripComments(
+        fs.readFileSync(path.join(srcDir, 'main', 'process-pnpm.ts'), 'utf8'),
+      );
       return (
-        owners.length === 1 &&
-        path.basename(owners[0]) === 'env-fix-plan.ts' &&
-        // 版本策略只有一处落点（不许在别处又拼一遍 argv）
-        /['"]i['"],\s*['"]-g['"],\s*pnpmInstallSpec\(/.test(envDoctorSource) &&
+        owners
+          .map((file) => path.basename(file))
+          .sort()
+          .join(',') === 'env-fix-plan.ts,process-pnpm.ts' &&
+        // 安装那条线的版本策略只有一处落点（不许在别处又拼一遍 argv）
+        /['"]i['"],\s*['"]-g['"],\s*pnpmInstallSpec\(/.test(envSource) &&
+        // 更新那条线：必须是**钉了版本**的 npm 全局安装
+        /args: \['i', '-g', `pnpm@\$\{target\}`\]/.test(processPnpmSource) &&
         // 更新入口走的是既有的 envFix（渲染层只递 action），没有第二条路
         /envFixAction|envFix/.test(preloadCode) &&
         !/install-pnpm/.test(wizardSource)

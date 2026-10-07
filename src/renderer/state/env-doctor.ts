@@ -14,7 +14,13 @@
 
 import { ref, type Ref } from 'vue';
 
-import type { EnvDoctorReport, EnvFixAction, EnvFixState, EnvPkgUpdates } from '../../shared/ipc';
+import type {
+  EnvDoctorReport,
+  EnvFixAction,
+  EnvFixPlan,
+  EnvFixState,
+  EnvPkgUpdates,
+} from '../../shared/ipc';
 
 const api = window.dshConsole;
 
@@ -36,6 +42,9 @@ export const envFix: Ref<EnvFixState> = ref({
   message: null,
   code: null,
   report: null,
+  // 还没跑完任何一轮 → 没有"跑完的时刻"。真值由主进程 `EnvFixRunner.publish()` 在终态给
+  // （界面拿它与 `dsh.startedAt` 比，判"要不要提示重启 dsh"，见 `pages/env/restart-ask.ts`）
+  finishedAt: null,
 });
 
 /** 一键修复的流式输出（尾部 64 KB） */
@@ -145,10 +154,31 @@ export function loadPkgUpdates(refresh = false): Promise<EnvPkgUpdates | null> {
 }
 
 /** 跑一个动作：返回值就是最终状态，事件也会到，两条路都并进同一份状态 */
-export async function runEnvFix(action: EnvFixAction): Promise<EnvFixState> {
-  const state = await api.envFix({ action });
+export async function runEnvFix(action: EnvFixAction, version?: string): Promise<EnvFixState> {
+  const state = await api.envFix(version ? { action, version } : { action });
   applyEnvFixState(state);
   return state;
+}
+
+/**
+ * 取一次**定向计划**（确认区用）：把用户在下拉里选的版本递过去，主进程现场重算命令原文。
+ *
+ * 为什么不能拿报告里那份计划凑合：报告的 `plans` 是"没选版本"的版本 —— 用户选了 `0.1.7` 之后
+ * 真正要跑的是 `@deepseek-ai/dsh@0.1.7`，两者不是同一条命令。这里取回来的 `display` 与执行侧
+ * 用的是**同一个 builder、同一份校验**，所以确认区显示的就是真要跑的（显示 == 执行）。
+ *
+ * 拿不到（版本不在列表里 / 主进程拒绝）返回 null：界面据此**不给「开始」**，而不是拿旧计划糊上去。
+ */
+export async function loadEnvFixPlan(
+  action: EnvFixAction,
+  version?: string,
+): Promise<EnvFixPlan | null> {
+  try {
+    return await api.envFixPlan(version ? { action, version } : { action });
+  } catch {
+    // 界面与主进程半新半旧时（`envFixPlan` 还不存在）也走这一条：当作"没取到计划"
+    return null;
+  }
 }
 
 /** 中断正在跑的修复（没有在跑的返回 false） */

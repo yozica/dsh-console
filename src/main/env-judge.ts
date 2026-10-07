@@ -6,6 +6,7 @@
  */
 import type {
   DshNpmBinding,
+  EnvPnpmBinding,
   EnvCheck,
   EnvCheckId,
   EnvCheckStatus,
@@ -192,6 +193,18 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     kind: 'fallback',
     path: npmPath,
     evidence: '',
+    hint: null,
+  };
+  // pnpm 的归属事实：与 dshNpm 同款 —— 采集侧给事实，判定只搬运（缺了就按"判不出来"处理）
+  const pnpmBinding: EnvPnpmBinding = raw.pnpmBinding ?? {
+    owner: 'unknown',
+    file: null,
+    version: null,
+    expectedMajor: null,
+    matched: true,
+    canAutoUpdate: false,
+    blockedReason: '这一轮没有采集到 pnpm 的归属事实。',
+    evidence: [],
     hint: null,
   };
   const dshHint =
@@ -519,6 +532,8 @@ export function judgeEnvironment(raw: EnvProbeRaw): EnvDoctorReport {
     nodeOwnerEvidence: arrayOf<string>(raw.nodeOwnerEvidence),
     // 绑定事实原样带出去（界面据此决定给不给 dsh 的更新入口）
     dshNpm,
+    // 「更新 pnpm」的归属事实同上（界面据此决定按钮文案与给不给一键）
+    pnpmBinding,
     error: raw.error,
   };
 }

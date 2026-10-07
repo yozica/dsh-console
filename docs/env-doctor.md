@@ -318,14 +318,17 @@ export function dshLaunchSpec(launcher: DshLauncher, args: string[], platform: s
 
 ## 3. 一键修复：动作、安全模型、交互
 
-### 3.1 只有两个动作
+### 3.1 三个动作
 
 | 动作           | argv（完整路径，数组）                                      | 改了什么                        |
 | -------------- | ----------------------------------------------------------- | ------------------------------- |
 | `install-pnpm` | `<npmPath> i -g <pnpm 规格> --allow-scripts=pnpm`（见 3.4） | 全局 npm 包（pnpm）             |
-| `install-dsh`  | `<npmPath> i -g @deepseek-ai/dsh`                           | 全局 npm 包（DeepSeek Harness） |
+| `install-dsh`  | `<npmPath> i -g @deepseek-ai/dsh[@<版本>]`                  | 全局 npm 包（DeepSeek Harness） |
+| `update-pnpm`  | **按那份 pnpm 的来源**决定（见 §3.6）                       | 插件页实际使用的那一份 pnpm     |
 
-**没有第三个动作。** 明确不做的：改 PATH、写 `.npmrc`、动 `$DSH_HOME`、改任何设置项、改 DSH 的配置文件（那是插件页的事）。**「装 Node」不是第三个动作，而是另一条独立通道**（`envNodeInstall`，只在 Windows 上、每次都要用户确认、提权由安装器自己触发）—— 见 `docs/env-wizard-freeze.md` §3.2；这两个 npm 动作的语义与安全模型一个字没变。
+**t81 起多了第三个动作 `update-pnpm`**（用户要求"pnpm 要能识别原来是怎么安装的，并且用对应的更新方法进行更新"）。它与 `install-pnpm` 的差别是本质的：后者的语义是"**还没有** pnpm，用 npm 装一份"；前者是"**已经有一份**，按它现有的安装方式更新它"—— 拿 `install-pnpm` 去更新会把 pnpm 装到**另一个地方**，而插件页用的还是原来那份（真机踩过：装进 v22 的全局树、dsh 却在 v24 上跑）。`install-dsh` 也扩了一个可选的**钉版本**（「选择版本」下拉）。
+
+**明确不做的**：改 PATH、写 `.npmrc`、动 `$DSH_HOME`、改任何设置项、改 DSH 的配置文件（那是插件页的事）。**「装 Node」不是这里的动作，而是另一条独立通道**（`envNodeInstall`，只在 Windows 上、每次都要用户确认、提权由安装器自己触发）—— 见 `docs/env-wizard-freeze.md` §3.2；这三个动作的语义与安全模型同源：**只改那一个对象、命令由主进程现算、渲染层只递 action（+ 可选的、已校验的版本号）**。
 
 ### 3.2 安全模型
 
@@ -539,12 +542,85 @@ registry 不受影响：清掉的只是"从父进程继承来的那一份"，npm
 「新版本的 dsh 要重新启动之后才会生效」+ 一键重启。也因此那句提示出现的条件与 Node 那一路**正好相反**：
 Node 是 `phase !== 'running'`（已经先停过了），dsh 是 `phase === 'running'`（还在跑才需要重启）。
 
+**那条提示的判据是"事实"，不是"用户有没有关过它"**（真机踩过，2026-10-07）：判据里原来带着一个
+会话内的布尔 `restartDismissed`，而 `openUpdate()` 每次打开更新入口都把它复位 —— 于是用户更新完
+dsh、**自己重启过 dsh**，之后再点任何更新入口（例如「选择版本…」），提示又冒出来说"新版本的 dsh 要
+重新启动之后才会生效"，尽管那次更新早已生效。现在改成**比事实**：`shouldAskRestartDsh()` 拿
+`dsh.startedAt`（现在跑着这份是什么时候起来的）与 `EnvFixState.finishedAt`（这一轮更新什么时候跑完的）
+比 —— `startedAt >= finishedAt` 就闭嘴；**任一时刻拿不到时保守地提示**（缺事实不装作知道）。所以
+**任何人**在更新之后重启过 dsh，这条提示都会自己消失；`openUpdate()` 里那句复位已删除（它正是病因）。
+`finishedAt` 在 `EnvFixRunner.publish()` 里**一轮只打一次戳**（新一轮开头清掉）：同一条终态若被重复
+发布，每次都取 `Date.now()` 会让时间戳往后漂，而漂晚一点就会把已生效的更新又提示一遍。
+Node 那一路**不共用**这条判据（理由写在 `EnvPane.vue` 的 `asksRestartDsh` 上方：Node 会先停 dsh，
+`phase !== 'running'` 本身就保证重启后提示消失；且 `EnvInstallState` 里没有"跑完的时刻"这个事实）。
+
+**哪条自检守着**：t85 组（`finishedAt` 在契约与 `publish()` 里都在、判据比的是事实、`openUpdate` 里
+不许再出现那个复位）与 `scripts/env-doctor-cases.mjs` 的 `O9` 组（晚于 / 早于 / 相等 / 任一为 null）。
+
 **哪条自检守着**：`test/selftest.ts` 的 t79 组（入口与确认区认 dsh、动作仍然只有两个、`env:pkg-updates`
 三边契约、只读与纯函数分开、目标跟随 spec、纯函数语义、以及"假承诺防线"那一条）与 t80 组（修复子进程的
 env 先过 `cleanNpmEnv` 再注入安装源、纯函数在家里与前缀判据）；
 `scripts/env-doctor-cases.mjs` 的 `O2` 组（版本比对纯函数，夹具是真机形状的 registry 数据：dsh 全是预发布
 且 `latest` 指向 rc、pnpm 的 `latest` 落后于已发布版本）与 `O4` 组（`cleanNpmEnv` 的离线反例）。
 "装到哪棵树"的直接证据是 `.verify/npm-env-clean.mjs`（**只读**：对照 `prefix -g` 的原始输出，不装任何东西）。
+
+### 3.6 pnpm 的来源与更新方式（t81）
+
+**要解决的问题**（用户原话）："支持 pnpm 的更新，pnpm 要能识别原来是怎么安装的，并且用对应的更新方法进行更新"。
+
+pnpm 有四条互不相通的安装路径，各有一条自己的更新命令。**判据里只有 `realpath` 是决定性的** —— Corepack 与 npm 全局装的 pnpm 都是**符号链接**，只看路径名分不出来（`~/.nvm/…/bin/pnpm` 与 `~/.npm-global/bin/pnpm` 长得一样）。
+
+| 来源         | 判据                                                                                                          | 更新命令                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `standalone` | `<home>/Library/pnpm/pnpm`（macOS）/ `<home>/.local/share/pnpm/pnpm`（Linux），且是**普通文件**（非符号链接） | `<那份 pnpm> self-update <版本>`                               |
+| `corepack`   | `realpath` 落在 `…/node_modules/corepack/…`                                                                   | `<同目录的 corepack> prepare pnpm@<版本> --activate`           |
+| `npm-global` | `realpath` 落在 `…/node_modules/pnpm/…`                                                                       | `<那份 pnpm 所属 Node 的 npm> i -g pnpm@<版本>`                |
+| `homebrew`   | 路径在 `/opt/homebrew/…`，或 `realpath` 落在 `/usr/local/Cellar/…`                                            | `brew upgrade pnpm`（**不能钉版本**）                          |
+| `unknown`    | 其余一切                                                                                                      | **不给自动动作**，只给手工步骤（与 Node 归属那套诚实边界同构） |
+
+三条硬约定（都落在代码里，各自的注释写了"为什么"）：
+
+1. **更新对象 = 插件页实际会用的那一份**：`pnpmBindingForProfile(profileDir)` 走 `findPnpmForProfile()`（按 profile 的 store 大版本挑），**不是** PATH 上随便一份 `findPnpm()`。与 dsh 那边"绑定到被升级那份所属的 Node"是同一个教训。
+2. **目标版本钉在 profile 记的那个大版本线上**（`pnpmMajorForUpdates`：`packageManager: pnpm@10.x` 里那个 10；读不到才跟随当前那份的 major）。理由是 `parseProfilePnpmMajor` 那段：**store 布局按大版本走**（10 → `store/v10`），拿 11 去动 10 装的 `node_modules` 会被 pnpm 直接拒绝。所以"更新 pnpm"= **同一大版本内的最新**，不是 `latest`。**跨大版本本轮不做**，但界面上有一句说明。
+3. **`unknown` / 缺工具 一律不给按钮**：`canAutoUpdate` 为假时走诚实边界（一行事实 + `PNPM_MANUAL_STEPS` 的手工步骤 + 「重新检测」）。同时**没有目标版本也拒绝执行** —— 裸跑 `self-update` / `prepare` / `i -g` 都会跳到最新，可能跨大版本。
+
+**dsh 的版本选择**（同一次改动）：确认区一个下拉，列安装源上**全部发行版**（倒序）+ dist-tags 标注（`0.2.0-rc.2 · latest`），默认落在主进程算出的目标；选到比当前低的版本时**明确说是降级**（照 Node 换档那套说辞）。行上按钮规则不变（只有真有新版本才给主按钮），但在读数旁边多了一个 **tiny ghost「选择版本…」** —— 与 Node 那一行「已是最新 + 换一档」完全同形。
+
+**列表的画法是把 A 与 C 合起来的**（用户先选了 A 的浮层形态，再要求"ac 的能力不能结合吗"）：A 的机制一个字没动（Teleport / fixed / `--z-pop` / 键盘 / 点外 / scroll 收口 / ARIA），只把列表换成 **C 的版本时间轴** ——
+
+- 每行左侧一条轴 + 一个节点：**当前**是实心绿点（`--run`）+ 右侧「当前」，**目标**是空心 accent 环（`box-shadow: 0 0 0 3px var(--accent-soft)`）+「目标」，**当前到目标之间那几行**的轴换成强调色实线（2px）；
+- 区间**算下标**（`version-pick.ts` 的 `betweenIndexes()`，开闭区间 `(min, max]`），模板里查集合 —— **不用 `:nth-child` 猜区间**；首尾两行由 CSS 收口（第一行从节点起、最后一行到节点止）；两个**端点行再各补"朝目标的那半行"**（`.is-current.is-up` / `.is-target.is-down` 那四条），否则线段与节点之间会留一截发丝线的缝；
+- **升与降的颜色由 `pickDirection()` 判**（倒序列表里"下标更小 = 更新"，界面从不比版本号字符串 —— `rc.9` 与 `rc.10` 按字典序会得出相反的方向）：升 = accent、降 = amber。amber 在本仓库只表示"在往下降"，所以它不能同时用来画升的那一段，否则顶上写着「升级」而轴是琥珀色，自相矛盾；
+- 浮层顶上钉一条**粘性摘要行**（`.env-version-head`，`position: sticky; top: 0`）：`0.1.5-rc.1 → 0.2.0-rc.2 · 升级` / `0.2.0-rc.2 → 0.1.7-rc.2 · ↓ 降级` / `0.2.0-rc.2（当前就是这一版）`；缺当前版本时**只写目标**（不编"从哪来"）。限高仍是 232px，摘要不跟着滚走；
+- 键盘**高亮**（`.is-on`：accent-soft 底 + accent 字）与「当前/目标」（节点 + 右侧标签）是**两套独立状态**：同一行两件事都占时都看得见 —— 别把"高亮"做成"目标"的同一个真源。
+
+**确认区那一份计划走新通道 `env:fix-plan`**（与 `envNodePlan` 同一套做法）：用户改下拉 → 父级取一次定向计划 → 确认区显示它的 `display`。执行侧用**同一个 builder、同一份校验**，所以"显示的那条命令"与"真正跑的那条"必然一致（显示 == 执行，方案 A 立下的不变量）。
+
+**这个下拉是自绘的，不是原生 `<select>`**（用户从三个摆法里选了 A，规格与预览见 [`env-version-pick-choices.html`](env-version-pick-choices.html)）：原生 `<select>` 的弹出列表由操作系统绘制，样式插不进去，和这张卡片不搭。落地时的四条约定：
+
+1. **浮层 Teleport 到 body + `position: fixed`**，打开时按触发器的 `getBoundingClientRect()` 定位（宽同触发器）。留在卡片里会被裁 —— 确认区自己就在 `--z-env`（30）那一层。先例：`layout/CloseDialog.vue` 同样 Teleport 到 body。
+2. **层号 `--z-pop`（45）**：**高于 `--z-env`（30）**、**低于 `--z-gate`（58）与启动锁（60）** —— 一个下拉没有资格盖住门禁与锁（顺序写在令牌那一段的注释里）。
+3. **交互**：点触发器开关；**点面板外用 `pointerdown` 关闭**（用 `click` 会先落在选项上、先选中再关）；`Esc` 关闭并**把焦点还给触发器**；`↑`/`↓`/`Home`/`End` 移动高亮、`Enter`/`Space` 选中、高亮项滚进视野；**鼠标 hover 与键盘高亮是同一个状态**（`@pointermove` 也写 `versionActive`，模板里只有一条 `.is-on` 规则）。视口一动（`scroll` 用 capture / `resize`）**关闭**而不重算：重算只是追位置，锚定关系已经不可靠，而追踪要挂滚动容器链、还要处理 fixed 与变换祖先，代码量与出错面都大得多（原生 `<select>` 也是直接收起）。**但要放过面板自己内部的滚动**，否则列表一滚就关。
+4. **a11y**：触发器 `aria-haspopup="listbox"` + `aria-expanded`；面板 `role="listbox"`（`tabindex="-1"`，键盘事件挂在它上面）；每项 `role="option"` + `aria-selected`；`aria-activedescendant` 指向高亮项，**id 前缀每个实例一份**（页面上可能同时有多个确认区）。
+
+键盘导航那一小块（↑↓ 到边界、空列表、`-1` 的语义）抽成了纯函数 `pages/env/version-pick.ts`：`test/checks/env-doctor.ts` 直接 import 它做单测，`scripts/env-doctor-cases.mjs` 的 O6 组再离线喂一遍字面量（与 `env-detail.ts` / `wizard-view.ts` 同一条路）。
+
+**版本号必须校验**（安全模型第 1 条）：`env:fix` / `env:fix-plan` 只接受 action（+ 可选 version），主进程 `resolveFixVersion()` 四道闸门 —— ① **只有 `install-dsh` 接受它**（版本下拉只存在于 dsh 那一档；`update-pnpm` / `install-pnpm` 一律拒绝）② 形状必须严格 semver ③ **必须落在这一轮从安装源拿到的版本列表里**（拿不到列表就拒绝）④ 拒绝时给**明确说法**，绝不"收下再悄悄忽略"（那就是"显示 A、执行 B"）。
+
+**只有 dsh 能选版本；pnpm 固定在线内最新**（t84，用户裁定 —— 他问过"为什么 pnpm 不支持跨版本切换"，听完理由后决定 pnpm 不做选版本）：
+
+1. **为什么 pnpm 不跨大版本**：pnpm 的 **store 布局按大版本走**（9 → `store/v3`、10 → `store/v10`、11 → SQLite 的 store v11），而 profile 的 `node_modules` 是某一个版本装的、`.modules.yaml` 里记着 `packageManager: pnpm@10.x`，下标全指向那一代 store。换一代之后 pnpm 会**直接拒绝动手**（真机报错：`… currently linked from the store at … store/v10 … pnpm now wants … store/v3`）。跨代还连带 pnpm 11 的那些破坏性变更（`.npmrc` 只留 auth/registry、**不再读 `npm_config_*`** 而改 `pnpm_config_*`、全局安装被隔离且可执行文件挪到 `PNPM_HOME/bin`、`allowBuilds` 取代旧构建设置）—— 官方给的是**迁移指南 + codemod**。
+2. **所以"更新 pnpm"只做一件事**：在 profile 那条大版本线内取**最新**（`pickPackageUpdate` 的 `allowMajor` 仍然生效：你这台机器上是 `10.34.6`，**不是** `12.9.1`）。`EnvPkgUpdate.major` 保留，界面用它写出那句说明："目标钉在 <b>10.x</b> 这条大版本线内：pnpm 的 store 布局按大版本走，跨大版本要连同 profile 的依赖一起迁移 —— 那是一次单独的迁移动作，不在这里做。"
+3. **主进程给 pnpm 的 `versions` 恒为 `[]`**（判据是 `allowMajor !== null`），所以界面那一档**不会**渲染 `VersionPick`；行上也不给「选择版本…」（`canPickVersionOf` 只认 dsh）。`VersionPick.vue` 仍然被 dsh 用着。
+4. **跨大版本是另一次动作**（本轮不做）：要连同 profile 的依赖一起迁移 —— 备份 → 更新二进制 → `pnpm install` 重链 → 校验 → 失败回滚，并且要同时把我们的安装源注入从 `npm_config_registry` 扩成 `pnpm_config_registry`（否则 11 上用户填的源会静默失效）。
+5. **Homebrew 那条"同一条大版本线才允许"的守卫**（在 `pnpmUpdateCommand` 里）**保留**：它防的是 `brew upgrade pnpm` 把大版本换掉，与"选版本"无关。
+6. **仍然保留的**：`EnvPkgUpdate.major`、"被更新那一份"的版本读数（`versionCurrentOf` 对 pnpm 取 `pnpmBinding.version`，不是 PATH 上探测到的那份）、以及下面那条"两个按钮必须同高"。
+
+**时间轴上的「当前」对 pnpm 要用被更新那一份的版本**：`versionCurrentOf(check)` 对 pnpm 取 `pnpmBinding.version`，**不是** `installedVersions().pnpm` —— 后者是 PATH 上探测到的那一份，可能与"插件页实际会用的那一份"不是同一个（拿错就会把「当前」标在错的版本上，那正是 dsh 当初"装到别的树"那个 bug 的界面版本）。
+
+**同一行里两个按钮必须同高**（t83，用户真机截图抓到的 4px 错位）：根因是 `.env-actions` 只写了 `display: flex` 而**没写 `align-items`** —— flex 默认 `stretch`，但两个按钮各自是**固定高度**（`.btn.small` 27px、`.btn.tiny` 23px），于是按顶边对齐、差 4px。修法两条缺一不可：① `.env-actions` 加 `align-items: center`（顺带让 Node 那一行的「读数 + ghost」也居中）② dsh 那个「选择版本…」从 `.btn.tiny.ghost` 改成 **`.btn.small.ghost`** —— 并排时尺寸必须一致，**层级差只用配色（ghost）表达**。静态预览里量出来的：改前 23.00px vs 27.00px（顶边同为 135.09），改后两个都是 27.00px（顶边同为 234.49）。
+
+**探 pnpm 版本时必须给中立 cwd + 关掉 Corepack 的项目绑定**（`pnpmVersionOf` 的 `spawnSync` 上 `cwd: pnpmProbeCwd()` + `env: pnpmProbeEnv(process.env)`）：Corepack 的 shim 一被调用就看它所在目录有没有 `packageManager` 字段，没有就**替那个项目钉一个**。原来既不给 `cwd` 也不给 `env`，于是**自检这个本该纯只读的动作会改掉用户项目的 `package.json`** —— 在仓库根实测复现：跑一次就多出一行 `"packageManager": "pnpm@9.6.0+sha512.…"`。`COREPACK_ENABLE_PROJECT_SPEC=0` 是 Corepack 官方的关法，中立 cwd（`os.tmpdir()`）再兜一层；纯函数 `pnpmProbeEnv` 有反例，`spawnSync` 的这两个选项有静态断言钉着。
 
 ## 4. UI 落点：新增一页
 

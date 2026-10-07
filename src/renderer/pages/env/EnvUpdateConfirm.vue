@@ -18,6 +18,7 @@
  */
 import { computed } from 'vue';
 
+import VersionPick from './VersionPick.vue';
 import { CHANNEL_SHORT, versionWithChannel } from '../../shared/gate-copy.js';
 import type {
   EnvCheck,
@@ -25,7 +26,7 @@ import type {
   EnvNodeChannel,
   EnvNodeOwner,
   EnvNodePlan,
-  EnvPkgUpdate,
+  EnvPnpmBinding,
 } from '../../../shared/ipc.js';
 
 const props = defineProps<{
@@ -43,12 +44,34 @@ const props = defineProps<{
   nodeUpdateChannel: EnvNodeChannel | null;
   /** 计划取不到时那句话 */
   nodeUpdateError: string;
-  /** pnpm 那张要用的修复计划（命令与目标目录都由主进程给） */
-  pnpmPlan: EnvFixPlan | null;
+  /** pnpm 的归属事实（按归属给文案；界面只读结论） */
+  pnpmBinding: EnvPnpmBinding | null;
+  /**
+   * 确认区这一份**定向计划**：dsh 按选中的版本、pnpm 按归属，由父级现场取回。
+   * `null` = 还没取到 / 取不到 → **不给「开始」**（不拿报告里那份旧计划糊上去）。
+   */
+  openFixPlan: EnvFixPlan | null;
+  openFixPlanLoading: boolean;
   /** dsh 那张要用的修复计划（与 pnpm 同一份东西，只是 action 是 install-dsh） */
   dshPlan: EnvFixPlan | null;
-  /** dsh 的版本读数（查不到时 null）：目标写具体版本号，不写就只能说"最新版" */
-  dshUpdate: EnvPkgUpdate | null;
+  /**
+   * 版本下拉的数据源与状态（t83 起**两档共用这一套**）：dsh 是安装源上全部发行版；pnpm 是**主进程
+   * 按 profile 的大版本线过滤后**的那些。界面只画它拿到的东西，**不自己判规则**（过滤在主进程）。
+   */
+  versionOptions: string[];
+  versionTags: Record<string, string>;
+  /** 钉住的大版本线（pnpm 才有）：用来写"只在这条线内挑"那句说明；dsh 为 null */
+  versionMajor: string | null;
+  /** 这一项现在跑着的那一版（「当前」节点与「→」左边那一半） */
+  versionCurrent: string | null;
+  /** 主进程算出来的目标版本（「→」右边那一半；拿不到时界面写"最新版…"，不编版本号） */
+  versionTarget: string | null;
+  /** 用户在下拉里显式选的那一版；null = 没选（用目标版本） */
+  versionPicked: string | null;
+  /** 下拉当前落在哪一版（用户选过就是它，否则是目标版本） */
+  versionSelected: string | null;
+  /** 选中的这一版比当前低 → 明确说是**降级** */
+  versionDowngrade: boolean;
   /** 报告里这份 Node 的归属（计划里没有时兜底） */
   reportOwner: EnvNodeOwner;
   /** 「会先停掉 dsh」那句话：跨档与同档说法不同，父级的进行中/结果区也要用同一句 */
@@ -61,10 +84,16 @@ const emit = defineEmits<{
   'start-dsh': [];
   'start-node': [];
   'pick-channel': [channel: EnvNodeChannel];
+  'pick-version': [version: string];
   refresh: [];
   'focus-source': [];
   'open-download': [];
 }>();
+
+/** 用户在下拉里选了一版：**只把版本字符串报给父级**（校验、取计划都在那里） */
+function emitPickedVersion(version: string): void {
+  if (version) emit('pick-version', version);
+}
 
 /** 模板里那几个动作都只是把意图报给父级（判定与状态都在那里） */
 function cancelUpdate(): void {
@@ -163,6 +192,12 @@ const nodeSwitchNotice = computed(() => {
   return `版本会从 ${before} 变成 ${plan.version}，档位从${from}换到${target}。`;
 });
 
+/**
+ * 降级说明里那个主语。t84 起**只有 dsh 能选版本**，所以这里实际只会走到 `dsh` 那一支；
+ * pnpm 那一支留着是因为 `kind` 仍是联合类型，真出现时不必再回来改这一处。
+ */
+const versionDowngradeWhat = computed<string>(() => (props.kind === 'pnpm' ? '这份 pnpm' : 'dsh'));
+
 /** 目标 == 当前：不给「开始」、也不给一个点了什么都不会发生的按钮（交互 §10.5 第 5 条） */
 const nodeUpdateNoop = computed(() => {
   const plan = props.nodeUpdatePlan;
@@ -179,7 +214,7 @@ const nodeUpdateActionLabel = computed(() => {
 // ---------------------------------------------------------------- dsh 那张（t79）
 
 /** dsh 现在这一份的版本（主进程的探测事实；查不到时为 null，那一行就不写"现在"） */
-const dshCurrentText = computed(() => props.dshUpdate?.current ?? '');
+const currentText = computed(() => props.versionCurrent ?? '');
 
 /**
  * 这次要装的目标版本。
@@ -187,60 +222,94 @@ const dshCurrentText = computed(() => props.dshUpdate?.current ?? '');
  * 查得到就写具体版本号 —— 那正是"带版本比对"这个需求的意思；查不到（离线 / 源不可达）就退回
  * 一句"最新版"，**不编版本号**（与不编命令同一条原则）。
  */
-const dshTargetText = computed(() => {
-  const target = props.dshUpdate?.target ?? '';
-  return target || '最新版（由你的安装源决定）';
-});
+const targetText = computed(() => props.versionTarget || '最新版（由你的安装源决定）');
 </script>
 
 <template>
   <div v-if="kind === 'pnpm'" class="env-confirm">
     <div class="env-confirm-title">将要执行</div>
-    <code class="env-confirm-cmd">
-      {{ pnpmPlan?.display || '（命令由主进程现算）' }}
-    </code>
+    <p v-if="openFixPlanLoading && !openFixPlan" class="env-confirm-line">
+      正在按这份 pnpm 的安装方式算命令…
+    </p>
+    <code v-else class="env-confirm-cmd">{{ openFixPlan?.display || '（这一轮没取到命令）' }}</code>
     <div class="wizard-versions">
       <div class="wizard-version-line">
-        <span class="wizard-version-label">这一项现在</span>
-        <span class="wizard-version-old">{{ check.detail }}</span>
+        <span class="wizard-version-label">更新对象</span>
+        <span class="wizard-version-old">{{ pnpmBinding?.file || '（没找到 pnpm）' }}</span>
       </div>
       <div class="wizard-version-line">
-        <span class="wizard-version-label">这次要装</span>
-        <span class="wizard-version-new">最新版（由你的安装源决定）</span>
+        <span class="wizard-version-label">这一项现在</span>
+        <span class="wizard-version-old">{{ currentText || '（版本没测到）' }}</span>
+        <span class="wizard-version-arrow" aria-hidden="true">→</span>
+        <span class="wizard-version-new">{{ targetText }}</span>
       </div>
     </div>
-    <p class="env-confirm-line">
-      会装进：{{ pnpmPlan?.target || '（全局 npm 目录）' }}；不需要管理员权限；需要联网。
+    <p v-if="openFixPlan?.target" class="env-confirm-line">
+      会改到：{{ openFixPlan.target }}；需要联网。
     </p>
-    <p class="wizard-notice">就是给这台电脑上的 pnpm 装最新版，不改别的东西。</p>
+    <!-- 这条约束在界面上要说清（也是"pnpm 为什么不能选版本"的答案）：目标只在这条大版本线内取最新 -->
+    <p v-if="versionMajor" class="env-confirm-line">
+      目标钉在 <b>{{ versionMajor }}.x</b> 这条大版本线内：pnpm 的 store
+      布局按大版本走，跨大版本要连同 profile 的依赖一起迁移 —— 那是一次单独的迁移动作，不在这里做。
+    </p>
+    <p class="wizard-notice">
+      {{ openFixPlan?.note || '命令由主进程按这份 pnpm 的安装方式现算。' }}
+    </p>
     <div class="btn-row">
-      <button class="btn small primary" :disabled="busy" @click="startPnpmUpdate">开始</button>
+      <button class="btn small primary" :disabled="busy || !openFixPlan" @click="startPnpmUpdate">
+        开始
+      </button>
       <button class="btn small" @click="cancelUpdate">取消</button>
     </div>
   </div>
 
   <div v-else-if="kind === 'dsh'" class="env-confirm">
     <div class="env-confirm-title">将要执行</div>
-    <code class="env-confirm-cmd">
-      {{ dshPlan?.display || '（命令由主进程现算）' }}
-    </code>
+    <p v-if="openFixPlanLoading && !openFixPlan" class="env-confirm-line">
+      正在按选中的版本算命令…
+    </p>
+    <code v-else class="env-confirm-cmd">{{ openFixPlan?.display || '（这一轮没取到命令）' }}</code>
     <div class="wizard-versions">
       <div class="wizard-version-line">
         <span class="wizard-version-label">这一项现在</span>
-        <span class="wizard-version-old">{{ dshCurrentText || check.detail }}</span>
+        <span class="wizard-version-old">{{ currentText || check.detail }}</span>
         <span class="wizard-version-arrow" aria-hidden="true">→</span>
-        <span class="wizard-version-new">{{ dshTargetText }}</span>
+        <span class="wizard-version-new">{{ targetText }}</span>
       </div>
     </div>
+
+    <!-- 版本下拉：**只有 dsh 这一档有**（t84 回退 —— pnpm 不做选版本，它的目标固定在线内最新）。
+         能挑哪些版本由**主进程**决定（dsh = 安装源上全部发行版），这里只负责画；
+         `VersionPick` 自己管键盘 / 点外 / Esc / a11y / Teleport 定位。 -->
+    <VersionPick
+      v-if="versionOptions.length > 0"
+      :options="versionOptions"
+      :tags="versionTags"
+      :current="versionCurrent"
+      :selected="versionSelected"
+      :busy="busy"
+      @pick="emitPickedVersion"
+    />
+    <!-- 列表为空（这一轮没查到）时**不编东西**：读数那行已经写了"最新版（由你的安装源决定）"，
+         而且行上那个入口本来就不会出现 —— 这里静默是对的，不是少了一个控件。 -->
+    <!-- 选到比当前低的版本：**明确说是降级**（照 Node 换档那套说辞，用户一眼能看出后果） -->
+    <p v-if="versionDowngrade" class="wizard-notice">
+      这是一次<b>降级</b>：会把{{ versionDowngradeWhat }}从 {{ versionCurrent }} 换到
+      {{ versionPicked }}，版本从高到低。
+    </p>
     <p class="env-confirm-line">
-      会装进：{{ dshPlan?.target || '（全局 npm 目录）' }}；不需要管理员权限；需要联网。
+      会装进：{{
+        openFixPlan?.target || dshPlan?.target || '（全局 npm 目录）'
+      }}；不需要管理员权限；需要联网。
     </p>
     <p class="wizard-notice">
-      就是给这台电脑上的 dsh 装最新版，不改别的东西。装完会自动复检一次；
+      {{ openFixPlan?.note || '就是给这台电脑上的 dsh 装一份，不改别的东西。' }}装完会自动复检一次；
       <b>正在运行的 dsh 不受影响，但要重新启动之后新版本才会生效。</b>
     </p>
     <div class="btn-row">
-      <button class="btn small primary" :disabled="busy" @click="startDshUpdate">开始</button>
+      <button class="btn small primary" :disabled="busy || !openFixPlan" @click="startDshUpdate">
+        开始
+      </button>
       <button class="btn small" @click="cancelUpdate">取消</button>
     </div>
   </div>
