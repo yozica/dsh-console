@@ -114,23 +114,26 @@ export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): Term
  * 单独做成纯函数是为了能被自检直接断言：判断依据只有两个 —— **平台**与**有没有选中文字**。
  * 两个都不要漏：
  *  - 没有选中时必须落回原语义（把 \x03 发下去），否则"用 Ctrl+C 停当前命令"这条路就没了。
- *  - macOS 上复制是 ⌘C（走原生菜单），Ctrl+C 在那儿仍是"中断"；不判平台的话，mac 用户
- *    选中文字后按 Ctrl+C 会得到一个"复制"而不是他要的中断。
+ *  - macOS **一条都不拦**：那儿复制是 ⌘C（走原生菜单 + xterm 自己挂在元素上的 `copy` 监听），
+ *    中断是 ⌃C —— 两个键本来就不冲突，我们插进去只会平白多一条"会吞按键"的路径
+ *    （用户的裁定，2026-09-30）。所以这条里的平台判据，作用是**排除 mac**。
  *
- * 三种键位：
- *  - **非 macOS**：`Ctrl+C` 有选中时复制（Windows Terminal 的规矩），`Ctrl+Shift+C` 也算。
- *  - **macOS**：只认 `Ctrl+Shift+C`（GNOME 系终端的复制键位），`Ctrl+C` 永远留给中断。
+ * 于是非 macOS 上只剩两个键位，都是有选中才成立：
+ *  - `Ctrl+C`（Windows Terminal 这么做，VS Code 的 Windows 绑定 `copyAndClearSelection` 也是）；
+ *  - `Ctrl+Shift+C`（GNOME 系终端的复制键位，VS Code 在 Win/Linux 上也是这个）。
  *
  * ⚠️ 复制之后必须把选中**清掉**（在 `passAppShortcutsThrough` 里做）：不清的话第二下 Ctrl+C
  * 还是命中这一条、还是复制 —— 于是"选中着还想中断"就永远中断不了。清掉之后是
- * **第一下复制、第二下 \x03**，与 Windows Terminal 的手感一致。
+ * **第一下复制、第二下 \x03**（VS Code 那条命令的名字就叫 Copy and Clear Selection）。
  */
 export function shouldCopySelection(event: KeyboardEvent, hasSelection: boolean): boolean {
   if (event.type !== 'keydown' || !hasSelection) return false;
+  // macOS：⌘C 复制、⌃C 中断，两个键不冲突 —— 一条都不拦，交回给原生与 xterm 自己
+  if (isMac.value) return false;
   if (String(event.key).toLowerCase() !== 'c') return false;
-  // ⌘C（macOS）归原生菜单；AltGr 在 Windows 上是 Ctrl+Alt（Alt+Ctrl+字母是输符号的手势）
+  // AltGr 在 Windows 上是 Ctrl+Alt（Alt+Ctrl+字母是输符号的手势）；Win 键也不该当复制
   if (!event.ctrlKey || event.altKey || event.metaKey) return false;
-  return isMac.value ? event.shiftKey : true;
+  return true;
 }
 
 /**
@@ -145,8 +148,9 @@ export function shouldCopySelection(event: KeyboardEvent, hasSelection: boolean)
  * `includeReload` 用来决定 Ctrl+R / ⌘R 归谁：dsh 终端里输入本来就没用，交给应用重载；
  * 本地 Shell 里 Ctrl+R 是它自己的反向历史搜索，得留给 shell。
  *
- * `copyOnSelection` 打开后（**两条终端都开**，见下）多一条：**有选中文字时 Ctrl+C 变成复制**
- * （macOS 上是 Ctrl+Shift+C）。复制走 `copyToClipboard`，它自己会说一句状态栏回话、失败也不抛。
+ * `copyOnSelection` 打开后（**两条终端都开**，见下）多一条：**有选中文字时 Ctrl+C（或
+ * Ctrl+Shift+C）变成复制**。macOS 上这一条不生效 —— 那儿的复制是 ⌘C，见 `shouldCopySelection`。
+ * 复制走 `copyToClipboard`，它自己会说一句状态栏回话、失败也不抛。
  * 这里**不 await**：按键处理器必须是同步的，而复制是异步的 ——
  * 好在这条路径是用户手势的直接续写，剪贴板的写权限拿得到。
  *

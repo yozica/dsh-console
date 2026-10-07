@@ -130,9 +130,9 @@ export function runRenderer(repo: Repo): void {
   //
   // 四条一起看，缺一条就不是那个行为：
   //   1. 判断依据必须是纯函数 `shouldCopySelection`，且它同时看**平台**与**有没有选中**。
-  //      只看选中会让 macOS 上按 Ctrl+C 变成复制（那儿的中断键才是 Ctrl+C，复制是 ⌘C）；
-  //      只看平台则等于永远复制，把"用 Ctrl+C 停当前命令"这条路堵死。Shift 键位也得判 ——
-  //      非 macOS 是 Ctrl+C / Ctrl+Shift+C，macOS 只认后者。
+  //      这里平台判据的作用是**排除 mac**（`if (isMac.value) return false` 要逐字在）：
+  //      mac 上 ⌘C 复制、⌃C 中断，两个键本来就不冲突，我们一条都不该拦（用户的裁定）；
+  //      没有选中时也必须落回中断，否则"用 Ctrl+C 停当前命令"这条路就没了。
   //   2. 命中时要真的调用 copyToClipboard 并 return false —— return true 的话 xterm
   //      仍会把 \x03 发下去，等于复制与"空转的中断"同时发生。
   //   3. 顺序必须是"取文字 → 清选中 → 复制"：清早了复制到空串，不清则第二下 Ctrl+C 还是复制，
@@ -142,13 +142,13 @@ export function runRenderer(repo: Repo): void {
   const xtermSource = fs.readFileSync(repo.tsPath('xterm.ts'), 'utf8');
   const copyPredicateBody = blockOf(xtermSource, 'export function shouldCopySelection(');
   check(
-    '渲染层：终端的"选中后复制"由纯函数判定，且平台、选中、Shift 键位都判',
+    '渲染层：终端的"选中后复制"由纯函数判定，且 mac 明确不拦、没选中明确不抢',
     copyPredicateBody.length > 0 &&
-      /isMac\.value/.test(copyPredicateBody) &&
+      // mac 那一条要逐字在：不是"顺手判一下平台"，而是"mac 一条都不拦"这个决定本身
+      /if \(isMac\.value\) return false;/.test(copyPredicateBody) &&
       /hasSelection/.test(copyPredicateBody) &&
       // 键名判据（实现里是否定式 `!== 'c'`，所以只钉"判了 c 这个键"，不钉等号在哪一侧）
-      /['"]c['"]/.test(copyPredicateBody) &&
-      /shiftKey/.test(copyPredicateBody),
+      /['"]c['"]/.test(copyPredicateBody),
     copyPredicateBody.length === 0
       ? 'xterm.ts 里找不到 shouldCopySelection'
       : `判定体 ${copyPredicateBody.split('\n').length} 行`,
