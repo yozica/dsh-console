@@ -4,7 +4,7 @@
  * t51 从 `env-doctor.ts` 拆出来的；那个文件现在只做 barrel + 两个有状态的类（`EnvDoctor` /
  * `EnvFixRunner`），别的模块与两个反例脚本的 import 路径都不用改。
  */
-import type { DshNpmBinding, EnvNodeOwner } from '../shared/ipc';
+import type { DshNpmBinding, EnvNodeOwner, EnvPnpmBinding } from '../shared/ipc';
 import type { LocalDshRequirement } from './env-node-range';
 
 /** 探测子进程超时：与 `canRunDsh` 的 8000 一致 */
@@ -112,6 +112,14 @@ export interface EnvProbeRaw {
    * `true` = 有（可以装最新）；`false` = 缺（走纯 JS 那条线 `pnpm@10`）；没探测过时缺省当"有"。
    */
   vcRuntime?: boolean;
+  /**
+   * 「更新 pnpm」的归属事实（更新对象是**插件页真正会用的那一份**，见 `findPnpmForProfile`）。
+   *
+   * 与 `dshNpm` 同构：**采集侧给事实、判定只搬运**。采集时同步算好（读 profile 的
+   * `.modules.yaml` + 一次 `realpath` + 归属纯函数），**不起子进程**（版本号走 `pnpmVersionOf`
+   * 的进程内缓存 —— 插件路径本来就会调用它）。
+   */
+  pnpmBinding?: EnvPnpmBinding;
   /**
    * 我们找到的那份 Node 是不是**版本管理器管的**（见 `looksVersionManagerNode`）。
    *

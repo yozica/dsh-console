@@ -6,9 +6,10 @@
  */
 import { probeBinary } from './env-probe';
 
-import type { LaunchSpec } from './process-utils';
+import type { LaunchSpec, PnpmHelpers } from './process-utils';
 
-import type { EnvFixAction, EnvFixPlan } from '../shared/ipc';
+import type { EnvFixAction, EnvFixPlan, EnvPnpmBinding, EnvPnpmOwner } from '../shared/ipc';
+import { pnpmMajorForUpdates } from './pkg-updates';
 import { isEnvironmentBlocked } from './env-judge';
 import { FIX_TAIL_CHARS, FIX_TIMEOUT_MS, PROBE_TIMEOUT_MS } from './env-probe-types';
 import { findPnpmPath } from './env-probe';
@@ -21,6 +22,7 @@ import {
   isWindows,
   launchSpec,
   pathWithKnownBins,
+  pnpmUpdateCommand,
   whichSync,
   windowsBinCandidates,
 } from './process-utils';
@@ -74,10 +76,26 @@ export function pnpmInstallSpec(vcRuntime: boolean): string {
 }
 
 /**
- * 一键修复的计划：**只有两个动作**，都只改全局 npm 包。
+ * `envFixPlan()` 的附加输入（t81）：
+ * - `version`：`install-dsh` 的**钉版本**（已由 `main-ipc-env.ts` 校验过，落在这一轮的版本列表里）；
+ * - `pnpm`：`update-pnpm` 要用的归属 + 工具 + 目标版本（由 `EnvDoctor.fixPlan` 现场认一次）。
+ */
+export interface EnvFixPlanExtra {
+  version?: string | null;
+  pnpm?: {
+    binding: EnvPnpmBinding;
+    helpers: PnpmHelpers;
+    /** 目标版本（已算好：同一个大版本线内最新）；null = 拿不到 → `pnpmUpdateCommand` 会拒绝 */
+    target: string | null;
+  } | null;
+}
+
+/**
+ * 一键修复的计划。三种动作的**安全模型是同一条**：都只改"那一个对象"，
+ * 命令原文（`display`）与真正 spawn 的 argv 由**同一个函数**产出（执行侧现场重算一遍，输入相同）。
  *
- * 纯函数：`target` 由调用方（EnvDoctor）用一次 `npm prefix -g` 补上 —— 判定这边不碰子进程。
- * npm 路径拿不到时返回 null（起不了子进程就不该给按钮）。
+ * 纯函数：`target` 由调用方（EnvDoctor）补上 —— 判定这边不碰子进程。
+ * npm 路径拿不到时返回 null（起不了子进程就不该给按钮）；`update-pnpm` 不吃 npm，所以它不看这个。
  *
  * `vcRuntime`：VC++ 运行库在不在（缺 → 装纯 JS 那条线，见 `PNPM_PURE_JS_SPEC`）。
  * **缺省当"有"** —— 没探测过的调用方（既有夹具、纯函数调用）保持原样装最新，不会被无声降级。
@@ -86,8 +104,43 @@ export function envFixPlan(
   action: EnvFixAction,
   npmPath: string | null,
   vcRuntime = true,
+  extra: EnvFixPlanExtra = {},
 ): EnvFixPlan | null {
   const npm = String(npmPath ?? '').trim();
+  const version = String(extra.version ?? '').trim();
+
+  // 「更新 pnpm」不经过 npm：命令由**归属**决定（自更新 / Corepack / npm 全局 / Homebrew），
+  // 所以它在"没有 npm"时也可能可用，也因此要排在最前面（不看 `npm` 那一份）。
+  if (action === 'update-pnpm') {
+    const pnpm = extra.pnpm;
+    if (!pnpm) return null;
+    // **pnpm 那一档不吃版本参数**（t84 用户裁定）：它的目标固定在 profile 那条大版本线内的**最新版**；
+    // 跨大版本要连同 profile 的依赖一起迁移（store 布局按大版本走，见 `parseProfilePnpmMajor`），
+    // 那是一次**单独的迁移动作**，不在"更新 pnpm"里做。所以只用算出来的目标 —— 调用方就算递了
+    // version，IPC 那一层（`resolveFixVersion`）也已经拒了；这里是第二道防线。
+    const chosen = pnpm.target;
+    const command = pnpmUpdateCommand({
+      binding: pnpm.binding,
+      helpers: pnpm.helpers,
+      target: chosen,
+      currentVersion: pnpm.binding.version,
+    });
+    if (!command) return null;
+    return {
+      action,
+      display: `${command.file} ${command.args.join(' ')}`,
+      file: command.file,
+      args: command.args,
+      // 这一档没有"装进哪个全局目录"，给"**哪一份 pnpm 会被改**"所在的目录（确认区显示的就是它）
+      target: pnpm.binding.file ? path.dirname(pnpm.binding.file) : null,
+      note: pnpmUpdateNote({
+        owner: pnpm.binding.owner,
+        target: chosen,
+        major: pnpmMajorForUpdates(pnpm.binding),
+      }),
+    };
+  }
+
   if (!npm) return null;
   // install-pnpm 带一次性开关：npm 的 install-scripts 门禁会拦掉 pnpm 的安装脚本（VM-06 的原文），
   // 放行是官方补救；缺 VC++ 运行库时还要换到纯 JS 那条线（VM-09）。dsh 没有这两件事，argv 原样。
@@ -95,7 +148,9 @@ export function envFixPlan(
   const args =
     action === 'install-pnpm'
       ? ['i', '-g', pnpmInstallSpec(vcRuntime), ALLOW_INSTALL_SCRIPTS_FLAG]
-      : ['i', '-g', '@deepseek-ai/dsh'];
+      : version
+        ? ['i', '-g', `@deepseek-ai/dsh@${version}`]
+        : ['i', '-g', '@deepseek-ai/dsh'];
   const note =
     action === 'install-pnpm'
       ? `这会修改你系统上的全局 npm 包，需要联网；这一次安装会放行 pnpm 的安装脚本（一次性开关，不改你的全局 npm 配置）。${
@@ -103,7 +158,9 @@ export function envFixPlan(
             ? '这台电脑上没找到 VC++ 2015-2022 运行库（vcruntime140.dll / msvcp140.dll），而 pnpm 11 起在 Windows 上发的是原生程序、缺它加载会直接失败（跑起来没有任何输出）—— 所以这次装的是纯 JS 那条线（pnpm 10），它不需要这个运行库。'
             : ''
         }装完会自动复检一次。`
-      : '这会修改你系统上的全局 npm 包，需要联网。装完会自动复检一次。';
+      : version
+        ? `这会修改你系统上的全局 npm 包，需要联网；这一次装的是**指定版本** \`@deepseek-ai/dsh@${version}\`（不是安装源上的最新版）。装完会自动复检一次。`
+        : '这会修改你系统上的全局 npm 包，需要联网。装完会自动复检一次。';
   return {
     action,
     display: `${npm} ${args.join(' ')}`,
@@ -112,6 +169,49 @@ export function envFixPlan(
     target: null,
     note,
   };
+}
+
+/**
+ * 拿不到计划时那句人话（纯函数，自检直接钉三支）。
+ *
+ * 三种动作的成因不同，**不能共用一句**：`install-*` 拿不到计划几乎总是"没有可用的 npm"，
+ * 而 `update-pnpm` 根本不经过 npm —— 它的成因是"认不出这份 pnpm 的更新方式"或"这一轮没取到目标版本"。
+ */
+export function fixPlanMissingMessage(action: EnvFixAction): string {
+  if (action === 'update-pnpm') {
+    return '这一份 pnpm 的更新方式认不出来（或那条路要用的工具不在），也可能是这一轮没从安装源取到目标版本 —— 所以没有替你动。界面上那条说明里有手工步骤；点「重新检测」可以再试一次。';
+  }
+  return '没找到可用的 npm —— 装 pnpm / dsh 都要靠它。可以先重装官方 Node，或用 `corepack enable pnpm`。';
+}
+
+/**
+ * 「更新 pnpm」确认区里那段说明（纯函数，自检直接钉文案）。
+ *
+ * 要讲清三件事：**用哪种方式**（归属）、**目标版本钉在哪条大版本线上**（硬约定 2），
+ * 以及 Homebrew 那种**钉不了版本**的例外。
+ */
+export function pnpmUpdateNote(input: {
+  owner: EnvPnpmOwner;
+  target: string | null;
+  major: string | null;
+}): string {
+  const how =
+    input.owner === 'standalone'
+      ? '用这份 pnpm 自带的 `self-update`（pnpm 官方安装脚本装的那种）'
+      : input.owner === 'corepack'
+        ? '用**同一个 Node** 的 Corepack（`corepack prepare … --activate`）'
+        : input.owner === 'npm-global'
+          ? '用**同一个 Node** 的 npm 做一次全局安装'
+          : '用 Homebrew 升级 pnpm 的 formula';
+  const pin = input.major
+    ? `目标钉在 pnpm ${input.major}.x 这条线上，不是安装源上的最新版 —— 这份 profile 的 store 布局按大版本走（10 → store/v10），跨大版本会让插件页装过的东西对不上。`
+    : 'profile 里没记 pnpm 的大版本，只能跟随当前这一份。';
+  const brew =
+    input.owner === 'homebrew'
+      ? '注意 Homebrew **不能钉版本**（只认 formula）：如果它的 formula 已经跨了大版本，更新后要重新装一遍插件。'
+      : '';
+  const what = input.target ? `更新到 ${input.target}` : '更新';
+  return `这会${how}，把「插件页实际使用的那份 pnpm」${what}，需要联网。${pin}${brew}装完会自动复检一次；正在运行的 dsh 不受影响。`;
 }
 
 /**

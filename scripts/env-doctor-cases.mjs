@@ -966,18 +966,25 @@ const importLines = ipcSource
   .filter((line) => /^\s*import\b/.test(line) && !/^\s*import\s+type\b/.test(line));
 const idUnion = /export type EnvCheckId =([\s\S]*?);/.exec(ipcSource)?.[1] ?? '';
 const idList = [...idUnion.matchAll(/'([^']+)'/g)].map((match) => match[1]);
-const apiMembers = ['envCheck', 'envFix', 'envFixCancel', 'onEnvFixState', 'onEnvFixOutput'];
+const apiMembers = [
+  'envCheck',
+  'envFix',
+  'envFixPlan',
+  'envFixCancel',
+  'onEnvFixState',
+  'onEnvFixOutput',
+];
 check(
-  'P 契约：契约仍是 0 个运行时 import（纯类型 + 常量，叶子之间只有 import type）；8 个 id 顺序与文档一致；2 个动作；5 个 API 都在',
+  'P 契约：契约仍是 0 个运行时 import（纯类型 + 常量，叶子之间只有 import type）；8 个 id 顺序与文档一致；3 个动作（含 t81 的 update-pnpm）；6 个 API 都在',
   importLines.length === 0 &&
     idList.join(',') === 'node,node-version,npm,pnpm,dsh,dsh-run,bundled-runtime,shell' &&
     /export type EnvCheckStatus = 'ok' \| 'warn' \| 'missing';/.test(flatIpc) &&
     [...flatIpc.matchAll(/export type EnvFixAction = ([^;]+);/g)][0]?.[1] ===
-      "'install-pnpm' | 'install-dsh'" &&
+      "'install-pnpm' | 'install-dsh' | 'update-pnpm'" &&
     apiMembers.every((name) => new RegExp(`${name}:`).test(flatIpc)) &&
     !/onEnvReport/.test(flatIpc),
   `imports=${importLines.length} ids=${idList.join(',')} api=${apiMembers.filter((name) => new RegExp(`${name}:`).test(flatIpc)).join(',')} onEnvReport=${/onEnvReport/.test(flatIpc)}`,
-  '0 个运行时 import、8 ids 按文档顺序、5 个 API、没有 onEnvReport',
+  '0 个运行时 import、8 ids 按文档顺序、3 个动作、6 个 API、没有 onEnvReport',
 );
 
 // ---------------------------------------------------------------- Q. 渲染层只递 action
@@ -1000,10 +1007,15 @@ const callSites = rendererFiles.filter((file) =>
   fs.readFileSync(file, 'utf8').includes('api.envFix('),
 );
 check(
-  'Q 渲染层只递 action：api.envFix 全仓库只有一处调用点，且参数是 { action }',
-  /api\.envFix\(\{\s*action\s*\}\)/.test(rendererEnvLib) && callSites.length === 0,
-  `state/env-doctor.ts 里传 { action }=${/api\.envFix\(\{\s*action\s*\}\)/.test(rendererEnvLib)}；其它渲染层文件里的调用点 ${callSites.length} 个`,
-  '唯一调用点 = state/env-doctor.ts 的 runEnvFix',
+  'Q 渲染层只递 action（+ t81 允许的 version）：全仓库只有一处调用点，且不递路径 / 命令',
+  // t81 起允许带 `version`（那是「选择版本」下拉的用户输入，主进程会校验）；**仍然不递路径与命令**
+  /api\.envFix\(\s*version\s*\?\s*\{\s*action,\s*version\s*\}\s*:\s*\{\s*action\s*\}\s*\)/.test(
+    rendererEnvLib,
+  ) &&
+    callSites.length === 0 &&
+    !/api\.envFix\(\{[^}]*\b(file|args|display)\b/.test(rendererEnvLib),
+  `state/env-doctor.ts 的调用形状=${/api\.envFix\(\s*version\s*\?/.test(rendererEnvLib)}；其它渲染层文件里的调用点 ${callSites.length} 个`,
+  '唯一调用点 = state/env-doctor.ts 的 runEnvFix，且只递 action（+ 可选 version）',
 );
 
 // ---------------------------------------------------------------- R. 可执行性：裸名 shim 不算可执行目标
@@ -1362,6 +1374,362 @@ const noDshReport = judgeEnvironment(
 observe(
   `文档未定义：外部 Node 缺失时 node-version 被判成 ${checkOf(noNodeReport, 'node-version').status}（文档 1.2 只写了 ok / warn 两档）`,
 );
+// ---------------------------------------------------------------- O5. pnpm 的来源与更新方式（纯函数，不碰磁盘）
+//
+// 用户要求（原话）："pnpm 要能识别原来是怎么安装的，并且用对应的更新方法进行更新"。
+// 四条安装路径各有一条自己的更新命令，判据里**只有 `realpath` 是决定性的**（Corepack 与 npm 全局装的
+// 都是符号链接，只看路径名分不出来）。认不出来一律 `unknown` —— 那意味着**不能替用户猜**
+// （拿错方式的结果是装出另一份 pnpm，而插件页用的还是原来那份）。
+//
+// 这一节全部喂字面量：**不碰磁盘、不起进程、不联网**。真机上那两份 pnpm 的实测证据在
+// `.verify/pnpm-owner-check.mjs`（只读）。
+const detectPnpmOwner = processUtils?.detectPnpmOwner;
+const nodePrefixFromPnpmRealPath = processUtils?.nodePrefixFromPnpmRealPath;
+const pnpmUpdateCommand = processUtils?.pnpmUpdateCommand;
+const majorOf = processUtils?.majorOf;
+const pnpmProbeEnv = processUtils?.pnpmProbeEnv;
+if (
+  typeof detectPnpmOwner !== 'function' ||
+  typeof nodePrefixFromPnpmRealPath !== 'function' ||
+  typeof pnpmUpdateCommand !== 'function' ||
+  typeof majorOf !== 'function'
+) {
+  check(
+    'O5 前置：归属判定与更新命令都在 process-utils 的公开面上',
+    false,
+    `detect=${typeof detectPnpmOwner} prefix=${typeof nodePrefixFromPnpmRealPath} cmd=${typeof pnpmUpdateCommand} major=${typeof majorOf}`,
+    '四个都是 function',
+  );
+} else {
+  const facts = (over = {}) => ({
+    file: '/Users/someone/Library/pnpm/pnpm',
+    realPath: '/Users/someone/Library/pnpm/pnpm',
+    isSymlink: false,
+    isFile: true,
+    platform: 'darwin',
+    home: '/Users/someone',
+    ...over,
+  });
+  const ownerOf = (over) => detectPnpmOwner(facts(over)).owner;
+
+  check(
+    'O5 detectPnpmOwner：官方安装脚本（固定位置 + 普通文件）→ standalone',
+    ownerOf({}) === 'standalone',
+    ownerOf({}),
+    'standalone',
+  );
+  check(
+    'O5 detectPnpmOwner：同一个位置但**是符号链接** → 不算 standalone（那是别处 shim 过来的）',
+    ownerOf({ isSymlink: true }) === 'unknown',
+    ownerOf({ isSymlink: true }),
+    'unknown',
+  );
+  check(
+    'O5 detectPnpmOwner：realpath 落在 Corepack 的 node_modules 下 → corepack',
+    ownerOf({
+      file: '/nvm/versions/node/v20.19.2/bin/pnpm',
+      realPath: '/nvm/versions/node/v20.19.2/lib/node_modules/corepack/dist/pnpm.js',
+      isSymlink: true,
+    }) === 'corepack',
+    ownerOf({
+      file: '/nvm/versions/node/v20.19.2/bin/pnpm',
+      realPath: '/nvm/versions/node/v20.19.2/lib/node_modules/corepack/dist/pnpm.js',
+      isSymlink: true,
+    }),
+    'corepack',
+  );
+  check(
+    'O5 detectPnpmOwner：realpath 落在全局 node_modules/pnpm 下 → npm-global',
+    ownerOf({
+      file: '/nvm/versions/node/v24.14.1/bin/pnpm',
+      realPath: '/nvm/versions/node/v24.14.1/lib/node_modules/pnpm/bin/pnpm.cjs',
+      isSymlink: true,
+    }) === 'npm-global',
+    ownerOf({
+      file: '/nvm/versions/node/v24.14.1/bin/pnpm',
+      realPath: '/nvm/versions/node/v24.14.1/lib/node_modules/pnpm/bin/pnpm.cjs',
+      isSymlink: true,
+    }),
+    'npm-global',
+  );
+  const brewDirect = ownerOf({
+    file: '/opt/homebrew/bin/pnpm',
+    realPath: '/opt/homebrew/Cellar/pnpm/10.15.0/bin/pnpm',
+  });
+  const brewLinked = ownerOf({
+    file: '/usr/local/bin/pnpm',
+    realPath: '/usr/local/Cellar/pnpm/10.15.0/bin/pnpm',
+    isSymlink: true,
+  });
+  check(
+    'O5 detectPnpmOwner：Homebrew 两条都认（/opt/homebrew 直装；/usr/local/bin 的链接落到 Cellar）',
+    brewDirect === 'homebrew' && brewLinked === 'homebrew',
+    `${brewDirect} / ${brewLinked}`,
+    'homebrew / homebrew',
+  );
+  check(
+    'O5 detectPnpmOwner：其余一切 → unknown（认不出来就不替用户猜）',
+    ownerOf({ file: '/tmp/some/pnpm', realPath: '/tmp/some/pnpm' }) === 'unknown',
+    ownerOf({ file: '/tmp/some/pnpm', realPath: '/tmp/some/pnpm' }),
+    'unknown',
+  );
+
+  const prefixNvm = nodePrefixFromPnpmRealPath(
+    '/nvm/versions/node/v24.14.1/lib/node_modules/pnpm/bin/pnpm.cjs',
+    'darwin',
+  );
+  const prefixWin = nodePrefixFromPnpmRealPath(
+    'D:\\nvm\\v24.14.1\\node_modules\\pnpm\\bin\\pnpm.cjs',
+    'win32',
+  );
+  const prefixNone = nodePrefixFromPnpmRealPath('/usr/local/bin/pnpm', 'darwin');
+  const prefixOther = nodePrefixFromPnpmRealPath(
+    '/nvm/x/lib/node_modules/other/bin/x.js',
+    'darwin',
+  );
+  check(
+    'O5 nodePrefixFromPnpmRealPath：nvm（POSIX）与 nvm-windows 两种布局都认，认不出给 null',
+    prefixNvm === '/nvm/versions/node/v24.14.1' &&
+      prefixWin === 'D:\\nvm\\v24.14.1' &&
+      prefixNone === null &&
+      prefixOther === null,
+    `${prefixNvm} / ${prefixWin} / ${prefixNone} / ${prefixOther}`,
+    '/nvm/versions/node/v24.14.1 / D:\\nvm\\v24.14.1 / null / null',
+  );
+
+  const binding = (over = {}) => ({
+    owner: 'standalone',
+    file: '/Users/someone/Library/pnpm/pnpm',
+    version: '10.15.0',
+    expectedMajor: '10',
+    matched: true,
+    canAutoUpdate: true,
+    blockedReason: null,
+    evidence: [],
+    hint: null,
+    ...over,
+  });
+  const helpers = {
+    corepackFile: '/nvm/bin/corepack',
+    npmFile: '/nvm/bin/npm',
+    brewFile: '/opt/homebrew/bin/brew',
+  };
+  const commandOf = (over = {}, target = '10.34.6', helperOver = {}) =>
+    pnpmUpdateCommand({
+      binding: binding(over),
+      helpers: { ...helpers, ...helperOver },
+      target,
+      currentVersion: '10.15.0',
+    });
+
+  const standaloneCmd = commandOf();
+  check(
+    'O5 pnpmUpdateCommand：standalone → `self-update <版本>`（钉版本，不裸跑 self-update）',
+    JSON.stringify(standaloneCmd) ===
+      JSON.stringify({
+        file: '/Users/someone/Library/pnpm/pnpm',
+        args: ['self-update', '10.34.6'],
+      }),
+    JSON.stringify(standaloneCmd),
+    'self-update 10.34.6',
+  );
+  const corepackCmd = commandOf({ owner: 'corepack', file: '/nvm/bin/pnpm' });
+  check(
+    'O5 pnpmUpdateCommand：corepack → `prepare pnpm@<版本> --activate`，用**同目录**的 corepack',
+    JSON.stringify(corepackCmd) ===
+      JSON.stringify({
+        file: '/nvm/bin/corepack',
+        args: ['prepare', 'pnpm@10.34.6', '--activate'],
+      }),
+    JSON.stringify(corepackCmd),
+    'corepack prepare pnpm@10.34.6 --activate',
+  );
+  const npmCmd = commandOf({ owner: 'npm-global' });
+  check(
+    'O5 pnpmUpdateCommand：npm-global → 那份 pnpm 所属 Node 的 npm `i -g pnpm@<版本>`',
+    JSON.stringify(npmCmd) ===
+      JSON.stringify({ file: '/nvm/bin/npm', args: ['i', '-g', 'pnpm@10.34.6'] }),
+    JSON.stringify(npmCmd),
+    'npm i -g pnpm@10.34.6',
+  );
+  const brewCmd = commandOf({ owner: 'homebrew' });
+  const brewCross = commandOf({ owner: 'homebrew' }, '11.0.0');
+  check(
+    'O5 pnpmUpdateCommand：homebrew → `brew upgrade pnpm`（不能钉版本，所以跨大版本时**拒绝**）',
+    JSON.stringify(brewCmd) ===
+      JSON.stringify({ file: '/opt/homebrew/bin/brew', args: ['upgrade', 'pnpm'] }) &&
+      brewCross === null,
+    `${JSON.stringify(brewCmd)} / 跨大版本 → ${JSON.stringify(brewCross)}`,
+    'upgrade pnpm / null',
+  );
+  const noTargetOne = commandOf({}, null);
+  const noTargetTwo = commandOf({ owner: 'npm-global' }, null);
+  check(
+    'O5 pnpmUpdateCommand：**没有目标版本一律拒绝**（裸 `self-update` 会跳到最新，可能跨大版本）',
+    noTargetOne === null && noTargetTwo === null,
+    `${JSON.stringify(noTargetOne)} / ${JSON.stringify(noTargetTwo)}`,
+    'null / null',
+  );
+  const unknownCmd = commandOf({ owner: 'unknown' });
+  const noCorepack = commandOf({ owner: 'corepack' }, '10.34.6', { corepackFile: null });
+  const noNpm = commandOf({ owner: 'npm-global' }, '10.34.6', { npmFile: null });
+  const noBrew = commandOf({ owner: 'homebrew' }, '10.34.6', { brewFile: null });
+  check(
+    'O5 pnpmUpdateCommand：unknown / 缺工具 → null（不给自动动作，界面改走手工步骤）',
+    unknownCmd === null && noCorepack === null && noNpm === null && noBrew === null,
+    `${JSON.stringify(unknownCmd)} / ${JSON.stringify(noCorepack)} / ${JSON.stringify(noNpm)} / ${JSON.stringify(noBrew)}`,
+    '四支都应为 null',
+  );
+  check(
+    'O5 majorOf：`10.15.0` → 10；带预发布也认；认不出来给 null',
+    majorOf('10.15.0') === '10' && majorOf('11.0.0-rc.1') === '11' && majorOf('latest') === null,
+    `${majorOf('10.15.0')} / ${majorOf('11.0.0-rc.1')} / ${majorOf('latest')}`,
+    '10 / 11 / null',
+  );
+
+  const probeBase = { PATH: '/usr/bin', HOME: '/Users/someone', KEEP: 'yes' };
+  const probeOut = pnpmProbeEnv?.(probeBase);
+  check(
+    'O5 pnpmProbeEnv：探测时关掉 Corepack 的项目绑定（否则自检会替用户项目钉 packageManager）',
+    probeOut?.COREPACK_ENABLE_PROJECT_SPEC === '0' &&
+      probeOut.PATH === '/usr/bin' &&
+      probeOut.KEEP === 'yes' &&
+      probeBase.COREPACK_ENABLE_PROJECT_SPEC === undefined,
+    JSON.stringify(probeOut),
+    'COREPACK_ENABLE_PROJECT_SPEC=0；其余原样、入参不被改',
+  );
+
+  // 版本下拉的数据源（= 主进程校验渲染层递回来的版本号时用的**白名单**）：倒序 + 滤掉垃圾 + tags 原样
+  const picked = npmRegistry?.pickPackageUpdate?.({
+    current: '0.1.5-rc.1',
+    metadata: {
+      versions: ['0.1.0', '0.2.0-rc.2', 'garbage', '0.2.1-alpha.1', '0.1.5-rc.1'],
+      distTags: { latest: '0.2.0-rc.2', alpha: '0.2.1-alpha.1' },
+    },
+  });
+  check(
+    'O5 版本列表（下拉 + 白名单的数据源）：倒序、滤掉非 semver、tags 原样带出',
+    JSON.stringify(picked?.versions) ===
+      JSON.stringify(['0.2.1-alpha.1', '0.2.0-rc.2', '0.1.5-rc.1', '0.1.0']) &&
+      picked?.tags?.latest === '0.2.0-rc.2',
+    JSON.stringify(picked?.versions ?? null),
+    '["0.2.1-alpha.1","0.2.0-rc.2","0.1.5-rc.1","0.1.0"]',
+  );
+}
+
+// ---------------------------------------------------------------- O6. 版本下拉的键盘导航（纯函数，不碰 DOM）
+//
+// 自绘浮层（用户裁定 A，规格 docs/env-version-pick-choices.html）里最容易写错、又最难用肉眼验的
+// 一小块：↑↓ 到边界怎么办、空列表怎么办、"还没有高亮"时按上下键落到哪。它被抽成了
+// `src/renderer/pages/env/version-pick.ts`，这里直接喂字面量 —— **不起浏览器、不碰 DOM**。
+// 用 try/catch 而不是 `?? {}`：产物里没有这个模块时（树里那份旧产物）要能**降级成"两条前置失败"**，
+// 而不是把整个脚本炸掉（它是门禁的额外检查，炸掉会让其它反例也看不到结论）。
+let versionPick;
+try {
+  versionPick = loadBackend('src/renderer/pages/env/version-pick.js');
+} catch {
+  versionPick = undefined;
+}
+const nextActiveIndex = versionPick?.nextActiveIndex;
+const clampActive = versionPick?.clampActive;
+check(
+  'O6 前置：版本下拉的导航纯函数能被独立加载（test 侧 import 保证它进了编译产物）',
+  typeof nextActiveIndex === 'function' && typeof clampActive === 'function',
+  `next=${typeof nextActiveIndex} clamp=${typeof clampActive}`,
+  '两个都是 function',
+);
+if (typeof nextActiveIndex === 'function' && typeof clampActive === 'function') {
+  const downFromZero = nextActiveIndex(0, 'ArrowDown', 3);
+  const upFromTwo = nextActiveIndex(2, 'ArrowUp', 3);
+  const upFromZero = nextActiveIndex(0, 'ArrowUp', 3);
+  const downFromTwo = nextActiveIndex(2, 'ArrowDown', 3);
+  check(
+    'O6 nextActiveIndex：↑↓ 各走一格，**到边界停住**（不回绕 —— 三十个版本里回绕容易误选）',
+    downFromZero === 1 && upFromTwo === 1 && upFromZero === 0 && downFromTwo === 2,
+    `${downFromZero},${upFromTwo},${upFromZero},${downFromTwo}`,
+    '1,1,0,2',
+  );
+  const home = nextActiveIndex(1, 'Home', 5);
+  const end = nextActiveIndex(1, 'End', 5);
+  const noActiveDown = nextActiveIndex(-1, 'ArrowDown', 5);
+  const noActiveUp = nextActiveIndex(-1, 'ArrowUp', 5);
+  check(
+    'O6 nextActiveIndex：Home / End 到首尾；没有高亮（-1）时向下落第一项、向上落最后一项',
+    home === 0 && end === 4 && noActiveDown === 0 && noActiveUp === 4,
+    `${home},${end},${noActiveDown},${noActiveUp}`,
+    '0,4,0,4',
+  );
+  const empty = nextActiveIndex(0, 'ArrowDown', 0);
+  const emptyHome = nextActiveIndex(-1, 'Home', 0);
+  const over = clampActive(9, 3);
+  const under = clampActive(-5, 3);
+  const nan = clampActive(Number.NaN, 3);
+  check(
+    'O6 nextActiveIndex / clampActive：空列表恒为 -1；越界夹到边界；-1 是"没有高亮"不是第 0 项',
+    empty === -1 && emptyHome === -1 && over === 2 && under === -1 && nan === 0,
+    `${empty},${emptyHome},${over},${under},${nan}`,
+    '-1,-1,2,-1,0',
+  );
+}
+
+// ---------------------------------------------------------------- O7. 时间轴的方向与区间（纯函数，不碰 DOM）
+//
+// 把 A（浮层）与 C（时间轴）合成之后多出来的两个纯逻辑：哪边算升、哪边算降，以及"当前到目标
+// 之间那几行"是哪几行（时间轴上要画成强调色实线的那一段）。同时留在 `version-pick.ts` 里，
+// 于是这里能直接喂字面量 —— **不起浏览器、不碰 DOM**。
+//
+// 为什么方向也要抽出来判：列表是**倒序**的（下标越小版本越新），而 `rc.9` 与 `rc.10` 按
+// 字典序比会得出相反的方向 —— 版本号字符串谁都不许直接比。
+const pickDirection = versionPick?.pickDirection;
+const betweenIndexes = versionPick?.betweenIndexes;
+check(
+  'O7 前置：时间轴的方向与区间也是能被独立加载的纯函数',
+  typeof pickDirection === 'function' && typeof betweenIndexes === 'function',
+  `dir=${typeof pickDirection} between=${typeof betweenIndexes}`,
+  '两个都是 function',
+);
+if (typeof pickDirection === 'function' && typeof betweenIndexes === 'function') {
+  const up = pickDirection(3, 0);
+  const down = pickDirection(0, 3);
+  const same = pickDirection(2, 2);
+  const unknownA = pickDirection(-1, 3);
+  const unknownB = pickDirection(2, -1);
+  check(
+    'O7 pickDirection：倒序列表里"目标下标更小 = 升"；相等 same；任一侧不在列表里 unknown（不编方向）',
+    up === 'up' &&
+      down === 'down' &&
+      same === 'same' &&
+      unknownA === 'unknown' &&
+      unknownB === 'unknown',
+    `${up},${down},${same},${unknownA},${unknownB}`,
+    'up,down,same,unknown,unknown',
+  );
+  const downSpan = betweenIndexes(0, 4);
+  const upSpan = betweenIndexes(4, 1);
+  const adjacent = betweenIndexes(1, 2);
+  const sameSpan = betweenIndexes(2, 2);
+  const unknownSpan = betweenIndexes(-1, 2);
+  check(
+    'O7 betweenIndexes：开闭区间（较小下标 +1 → 较大下标，含较大那端）；相邻两行只有一段；相等/不在列表里为空',
+    JSON.stringify(downSpan) === JSON.stringify([1, 2, 3, 4]) &&
+      JSON.stringify(upSpan) === JSON.stringify([2, 3, 4]) &&
+      JSON.stringify(adjacent) === JSON.stringify([2]) &&
+      sameSpan.length === 0 &&
+      unknownSpan.length === 0,
+    `down=${JSON.stringify(downSpan)} up=${JSON.stringify(upSpan)} adj=${JSON.stringify(adjacent)} same=${sameSpan.length} unk=${unknownSpan.length}`,
+    '[1,2,3,4] / [2,3,4] / [2] / 0 / 0',
+  );
+  // 区间只决定"画哪几行"，方向只决定"用什么颜色"：把当前与目标对调，画的是同一段
+  const spanOne = betweenIndexes(4, 1);
+  const spanTwo = betweenIndexes(1, 4);
+  check(
+    'O7 区间与方向解耦：当前与目标对调后画的是同一段（只有颜色跟着方向变）',
+    JSON.stringify(spanOne) === JSON.stringify(spanTwo),
+    `${JSON.stringify(spanOne)} vs ${JSON.stringify(spanTwo)}`,
+    '同一段',
+  );
+}
+
 observe(
   `文档未定义：dsh 本体没定位到时 dsh-run 被判成 ${checkOf(noDshReport, 'dsh-run').status}（文档 1.6 只写了 ok / missing / warn 的分支）`,
 );
@@ -1391,6 +1759,52 @@ observe(
 observe(
   `本次加载的编译产物来自：${path.relative(repoRoot, buildDir) || '仓库根（树里的 tsc 产物）'}` +
     `（树里没有就用 .verify/cases-build 的私有构建，见脚本头部）`,
+);
+
+// ---------------------------------------------------------------- O9. 更新完 dsh 的"重启提示"判据
+//
+// 真机反馈：更新完 dsh、**自己重启过 dsh**，之后再点更新入口，那条「新版本的 dsh 要重新启动之后
+// 才会生效」又冒出来。判据从"会话内的一个布尔"换成"**比事实**"（`dsh.startedAt` vs 这一轮跑完的
+// `finishedAt`）之后，最容易写错的就是**缺事实时往哪边倒**。
+// 这里钉住：只有"现在跑着的这份比这次更新还新"才闭嘴；拿不到任一时刻一律提示（保守）。
+// 用 try/catch 而不是 `?? {}`：产物里没有这个模块时要能降级成"一条前置失败"，别把整个脚本炸掉。
+const restartAsk = (() => {
+  try {
+    return loadBackend('src/renderer/pages/env/restart-ask.js');
+  } catch {
+    return undefined;
+  }
+})();
+const shouldAskRestartDsh = restartAsk?.shouldAskRestartDsh;
+check(
+  'O9 前置：重启提示的判据能被独立加载（test 侧 import 保证它进了编译产物）',
+  typeof shouldAskRestartDsh === 'function',
+  `shouldAskRestartDsh=${typeof shouldAskRestartDsh}`,
+  'function',
+);
+const newerOne = shouldAskRestartDsh?.({ startedAt: 200, finishedAt: 100 });
+const sameOne = shouldAskRestartDsh?.({ startedAt: 100, finishedAt: 100 });
+check(
+  'O9 shouldAskRestartDsh：dsh 比这次更新**新**（startedAt >= finishedAt）→ 不再提示',
+  newerOne === false && sameOne === false,
+  `${newerOne} / ${sameOne}`,
+  'false / false（相等也算"更新之后起来的"）',
+);
+const olderOne = shouldAskRestartDsh?.({ startedAt: 50, finishedAt: 100 });
+check(
+  'O9 shouldAskRestartDsh：dsh 比这次更新**旧** → 提示',
+  olderOne === true,
+  `${olderOne}`,
+  'true',
+);
+const noStart = shouldAskRestartDsh?.({ startedAt: null, finishedAt: 100 });
+const noFinish = shouldAskRestartDsh?.({ startedAt: 100, finishedAt: null });
+const noBoth = shouldAskRestartDsh?.({ startedAt: null, finishedAt: null });
+check(
+  'O9 shouldAskRestartDsh：**任一时刻拿不到就保守地提示**（缺事实时不装作知道）',
+  noStart === true && noFinish === true && noBoth === true,
+  `${noStart} / ${noFinish} / ${noBoth}`,
+  'true / true / true',
 );
 
 // ---------------------------------------------------------------- 输出

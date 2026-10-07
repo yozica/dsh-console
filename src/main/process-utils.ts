@@ -22,13 +22,23 @@ export {
 } from './process-shell';
 export {
   VC_RUNTIME_DLLS,
+  PNPM_MANUAL_STEPS,
+  detectPnpmOwner,
   findPnpm,
   findPnpmForProfile,
   findPnpmWindows,
   hasVcRuntime,
+  majorOf,
+  nodePrefixFromPnpmRealPath,
   parseProfilePnpmMajor,
+  pnpmBindingForProfile,
   pnpmExeNames,
+  pnpmHelpersFor,
+  pnpmProbeCwd,
+  pnpmProbeEnv,
+  pnpmUpdateCommand,
   pnpmVersionOf,
+  readPnpmOwnerFacts,
   readProfilePnpmMajor,
   vcRuntimePaths,
 } from './process-pnpm';
@@ -69,5 +79,5 @@ export type {
   ProbeResult,
   ShellSpec,
 } from './process-types';
-export type { PnpmPick } from './process-pnpm';
+export type { PnpmHelpers, PnpmPick } from './process-pnpm';
 export type { LaunchSpec } from './process-launch';

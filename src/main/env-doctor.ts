@@ -30,19 +30,24 @@ import type {
   EnvCheckStatus,
   EnvDoctorReport,
   EnvFixAction,
+  EnvFixDraft,
   EnvFixPlan,
   EnvFixState,
+  EnvPnpmBinding,
 } from '../shared/ipc';
 import { pluginRegistryEnv } from './plugin-manager';
 import { Settings } from './settings';
 import {
   INSTALL_SCRIPTS_WARNING,
+  PNPM_PURE_JS_SPEC,
   RAW_LOG_CHARS,
   describePnpmRunFailure,
   envFixPlan,
   fixDoneMessage,
+  fixPlanMissingMessage,
   fixTimeoutMessage,
   npmLaunchSpec,
+  pnpmInstallSpec,
   refreshLookupPath,
   summarizeEnvFixFailure,
 } from './env-fix-plan';
@@ -55,6 +60,10 @@ import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { cleanNpmEnv, envWithKnownBins, hasVcRuntime, homeDir } from './process-utils';
+import { pnpmBindingForProfile, pnpmHelpersFor, readPnpmOwnerFacts } from './process-pnpm';
+import type { PnpmHelpers } from './process-pnpm';
+import { loadPkgUpdates } from './pkg-updates';
+import { pluginProfileDir } from './plugin-parse';
 
 export interface EnvDoctorHooks {
   /** 主进程注入的运行时事实（platform / isPackaged / process.versions） */
@@ -185,12 +194,59 @@ export class EnvDoctor {
    * （所以界面上显示的那条命令与这里真正要跑的**必然是同一条**），`install-pnpm` 保持
    * `findNpm()` 不变。绑定是 `unbound`（推不出该装进哪个 Node）时给 null → 没有计划 → 不给入口。
    */
-  async fixPlan(action: EnvFixAction): Promise<EnvFixPlan | null> {
+  async fixPlan(action: EnvFixAction, version: string | null = null): Promise<EnvFixPlan | null> {
+    // 「更新 pnpm」不吃 npm：命令由**归属**决定，目标版本与界面读数同一个来源（同一份缓存）。
+    // 它的 `target` 也由计划自己给（被更新那份 pnpm 所在的目录），所以**不再问 `npm prefix -g`**
+    // —— 对 `brew` / `corepack` 问 npm 前缀本来就没有意义。
+    if (action === 'update-pnpm') {
+      return envFixPlan(action, null, hasVcRuntime(), {
+        // 用户在下拉里挑的那一版（**已校验**：形状 + 落在这一条大版本线的列表里）。
+        // 不递的话 `envFixPlan` 用算出来的目标（同一条线内最新）。Homebrew 那一档在 IPC 层就被拒了。
+        version,
+        pnpm: await this.pnpmUpdateInput(),
+      });
+    }
     // VC++ 运行库这条事实**现场再认一次**（用户可能在两次点击之间装上了运行库）
     const npmPath = action === 'install-dsh' ? resolveNpmForDsh(this.settings.all()) : findNpm();
-    const plan = envFixPlan(action, npmPath, hasVcRuntime());
+    const plan = envFixPlan(action, npmPath, hasVcRuntime(), { version });
     if (!plan) return null;
     return { ...plan, target: await this.npmPrefixFor(plan.file) };
+  }
+
+  /**
+   * 「更新 pnpm」现场要的三件东西：**归属**（现认一次，用户可能在两次点击之间换了 pnpm）、
+   * 归属对应的**工具**（corepack / npm / brew）、以及**目标版本**。
+   *
+   * 目标版本走 `loadPkgUpdates`（与界面读数同一份缓存）：同一个大版本线内的最新 ——
+   * 所以"确认区里显示要装到哪一版"与"真正执行的 argv"必然一致。
+   */
+  private async pnpmUpdateInput(): Promise<{
+    binding: EnvPnpmBinding;
+    helpers: PnpmHelpers;
+    target: string | null;
+  }> {
+    const binding = pnpmBindingForProfile(pluginProfileDir());
+    if (!binding.file) {
+      return {
+        binding,
+        helpers: { corepackFile: null, npmFile: null, brewFile: null },
+        target: null,
+      };
+    }
+    const facts = readPnpmOwnerFacts(binding.file);
+    const helpers = pnpmHelpersFor(
+      { owner: binding.owner, file: binding.file },
+      facts,
+      this.platform,
+    );
+    const updates = await loadPkgUpdates({
+      settings: this.settings.all(),
+      installed: await this.installedVersions(),
+      pnpmBinding: binding,
+      // 没有 pnpm 时才用得上这条安装线（这里必有 file，所以它不影响结果；给上是为了类型完整）
+      pnpmInstallMajor: pnpmInstallSpec(hasVcRuntime()) === PNPM_PURE_JS_SPEC ? '10' : null,
+    });
+    return { binding, helpers, target: updates.pnpm.target };
   }
 
   /**
@@ -281,6 +337,14 @@ export class EnvFixRunner {
   private running = false;
   private cancelled = false;
   private timedOut = false;
+  /**
+   * 这一轮跑完的时刻。**按轮次只打一次戳**：`run()` 开头清掉、第一个终态补上。
+   *
+   * 为什么不用"每次终态都 `Date.now()`"：终态在将来若有第二条发布路径（例如复检报告晚到再发一次
+   * `done`），时间戳会往**后**漂；而界面拿它跟"那份 dsh 是什么时候起来的"比，漂晚一点就会把
+   * **已经生效**的更新又提示一遍 —— 那正是这次要修的 bug 的另一副面孔。
+   */
+  private finishedAt: number | null = null;
   private current: EnvFixState = {
     phase: 'idle',
     action: null,
@@ -288,6 +352,7 @@ export class EnvFixRunner {
     message: null,
     code: null,
     report: null,
+    finishedAt: null,
   };
 
   constructor(
@@ -311,31 +376,32 @@ export class EnvFixRunner {
     return true;
   }
 
-  async run(action: EnvFixAction): Promise<EnvFixState> {
+  async run(action: EnvFixAction, version: string | null = null): Promise<EnvFixState> {
     if (this.busy) {
       return { ...this.current, message: '已经有一个修复在进行中' };
     }
     // 同步占位，且必须在第一个 `await` 之前（见 running 的说明）。
     // 写在 `try` 外面是有意的：`try` 里第一句就是 `await`，这样后来往里加代码也不会把它挤到 await 后面。
     this.running = true;
+    // 新的一轮：这一轮还没跑完，所以"跑完的时刻"必须先清掉（否则界面会拿上一轮的时间戳去比）
+    this.finishedAt = null;
     try {
       // 真正的流程在 execute 里（中间那一串 await 都不碰互斥位）
-      return await this.execute(action);
+      return await this.execute(action, version);
     } finally {
       // 兜住所有路径（包括抛异常）：互斥位绝不能留着自己不放
       this.running = false;
     }
   }
 
-  private async execute(action: EnvFixAction): Promise<EnvFixState> {
-    const plan = await this.doctor.fixPlan(action);
+  private async execute(action: EnvFixAction, version: string | null): Promise<EnvFixState> {
+    const plan = await this.doctor.fixPlan(action, version);
     if (!plan) {
       return this.publish({
         phase: 'error',
         action,
         command: null,
-        message:
-          '没找到可用的 npm —— 装 pnpm / dsh 都要靠它。可以先重装官方 Node，或用 `corepack enable pnpm`。',
+        message: fixPlanMissingMessage(action),
         code: null,
         report: null,
       });
@@ -592,12 +658,19 @@ export class EnvFixRunner {
     );
   }
 
-  private publish(state: EnvFixState): EnvFixState {
-    this.current = state;
+  private publish(state: EnvFixDraft): EnvFixState {
+    // 终态补上"跑完的时刻"（一轮只打一次，见 finishedAt 的说明）；`running` / `idle` 一律 null。
+    // 入参**不含** `finishedAt`：它是这里派生的事实，不是调用方给的东西 —— 调用方各自 `Date.now()`
+    // 迟早会不一致，而界面的判据全靠它准。
+    const terminal = state.phase !== 'running' && state.phase !== 'idle';
+    if (terminal && this.finishedAt === null) this.finishedAt = Date.now();
+    if (!terminal) this.finishedAt = null;
+    const next: EnvFixState = { ...state, finishedAt: terminal ? this.finishedAt : null };
+    this.current = next;
     // 终态立刻腾出互斥位（只有 running 相位要保持它）
     if (state.phase !== 'running') this.running = false;
-    this.hooks.state({ ...state });
-    return state;
+    this.hooks.state({ ...next });
+    return next;
   }
 }
 

@@ -27,6 +27,7 @@ import { detailSegments } from './env-detail.js';
 import { closeEnvDetail, envDetailOpen } from '../../state/env-layer.js';
 import { restartThenOpenHarness } from '../../state/restart-flow.js';
 import EnvUpdateConfirm from './EnvUpdateConfirm.vue';
+import { shouldAskRestartDsh } from './restart-ask.js';
 import {
   cancelEnvFix,
   clearEnvFixOutput,
@@ -36,6 +37,7 @@ import {
   envReportError,
   envReportLoading,
   loadEnvReport,
+  loadEnvFixPlan,
   loadPkgUpdates,
   pkgUpdates,
   runEnvFix,
@@ -73,6 +75,7 @@ import type {
   EnvNodeOwner,
   EnvNodePlan,
   EnvPkgUpdate,
+  EnvPnpmBinding,
   EnvWizardStepId,
 } from '../../../shared/ipc.js';
 
@@ -147,6 +150,16 @@ const asksRestartDsh = computed(() => {
   const current = dsh.value;
   return Boolean(current && current.owned) && phase.value !== 'running';
 });
+/**
+ * Node 那一路**故意不共用**上面那条"比事实"的判据（别默默留着不一致，理由写在这儿）：
+ *
+ *   1. Node 更新会**先停 dsh**，所以这句提示出现在 `phase !== 'running'` 之后 —— 那个条件本身
+ *      就保证了"把 dsh 重新起起来之后提示自己消失"，不存在 dsh 那一路的"复活"问题；
+ *   2. `EnvInstallState` 里**没有**"跑完的时刻"这个事实（它只有 phase / message / code / report），
+ *      要比也无从比起 —— 为了一个当前恒为真的判断去加契约字段不划算。
+ *
+ * 将来 Node 那条若也出现"重启完还会冒出来"，先给它加 `finishedAt`，再来共用同一个纯函数。
+ */
 
 const lastChecked = computed(() => {
   void tick.value;
@@ -204,6 +217,28 @@ function pkgUpdateOf(kind: 'node' | 'pnpm' | 'dsh' | null): EnvPkgUpdate | null 
   return pkgUpdates.value ? pkgUpdates.value[kind] : null;
 }
 
+/**
+ * 某一行的读数（t83）：先把 `check` 收成"那一档"再取。
+ * 模板里需要它 —— `pkgUpdateOf` 只认三档，而 `check.id` 是八项，直接传会多一层判断。
+ */
+function pkgUpdateFor(check: EnvCheck): EnvPkgUpdate | null {
+  return pkgUpdateOf(updateKindOf(check));
+}
+
+/**
+ * 这一档"现在这一份"的版本（时间轴上的「当前」节点）。
+ *
+ * **pnpm 要用 `pnpmBinding.version`**（被更新那一份的版本），不是 `installedVersions().pnpm`
+ * —— 后者是 PATH 上探测到的那一份，可能与"插件页实际会用的那一份"不是同一份。拿错的话时间轴会
+ * 把「当前」标在错的版本上，而这正是 dsh 当初"装到别的树"那个 bug 的界面版本。
+ */
+function versionCurrentOf(check: EnvCheck): string | null {
+  const kind = updateKindOf(check);
+  if (kind === 'pnpm') return pnpmBinding.value?.version ?? null;
+  if (kind === 'dsh') return pkgUpdateOf('dsh')?.current ?? null;
+  return null;
+}
+
 /** 按钮上那个目标版本：只在**确实有新版**时才有值（`更新 dsh → 0.2.0-rc.2`） */
 function pkgTargetOf(kind: 'node' | 'pnpm' | 'dsh' | null): string | null {
   const update = pkgUpdateOf(kind);
@@ -241,6 +276,142 @@ const dshRefusedNote = computed<string>(() => dshNpmBinding.value?.evidence ?? '
 const dshRefusedHint = computed<string>(() => dshNpmBinding.value?.hint ?? '');
 
 /**
+ * 「更新 pnpm」的归属事实（主进程 `pnpmBindingForProfile()` 的结果，界面只读）。
+ *
+ * 它是**插件页真正会用的那一份** pnpm（按 profile 的 store 大版本挑出来的），不是 PATH 上随便一份
+ * —— 与 dsh 那边"绑定到被升级那份所属的 Node"是同一个教训。
+ */
+const pnpmBinding = computed<EnvPnpmBinding | null>(() => envReport.value?.pnpmBinding ?? null);
+
+/**
+ * pnpm 那一行的更新入口**用不了**：归属认不出来（`unknown`），或那条路要用的工具不在
+ * （例如归属是 Corepack 却找不到同目录的 `corepack`）。
+ *
+ * 判据在主进程（`canAutoUpdate`），这里只读结论 —— 与 `dshUpdateRefused` / `nodeUpdateRefused`
+ * 同一个分工：渲染层不自己猜归属、不自己拼命令。
+ */
+function pnpmUpdateRefused(check: EnvCheck): boolean {
+  const binding = pnpmBinding.value;
+  return (
+    check.id === 'pnpm' && check.status !== 'missing' && binding !== null && !binding.canAutoUpdate
+  );
+}
+
+/** 那条诚实边界的正文（主进程给的 facts：为什么认不出/缺什么工具） */
+const pnpmRefusedNote = computed<string>(() => pnpmBinding.value?.blockedReason ?? '');
+
+/** 旁边那条手工步骤（认不出归属时只能给步骤，不能替用户猜用哪条命令） */
+const pnpmRefusedHint = computed<string>(() => pnpmBinding.value?.hint ?? '');
+
+/**
+ * pnpm 那一行按钮的文案（**按归属**）：用户只要求 dsh 能选版本，pnpm 这一档只把"用哪种方式"说清 ——
+ * 这是用户原话里"pnpm 要能识别原来是怎么安装的，并且用对应的更新方法"在界面上的落点。
+ */
+function pnpmUpdateLabel(): string {
+  const owner = pnpmBinding.value?.owner;
+  if (owner === 'corepack') return '用 Corepack 更新 pnpm';
+  if (owner === 'homebrew') return '用 Homebrew 更新 pnpm';
+  if (owner === 'standalone') return '更新 pnpm（自更新）';
+  if (owner === 'npm-global') return '用 npm 更新 pnpm';
+  return '更新 pnpm';
+}
+
+// ---------------------------------------------------------------- 「选择版本」（dsh）
+
+/**
+ * 用户在下拉里显式选的那一版；`null` = 没选，用主进程算出来的目标。
+ *
+ * **两档都开放**（t83 起）：dsh 与 pnpm 都能在下拉里挑版本（pnpm 那份列表由主进程按 profile 的
+ * 大版本线过滤好，界面只管画）。选定之后取一次**定向计划**：确认区显示的命令原文与真正跑的必须是
+ * 同一条（`pnpm@10.15.0` 与不带版本那条、`@deepseek-ai/dsh@0.1.7` 与不带版本那条，都不是一回事）。
+ */
+const versionPick = ref<string | null>(null);
+/**
+ * 当前确认区那一份**定向计划**（dsh 按选中的版本、pnpm 按归属 + 选中的版本），两者只会有一个
+ * 同时在用。`null` = 还没取到 / 取不到 → 确认区不给「开始」（**不拿旧计划糊上去**）。
+ */
+const openFixPlan = ref<EnvFixPlan | null>(null);
+const openFixPlanLoading = ref(false);
+let openFixPlanSeq = 0;
+
+/** 下拉里默认落在哪一版：用户选过就用它，否则是主进程算出来的目标（没有目标时是当前版） */
+function selectedVersionOf(kind: 'node' | 'pnpm' | 'dsh' | null): string | null {
+  if (versionPick.value) return versionPick.value;
+  if (kind !== 'pnpm' && kind !== 'dsh') return null;
+  return pkgTargetOf(kind) ?? pkgUpdateOf(kind)?.current ?? null;
+}
+
+/** 用户选的这一版是不是比当前**低**（要明确说是降级，照 Node 换档那套说辞） */
+function downgradeOf(kind: 'node' | 'pnpm' | 'dsh' | null): boolean {
+  if (kind !== 'pnpm' && kind !== 'dsh') return false;
+  const picked = versionPick.value;
+  const current = pkgUpdateOf(kind)?.current ?? null;
+  if (!picked || !current || picked === current) return false;
+  return compareSemver(picked, current) < 0;
+}
+
+/** 极简 semver 比较（只用来判"降级 / 升级 / 同版"；完整比较在主进程的 npm-registry 里） */
+function compareSemver(one: string, two: string): number {
+  const parts = (value: string): (string | number)[] =>
+    value
+      .replace(/^v/i, '')
+      .split(/[.-]/)
+      .map((piece) => (/^\d+$/.test(piece) ? Number(piece) : piece));
+  const left = parts(one);
+  const right = parts(two);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const a = left[index] ?? 0;
+    const b = right[index] ?? 0;
+    if (a === b) continue;
+    if (typeof a === 'number' && typeof b === 'number') return a < b ? -1 : 1;
+    return String(a) < String(b) ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * 「选择版本…」那一入口要不要出现：**只有 dsh 那一档有**（t84 回退）。
+ *
+ * pnpm 不做选版本（用户裁定）：它的目标固定在 profile 那条**大版本线内的最新版**，而跨大版本要连同
+ * profile 的依赖一起迁移（store 布局按大版本走），那是一次**单独的迁移动作**。所以主进程给 pnpm 的
+ * `versions` 恒为 `[]`，这里也就只认 dsh —— 那条列表有没有东西可挑仍然以主进程给的事实为准。
+ */
+function canPickVersionOf(check: EnvCheck): boolean {
+  if (updateKindOf(check) !== 'dsh') return false;
+  if ((pkgUpdateOf('dsh')?.versions ?? []).length === 0) return false;
+  return !dshUpdateRefused(check);
+}
+
+/** 取一次当前确认区的定向计划（**两档都带上选中的版本**；pnpm 的归属与目标线由主进程现算） */
+async function loadOpenFixPlan(): Promise<void> {
+  const kind = updateOpen.value;
+  if (kind !== 'dsh' && kind !== 'pnpm') {
+    openFixPlan.value = null;
+    return;
+  }
+  const seq = (openFixPlanSeq += 1);
+  openFixPlanLoading.value = true;
+  // 版本参数**只对 dsh 那一档有意义**（t84：pnpm 不吃版本 —— 它的目标固定在线内最新）。
+  // 所以这里显式地按档位给：否则上一档残留的选中版本会被递给 `update-pnpm`，而主进程会
+  // （正确地）拒掉它 —— 界面于是显示"没取到命令"，看起来像坏了。
+  const plan = await loadEnvFixPlan(
+    kind === 'dsh' ? 'install-dsh' : 'update-pnpm',
+    kind === 'dsh' ? (versionPick.value ?? undefined) : undefined,
+  );
+  if (seq !== openFixPlanSeq) return;
+  openFixPlanLoading.value = false;
+  openFixPlan.value = plan;
+}
+
+/** 用户在下拉里选了一版：这是**显式选择**，重新取一份计划（不动系统） */
+function pickVersion(version: string): void {
+  if (busy.value) return;
+  if (versionPick.value === version) return;
+  versionPick.value = version;
+  void loadOpenFixPlan();
+}
+
+/**
  * 这一行的「更新」按钮**该不该出现**。用户裁定（2026-10-03）：**只有真有新版本才出现按钮**。
  *
  * 于是下面这三种情况一律不给按钮（连"点了什么都不会发生"的都不给）：
@@ -262,6 +433,8 @@ function pkgUpdateVisible(check: EnvCheck): boolean {
   const kind = updateKindOf(check);
   if (kind !== 'pnpm' && kind !== 'dsh') return false;
   if (kind === 'dsh' && dshUpdateRefused(check)) return false;
+  // pnpm 那一边的诚实边界（认不出归属 / 缺工具）同理：一个入口都不给
+  if (kind === 'pnpm' && pnpmUpdateRefused(check)) return false;
   if (pkgTargetOf(kind)) return true;
   return kind === 'dsh' && dshNotRunnable.value;
 }
@@ -280,6 +453,7 @@ function pkgReadoutOf(check: EnvCheck): string {
   if (kind !== 'pnpm' && kind !== 'dsh') return '';
   // 说不准装到哪棵树时连读数也不给：旁边那句"说不准该装进哪个 Node"与"已经是最新版"摆在一起只会打架
   if (kind === 'dsh' && dshUpdateRefused(check)) return '';
+  if (kind === 'pnpm' && pnpmUpdateRefused(check)) return '';
   const update = pkgUpdateOf(kind);
   if (!update || update.newer || !update.target || !update.current) return '';
   return update.ahead
@@ -287,14 +461,15 @@ function pkgReadoutOf(check: EnvCheck): string {
     : `已经是最新版（${update.current}）`;
 }
 
-/** 行上按钮的文案：Node 有自己的档位说法；pnpm / dsh 有新版是"更新 X → 版本"，只修是"重装 X" */
+/** 行上按钮的文案：Node 有自己的档位说法；pnpm **按归属**（自更新 / Corepack / npm / Homebrew）；
+ *  dsh 有新版是"更新 dsh → 版本"，只修是"重装 dsh" */
 function updateLabelOf(check: EnvCheck): string {
   const kind = updateKindOf(check);
   if (kind === 'node') return nodeUpdateLabel.value;
-  const base = kind === 'dsh' ? '更新 dsh' : '更新 pnpm';
+  const base = kind === 'dsh' ? '更新 dsh' : pnpmUpdateLabel();
   const target = pkgTargetOf(kind);
   if (target) return `${base} → ${target}`;
-  return kind === 'dsh' ? '重装 dsh' : '重装 pnpm';
+  return kind === 'dsh' ? '重装 dsh' : base;
 }
 
 /** 「重装」那条例外的悬停解释：说明为什么给的是一个不带版本号的按钮 */
@@ -417,12 +592,12 @@ function cancelConfirm(): void {
   confirming.value = null;
 }
 
-async function startFix(action: EnvFixAction): Promise<void> {
+async function startFix(action: EnvFixAction, version?: string): Promise<void> {
   if (running.value) return;
   confirming.value = null;
   clearEnvFixOutput();
   outputOpen.value = true;
-  const state = await runEnvFix(action);
+  const state = await runEnvFix(action, version);
   if (state.message) say(state.message);
 }
 
@@ -499,11 +674,21 @@ async function openUpdate(
 ): Promise<void> {
   if (busy.value) return;
   confirming.value = null;
-  restartDismissed.value = false;
+  // 这里**曾经**有一句 `restartDismissed.value = false;`（"每次打开更新入口都重新问一遍"）。
+  // 它是"重启完还会再冒出来"的直接原因：那句提示的判据里带着这个布尔，而用户在更新之后**自己**
+  // 重启了 dsh，之后再点任何更新入口（例如「选择版本…」）就把布尔复位、提示复活 —— 尽管那次更新
+  // 早已生效。现在这条提示**由事实决定**（`shouldAskRestartDsh`：比 `dsh.startedAt` 与本轮
+  // `envFix.finishedAt`），不需要也不允许在这里复位它；「先不用」仍然是一次明确的"别再问我"。
   updateOpen.value = kind;
-  // pnpm 与 dsh 都走"复用既有的确认区"那一条路（同一条 envFix 计划，冻结 §3.5）：
-  // 命令原文与目标目录由主进程现算，这里不需要再取任何计划。
-  if (kind !== 'node') return;
+  // pnpm 与 dsh 都走"复用既有的确认区"那一条路（命令原文与目标目录由主进程现算）：
+  //  - pnpm 那一档不需要下拉，确认区直接显示 `update-pnpm` 的定向计划（按归属决定命令）；
+  //  - dsh 那一档要给「选择版本」，所以每次打开都回到"没显式选"（= 主进程算出来的目标），
+  //    再取一次计划 —— 计划里的 display 就是这一次真要跑的那条命令。
+  if (kind !== 'node') {
+    versionPick.value = null;
+    await loadOpenFixPlan();
+    return;
+  }
   // 不记住上次选了哪一档：每次打开都回到"跟随现在这一份"（只有显式换档才带值进来）
   nodeUpdateChannel.value = channel;
   await loadNodeUpdatePlan();
@@ -544,6 +729,9 @@ function cancelUpdate(): void {
   updateOpen.value = null;
   nodeUpdateError.value = '';
   nodeUpdateChannel.value = null;
+  // dsh 那一档的选择也要清掉：下一次打开回到"没显式选"（= 目标版本），不留上一次的降级选择
+  versionPick.value = null;
+  openFixPlan.value = null;
 }
 
 /** 「换一个下载源再试」：把人带到本页那张来源控件（不静默换源 —— 只能由用户改） */
@@ -556,16 +744,26 @@ function focusSource(): void {
   say('在「安装下载来源」里填一个新的地址，保存之后回来重新检测');
 }
 
-/** 「更新 pnpm」就是既有的 install-pnpm（冻结 §3.5：不许第二条路）。
- *  所以它走的是同一个"确认之后才动手"的入口，渲染层只递 action（自检钉着这一点）。 */
+/**
+ * 「更新 pnpm」走的是**新增的 `update-pnpm`**（不是 `install-pnpm`）：命令按那份 pnpm 的**归属**决定
+ * （自更新 / Corepack / npm 全局 / Homebrew），对象是**插件页实际使用的那一份**。
+ *
+ * 为什么不能继续复用 `install-pnpm`：那条路是"用 npm 装一份新的"，会把 pnpm 装到另一个地方，
+ * 而插件页用的还是原来那份（真机踩过：装进 v22 的全局树、dsh 却在 v24 上跑）。
+ *
+ * 渲染层只递 action（**用户在下拉里显式选过版本才把版本递回去**；不递时主进程用同一条大版本线内
+ * 的最新）—— 版本号由主进程校验，自检钉着这一点。
+ */
 async function startPnpmUpdate(): Promise<void> {
   updateOpen.value = null;
   confirming.value = null;
-  await startFix('install-pnpm');
+  // 不带版本：pnpm 那一档固定取线内最新（t84），带版本会被主进程拒掉
+  await startFix('update-pnpm');
 }
 
 /**
- * 「更新 dsh」同样复用既有的 install-dsh（`npm i -g @deepseek-ai/dsh` 装的就是最新版）。
+ * 「更新 dsh」复用既有的 install-dsh（不带版本时装的就是安装源上的最新），
+ * **用户在下拉里显式选过版本才把版本递回去**（那是"换到某一版"，可能是降级）。
  *
  * 与 Node 那条路的关键差别：**升级 dsh 之前不停 dsh**。npm 换的是磁盘上的文件，正在跑的那个
  * 进程早就把模块加载完了；更新完再让用户重启（那时新版本才生效）—— 不像"更新 Node"，
@@ -574,7 +772,7 @@ async function startPnpmUpdate(): Promise<void> {
 async function startDshUpdate(): Promise<void> {
   updateOpen.value = null;
   confirming.value = null;
-  await startFix('install-dsh');
+  await startFix('install-dsh', versionPick.value ?? undefined);
 }
 
 /** 「更新 Node.js」/「换成…」：只递选择，地址与校验值由主进程现场重算 */
@@ -711,12 +909,20 @@ function dismissRestart(): void {
  * 判据与 Node 那一路**正好相反**，这一点很容易看错：Node 更新会先停 dsh，所以那句提示出现在
  * `phase !== 'running'` 之后；而这里**没有停 dsh**，"dsh 正在跑"恰恰是要重启的前提。
  * 只有本应用启动的 dsh 才轮得到我们管（同一个 `owned` 判据）。
+ *
+ * 最后一条判据是**比事实**（`shouldAskRestartDsh`）：现在跑着的这份 dsh 是这次更新之后才起来的吗？
+ * 用户更新完**自己**重启了 dsh，提示就该自己消失 —— 原来只靠 `restartDismissed` 那个会话内的布尔，
+ * 一打开更新入口就被复位，于是重启完还会再冒出来（真机踩过）。
  */
 const asksRestartDshAfterFix = computed(() => {
   if (restartDismissed.value) return false;
   const state = envFix.value;
   if (state.phase !== 'done' || state.action !== 'install-dsh') return false;
-  return Boolean(dsh.value?.owned) && phase.value === 'running';
+  if (!(Boolean(dsh.value?.owned) && phase.value === 'running')) return false;
+  return shouldAskRestartDsh({
+    startedAt: dsh.value?.startedAt ?? null,
+    finishedAt: state.finishedAt ?? null,
+  });
 });
 
 /** 更新完的那次重启：走完整的 restart（停 → 等端口释放 → 起），不是 Node 那一路的 `'start'` */
@@ -952,6 +1158,18 @@ onUnmounted(() => {
               <span v-if="pkgReadoutOf(check)" class="wizard-readout">
                 {{ pkgReadoutOf(check) }}
               </span>
+              <!-- 「已经是最新版」旁边留一个**显式选版本**的入口（与 Node 那一行的"换一档"完全同形）：
+                   **只有 dsh 那一档有**（t84 回退 —— pnpm 不做选版本，它的目标固定在线内最新，
+                   所以那一档连这个入口也不给）。它不叫「更新」：选一个更旧的版本是"换版本"，不是"更新"。 -->
+              <button
+                v-if="canPickVersionOf(check)"
+                class="btn small ghost"
+                :disabled="busy"
+                :title="busy ? BUSY_HINT : '列出发行版，自己挑一个（可能比现在更旧）'"
+                @click="openUpdateRow(check)"
+              >
+                选择版本…
+              </button>
               <button
                 v-if="pkgUpdateVisible(check)"
                 class="btn small"
@@ -999,9 +1217,26 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- pnpm 的更新入口用不了：认不出这份 pnpm 是怎么装的（或那条路要用的工具不在）。
+                照 nodeUpdateRefused / dshUpdateRefused 同一套写法：一句事实 + 手工步骤 + 重新检测。
+                认不出归属时**只能给步骤**（不能替用户猜用哪条命令）—— 那正是 PNPM_MANUAL_STEPS 的内容。 -->
+          <div v-if="pnpmUpdateRefused(check)" class="env-owner-note">
+            <span class="env-owner-note-text">{{ pnpmRefusedNote }}</span>
+            <p v-if="pnpmRefusedHint" class="env-hint">
+              <code>{{ pnpmRefusedHint }}</code>
+              <button class="btn tiny" @click="copyHint(pnpmRefusedHint)">复制</button>
+            </p>
+            <div class="btn-row">
+              <button class="btn tiny ghost" @click="refresh">重新检测</button>
+            </div>
+          </div>
+
           <!-- 更新确认区：原地展开，不弹原生对话框。两条风险说明是需求 §8.3 的硬要求。
                t60 起它是 pages/env/EnvUpdateConfirm.vue：这一层只把计划与档位递下去、把
-               "开始 / 取消 / 换档 / 换源"接回来 —— 同一份计划父级那一行也在读，所以留在父级。 -->
+               "开始 / 取消 / 换档 / 换源"接回来 —— 同一份计划父级那一行也在读，所以留在父级。
+               t81 起它还多两样：**dsh 的版本下拉**（列全部发行版 + 标 dist-tags）与
+               **确认区那一份定向计划**（`openFixPlan`：按选中的版本 / 按 pnpm 的归属现算，
+               所以显示的 `display` 就是执行时要跑的那条 —— 显示 == 执行）。 -->
           <EnvUpdateConfirm
             v-if="
               (check.id === 'node' || check.id === 'pnpm' || check.id === 'dsh') &&
@@ -1014,9 +1249,18 @@ onUnmounted(() => {
             :node-update-loading="nodeUpdateLoading"
             :node-update-channel="nodeUpdateChannel"
             :node-update-error="nodeUpdateError"
-            :pnpm-plan="planFor('install-pnpm')"
+            :pnpm-binding="pnpmBinding"
+            :open-fix-plan="openFixPlan"
+            :open-fix-plan-loading="openFixPlanLoading"
             :dsh-plan="planFor('install-dsh')"
-            :dsh-update="pkgUpdates?.dsh ?? null"
+            :version-options="pkgUpdateFor(check)?.versions ?? []"
+            :version-tags="pkgUpdateFor(check)?.tags ?? {}"
+            :version-major="pkgUpdateFor(check)?.major ?? null"
+            :version-current="versionCurrentOf(check)"
+            :version-target="pkgUpdateFor(check)?.target ?? null"
+            :version-picked="versionPick"
+            :version-selected="selectedVersionOf(updateKindOf(check))"
+            :version-downgrade="downgradeOf(updateKindOf(check))"
             :report-owner="nodeOwner"
             :node-affects-dsh-text="nodeAffectsDshText"
             @cancel="cancelUpdate"
@@ -1024,6 +1268,7 @@ onUnmounted(() => {
             @start-dsh="startDshUpdate"
             @start-node="startNodeUpdate"
             @pick-channel="pickUpdateChannel"
+            @pick-version="pickVersion"
             @refresh="refresh"
             @focus-source="focusSource"
             @open-download="openDownloadPage"

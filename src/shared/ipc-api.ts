@@ -31,6 +31,7 @@ import type {
   EnvDoctorReport,
   EnvFixAction,
   EnvFixOutputEvent,
+  EnvFixPlan,
   EnvFixState,
   EnvPkgUpdates,
   EnvWizardState,
@@ -158,8 +159,19 @@ export interface DshConsoleApi {
   // 运行环境自检 + 一键修复（见 docs/env-doctor.md）
   /** 拉一份自检报告；refresh = true 时清掉缓存重跑一轮 */
   envCheck: (options?: { refresh?: boolean }) => Promise<EnvDoctorReport>;
-  /** 跑一个一键修复动作：只递 action，命令由主进程自己构造 */
-  envFix: (request: { action: EnvFixAction }) => Promise<EnvFixState>;
+  /**
+   * 跑一个一键修复动作：只递 action（+ 可选的版本号），命令由主进程自己构造。
+   *
+   * `version` 只对 `install-dsh` 有意义（「选择版本」那个下拉）。主进程会**校验**它：
+   * 严格 semver 形状 + **必须落在这一轮从安装源拿到的版本列表里**，不在列表里直接拒绝 ——
+   * 渲染层递回来的字符串一概不采信（与"不采信它递回来的路径"同一条安全模型）。
+   */
+  envFix: (request: { action: EnvFixAction; version?: string }) => Promise<EnvFixState>;
+  /**
+   * 确认区用的**定向计划**：按用户选的版本取一次命令原文（与执行侧同一个 builder、同一份校验）。
+   * 拿不到返回 null（界面据此不给「开始」）。与 `envNodePlan` 同一套做法。
+   */
+  envFixPlan: (request: { action: EnvFixAction; version?: string }) => Promise<EnvFixPlan | null>;
   /** 中断正在跑的修复（没有在跑的返回 false） */
   envFixCancel: () => Promise<boolean>;
   /** 修复状态变化（相位 / 收尾消息 / 复检报告）都走这一条 */

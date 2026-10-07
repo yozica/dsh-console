@@ -60,6 +60,10 @@
      所以层号只要求高于页面本身（页面没有 z-index），远低于门禁层与启动锁。 */
   --z-gate: 58;
   --z-env: 30;
+  /* --z-pop 是自绘浮层（dsh 的版本下拉，t82）：它挂在 body 上、要**高于环境详情层**
+     （--z-env 30，它自己就在那一层里），但**必须低于门禁（--z-gate 58）与启动锁（60）** ——
+     门禁与锁是"整屏接管"，一个下拉没有资格盖住它们。 */
+  --z-pop: 45;
   --wizard-read: 620px;
   --wizard-card: 760px;
   --wizard-rail-dot: 14px;
@@ -1350,6 +1354,11 @@ body[data-immersive='true'] .webview-wrap {
 /* 设置页「运行环境」卡里那行按钮（t45） */
 .env-actions {
   display: flex;
+  /* 居中，不是默认的 stretch：一行里可能同时有 `.btn.small`（27px）与 `.btn.tiny`（23px），
+     两者都是**固定高度**，不写这条就按顶边对齐、差 4px —— dsh 那一行「选择版本…」+
+     「更新 dsh → …」并排时才暴露出来（2026-10-07 用户真机截图）。顺带让 Node 那一行的
+     「读数 + ghost」也居中（那是改进，不是回归）。 */
+  align-items: center;
   gap: 8px;
   margin-top: 10px;
 }
@@ -1641,6 +1650,300 @@ body[data-gate-visible='true'] .rail > * {
 
 .wizard-decide .btn-row {
   margin-top: 10px;
+}
+
+/* 版本下拉（「选择版本…」展开的那一行）：**自绘控件**（用户从三个摆法里选了 A，
+   规格 docs/env-version-pick-choices.html）。外层只做排版 —— 底色与边框归触发器与浮层自己
+   （早先那个原生 <select> 是"砖里套砖"，换成自绘之后不需要外框了）。 */
+.env-version-pick {
+  display: block;
+  margin-top: 7px;
+}
+
+.env-version-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.env-version-trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 展开态：accent 边 + 焦点环（折叠 / 展开两态的区别就在这一条上） */
+.env-version-trigger.is-open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.env-version-value {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+.env-version-caret {
+  margin-left: auto;
+  color: var(--ink-faint);
+}
+
+.env-version-tags {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.env-version-tag {
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  background: var(--surface-2);
+  color: var(--ink-dim);
+  border: 1px solid var(--hairline);
+}
+
+/* 语义色：只用仓库已有的 soft / 实色令牌，**不写颜色字面量**。
+   dist-tags 是安装源给的原文，认不出来的 tag 落回上面那条基础样式（每个 class 都有样式）。 */
+.env-version-tag.is-latest {
+  background: var(--run-soft);
+  color: var(--run);
+  border-color: transparent;
+}
+
+.env-version-tag.is-next {
+  background: var(--sky-soft);
+  color: var(--sky);
+  border-color: transparent;
+}
+
+.env-version-tag.is-alpha {
+  background: var(--amber-soft);
+  color: var(--amber);
+  border-color: transparent;
+}
+
+/* 浮层本体：fixed + --z-pop（层号顺序的理由写在令牌那一段）。
+   内边距**不在这里**：粘性摘要行要贴着顶边，所以 padding 归摘要行与列表各自管。
+   滚动条不在这里另写：全局 ::-webkit-scrollbar 已经是 --scroll-thumb 那一套。 */
+.env-version-pop {
+  position: fixed;
+  z-index: var(--z-pop);
+  max-height: 232px;
+  overflow: auto;
+  padding: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-focus);
+}
+
+/* 焦点在容器上（键盘事件挂在它那儿），但列表本身不画焦点环 —— 高亮由 .is-on 表达 */
+.env-version-pop:focus {
+  outline: none;
+}
+
+/* 粘性摘要行：把"从哪到哪、是升是降"钉在顶边（浮层限高会滚，「当前」那一行可能被滚出视野）。
+   背景必须自己给（不然文字会与下面的节点叠在一起），下边一条发丝线把它和列表分开。 */
+.env-version-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--t-xs);
+  color: var(--ink-dim);
+}
+
+/* 色调只表达方向：升 accent、降 amber、相等与认不出走上面那条中性的 */
+.env-version-head.is-up {
+  color: var(--accent);
+}
+
+.env-version-head.is-down {
+  color: var(--amber);
+}
+
+.env-version-list {
+  padding: 5px;
+}
+
+.env-version-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* 鼠标 hover 与键盘高亮是**同一个**状态：两者都写 versionActive，这里只有一条规则。
+   它与「当前 / 目标」是**两套独立状态**：高亮 = 底色 + 字色，当前/目标 = 节点 + 右侧标签 ——
+   同一行两件事都占时都看得见（不是同一个真源）。 */
+.env-version-opt.is-on {
+  background: var(--accent-soft);
+}
+
+/* 时间轴的轴：每行自己画一段竖线（`align-self: stretch` 让它撑满行高），
+   行高变化不会把线画歪；首尾两行收口，别在列表头尾画出悬空的线。
+   上下各 -5px：行的纵向内边距是 5px，不抵消掉的话相邻两段之间会留 10px 的空档，
+   一条"时间轴"看起来就成了一串小短杠。负外边距是上下对称的，所以节点的 50% 仍然是行心。 */
+.env-version-axis {
+  position: relative;
+  flex: 0 0 14px;
+  width: 14px;
+  align-self: stretch;
+  margin: -5px 0;
+}
+
+.env-version-axis::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--hairline-strong);
+}
+
+/* 收口：第一行从节点起、最后一行到节点止（节点在行的垂直中点，见下面 .env-version-node） */
+.env-version-opt:first-child .env-version-axis::before {
+  top: 50%;
+}
+
+.env-version-opt:last-child .env-version-axis::before {
+  bottom: 50%;
+}
+
+/* 区间那一段（`betweenIndexes` 算出来的那几个下标）：升 = accent、降 = amber。
+   amber 在本仓库只表示"在往下降"，所以它不能同时拿来画升的那一段 —— 否则顶上那条
+   「升级」摘要与这段琥珀色会自相矛盾。 */
+.env-version-opt.is-between.is-up .env-version-axis::before {
+  left: 5.5px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.env-version-opt.is-between.is-down .env-version-axis::before {
+  left: 5.5px;
+  width: 2px;
+  background: var(--amber);
+  opacity: 0.75;
+}
+
+/* 两个端点行各补**朝目标的那半行**：只按整行上色的话，线段与节点之间会留一截发丝线
+   （`betweenIndexes` 给的是整行集合，端点行自己不带 `.is-between`）。
+   这四个选择器只用行上已经挂着的 class（`is-current` / `is-target` + `is-up` / `is-down`），
+   模板不必再算别的状态；与首尾那两条收口也不会打架 —— 端点行正好是首/末行时，收口给的是
+   同一半（第一行从节点起 / 最后一行到节点止）。 */
+.env-version-opt.is-current.is-up .env-version-axis::before {
+  /* 升：当前在下面，从当前节点往上 = 当前行的上半 */
+  bottom: 50%;
+  left: 5.5px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.env-version-opt.is-target.is-up .env-version-axis::before {
+  /* 升：目标在上面，从目标节点往下 = 目标行的下半 */
+  top: 50%;
+  left: 5.5px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.env-version-opt.is-current.is-down .env-version-axis::before {
+  /* 降：当前在上面，从当前节点往下 = 当前行的下半 */
+  top: 50%;
+  left: 5.5px;
+  width: 2px;
+  background: var(--amber);
+  opacity: 0.75;
+}
+
+.env-version-opt.is-target.is-down .env-version-axis::before {
+  /* 降：目标在下面，从目标节点往上 = 目标行的上半 */
+  bottom: 50%;
+  left: 5.5px;
+  width: 2px;
+  background: var(--amber);
+  opacity: 0.75;
+}
+
+/* 节点：默认空心中性；「当前」实心绿点、「目标」空心 accent 环（带一圈 accent-soft 光晕） */
+.env-version-node {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1.5px solid var(--hairline-strong);
+}
+
+.env-version-opt-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.env-version-opt-ver {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+/* 「当前」：实心绿点 + 版本号也用 --run（同一个身份在一行里说两遍） */
+.env-version-opt.is-current .env-version-node {
+  background: var(--run);
+  border-color: var(--run);
+}
+
+.env-version-opt.is-current .env-version-opt-ver {
+  color: var(--run);
+}
+
+/* 「目标」：空心 accent 环，与「当前」的实心绿点配成一对。
+   版本号**不着色**：目标的身份靠节点与右侧那个「目标」标签，字色留给高亮（`.is-on`），
+   两套状态才不会互相吞掉。 */
+.env-version-opt.is-target .env-version-node {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 高亮写在「当前 / 目标」之后：同一行两者都占时，底色与字色表达"键盘/鼠标正在这儿"，
+   节点与右侧标签仍然表达"这是当前/目标"。 */
+.env-version-opt.is-on .env-version-opt-ver {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.env-version-opt-right {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+}
+
+.env-version-opt-right.is-cur {
+  color: var(--run);
+}
+
+.env-version-opt-right.is-target {
+  color: var(--accent);
 }
 
 /* 版本对照砖：全应用唯一许可的 "→"（它真的是一次前后变化） */

@@ -22,6 +22,8 @@ import * as pluginManager from '../../src/main/plugin-manager';
 import * as processUtils from '../../src/main/process-utils';
 import { DEFAULTS } from '../../src/main/settings';
 import * as envDetail from '../../src/renderer/pages/env/env-detail.js';
+import * as restartAsk from '../../src/renderer/pages/env/restart-ask.js';
+import * as versionPick from '../../src/renderer/pages/env/version-pick.js';
 
 import { createEnvFixtures } from '../env-fixtures';
 import { check, skip, IS_WINDOWS } from '../harness';
@@ -739,9 +741,14 @@ export function runEnvDoctor(repo: Repo): void {
       /whichWindowsExe\('pnpm'/.test(envCode) &&
       /whichWindowsExe\('node'/.test(envCode),
   );
-  const envRunBody = stripComments(blockOf(envSource, 'async run(action: EnvFixAction)'));
-  const envRunnerBody = stripComments(blockOf(envSource, 'async execute(action: EnvFixAction)'));
-  const envPublishBody = stripComments(blockOf(envSource, 'private publish(state: EnvFixState)'));
+  const envRunBody = stripComments(blockOf(envSource, 'async run(action: EnvFixAction, version'));
+  const envRunnerBody = stripComments(
+    blockOf(envSource, 'private async execute(action: EnvFixAction, version'),
+  );
+  // 锚点跟着签名走：`publish` 的入参是 `EnvFixDraft`（= **不含** `finishedAt` 的状态 ——
+  // 那个"跑完的时刻"由 `publish()` 自己派生，只此一处，见 t85）。签名再改名时这条会红，
+  // 那是提醒：这条断言钉的是"终态释放互斥位"那一句，别让它悄悄切到空串上（切不到就等于没断言）。
+  const envPublishBody = stripComments(blockOf(envSource, 'private publish(state: EnvFixDraft)'));
   check(
     '环境自检：超时是独立终态（有自己那句话，且判在「退出码 != 0」之前）',
     envDoctor.fixTimeoutMessage() === '超过 5 分钟没跑完，已自动中断（npm 可能已经写了一部分）' &&
@@ -784,7 +791,7 @@ export function runEnvDoctor(repo: Repo): void {
   );
 
   check(
-    '环境自检：契约里有 8 个 id、2 个动作、5 个 API',
+    '环境自检：契约里有 8 个 id、3 个动作（t81 起多了 update-pnpm）、6 个 API',
     (() => {
       const idUnion = /export type EnvCheckId =([\s\S]*?);/.exec(flatIpc)?.[1] ?? '';
       const actionUnion = /export type EnvFixAction =([\s\S]*?);/.exec(flatIpc)?.[1] ?? '';
@@ -792,9 +799,10 @@ export function runEnvDoctor(repo: Repo): void {
         /export type EnvCheckStatus = 'ok' \| 'warn' \| 'missing';/.test(flatIpc) &&
         idUnion.split('|').filter(Boolean).length === 8 &&
         envIds.every((id) => idUnion.includes(`'${id}'`)) &&
-        actionUnion.split('|').filter(Boolean).length === 2 &&
+        actionUnion.split('|').filter(Boolean).length === 3 &&
         actionUnion.includes("'install-pnpm'") &&
         actionUnion.includes("'install-dsh'") &&
+        actionUnion.includes("'update-pnpm'") &&
         /export interface EnvCheck \{/.test(flatIpc) &&
         /fixAction: EnvFixAction \| null;/.test(flatIpc) &&
         /export interface EnvDoctorReport \{/.test(flatIpc) &&
@@ -802,7 +810,12 @@ export function runEnvDoctor(repo: Repo): void {
         /envCheck: \(options\?: \{ refresh\?: boolean \}\) => Promise<EnvDoctorReport>;/.test(
           flatIpc,
         ) &&
-        /envFix: \(request: \{ action: EnvFixAction \}\) => Promise<EnvFixState>;/.test(flatIpc) &&
+        /envFix: \(request: \{ action: EnvFixAction; version\?: string \}\) => Promise<EnvFixState>;/.test(
+          flatIpc,
+        ) &&
+        /envFixPlan: \(request: \{ action: EnvFixAction; version\?: string \}\) => Promise<EnvFixPlan \| null>;/.test(
+          flatIpc,
+        ) &&
         /envFixCancel: \(\) => Promise<boolean>;/.test(flatIpc) &&
         /onEnvFixState: \(handler: \(state: EnvFixState\) => void\) => \(\) => void;/.test(
           flatIpc,
@@ -853,12 +866,15 @@ export function runEnvDoctor(repo: Repo): void {
       !/shell:\s*true/.test(envCode),
   );
   check(
-    '环境自检：渲染层只递 action（执行的是主进程自己算的 argv）',
-    /const \{ action \} = \(request \?\? \{\}\) as \{ action\?: EnvFixAction \};/.test(
+    '环境自检：渲染层只递 action（+ t81 起允许的、已校验的 version）；argv 仍由主进程现算',
+    /const parsed = \(request \?\? \{\}\) as \{ action\?: EnvFixAction; version\?: unknown \};/.test(
       envMainCode,
     ) &&
-      /envFixRunner\.run\(action\)/.test(envMainCode) &&
-      /const plan = await this\.doctor\.fixPlan\(action\);/.test(envCode) &&
+      /const checked = await resolveFixVersion\(\{ action, version: parsed\.version \}\);/.test(
+        envMainCode,
+      ) &&
+      /envFixRunner\.run\(action, checked\.version\)/.test(envMainCode) &&
+      /const plan = await this\.doctor\.fixPlan\(action, version\);/.test(envCode) &&
       /const spec = npmLaunchSpec\(plan\.file, plan\.args, this\.doctor\.platform\);/.test(
         envCode,
       ) &&
@@ -926,7 +942,7 @@ export function runEnvDoctor(repo: Repo): void {
       // 真正的执行只在「开始」那条路上，而且 runEnvFix 全文件只有一处调用点
       /@click="startConfirmed"/.test(envPaneCode) &&
       /void startFix\(action\)/.test(envStartConfirmedBody) &&
-      /await runEnvFix\(action\)/.test(envStartFixBody) &&
+      /await runEnvFix\(action, version\)/.test(envStartFixBody) &&
       envRunFixCalls.length === 1,
     envRunFixCalls.length === 1
       ? '按钮受 fixActionOf 门控；envFix 的唯一调用点在确认后的 startFix'
@@ -1217,7 +1233,9 @@ export function runEnvDoctor(repo: Repo): void {
         /const vcRuntime = raw\.vcRuntime !== false;/.test(envCode) &&
         // 方案 A 把"用哪份 npm"换成了三元（dsh 用绑定那份、pnpm 不变），但这一条的意图不变：
         // 一键修复的计划**现场**用当前探测到的 vcRuntime 重算，不吃报告里的旧值
-        /const plan = envFixPlan\(action, npmPath, hasVcRuntime\(\)\);/.test(envCode) &&
+        /const plan = envFixPlan\(action, npmPath, hasVcRuntime\(\), \{ version \}\);/.test(
+          envCode,
+        ) &&
         // 认出来的结论会进日志（出路也一并记下来）
         /describePnpmRunFailure\(\{/.test(envCode) &&
         /出路：\$\{verdict\.hints\.join/.test(envCode)
@@ -1366,13 +1384,15 @@ export function runEnvDoctor(repo: Repo): void {
       // 子组件那一侧：kind 认三档、dsh 有自己的计划与版本读数 prop
       /kind: 'node' \| 'pnpm' \| 'dsh';/.test(confirmCode) &&
       /dshPlan: EnvFixPlan \| null;/.test(confirmCode) &&
-      /dshUpdate: EnvPkgUpdate \| null;/.test(confirmCode) &&
-      // 命令原文仍然只来自主进程给的计划（渲染层不自己拼命令，同 7.18）
-      /dshPlan\?\.display/.test(confirmCode) &&
+      /versionOptions: string\[\];/.test(confirmCode) &&
+      /versionSelected: string \| null;/.test(confirmCode) &&
+      // 命令原文仍然只来自主进程给的计划（渲染层不自己拼命令，同 7.18）；
+      // t81 起 dsh 那一张显示的是**按选中版本现算**的 openFixPlan（显示 == 执行）
+      /openFixPlan\?\.display/.test(confirmCode) &&
       // 「要重启 dsh 才生效」这句必须在：升级 dsh 之前不停它，这就是唯一的收口
       /重新启动之后新版本才会生效/.test(confirmCode) &&
-      // 两个更新入口共用既有的计划来源，没有另起一套
-      /planFor\('install-pnpm'\)/.test(envPaneCode),
+      // 两个更新入口各自的计划来源：dsh = install-dsh（可钉版本）、pnpm = update-pnpm（按归属）
+      /loadEnvFixPlan\(\s*kind === 'dsh' \? 'install-dsh' : 'update-pnpm'/.test(envPaneCode),
   );
   check(
     '环境自检（t79）：pnpm / dsh 的更新按钮**只在真有新版本时**才出现（用户裁定）',
@@ -1389,8 +1409,9 @@ export function runEnvDoctor(repo: Repo): void {
       // 没有新版时只能留**读数**（一句 span），不许再跟一个「重装」按钮
       /v-if="pkgReadoutOf\(check\)" class="wizard-readout"/.test(envPaneCode) &&
       !/>\s*重装\s*<\/button>/.test(envPaneCode) &&
-      // 「重装」只可能由没有目标版本那条分支产出，且文案带上一份的名字
-      /return kind === 'dsh' \? '重装 dsh' : '重装 pnpm';/.test(envPaneCode),
+      // 没有目标版本时：dsh 那一支是「重装 dsh」；pnpm 那一支按**归属**给文案（t81）
+      /return kind === 'dsh' \? '重装 dsh' : base;/.test(envPaneCode) &&
+      /function pnpmUpdateLabel\(\): string \{/.test(envPaneCode),
   );
 
   // ---- 方案 A（真机 bug）：dsh 的更新入口必须用「被升级的那份 dsh 所属 Node」的 npm ----
@@ -1453,13 +1474,13 @@ export function runEnvDoctor(repo: Repo): void {
       /private prefixByNpm = new Map<string, string \| null>\(\);/.test(doctorCode),
   );
   check(
-    '环境自检（t79）：两个动作仍然只有 install-pnpm / install-dsh（更新复用它们，不新增第三个）',
-    /export type EnvFixAction = 'install-pnpm' \| 'install-dsh';/.test(flatIpc) &&
-      // 更新那一侧也只是把 kind 传下去，没有第二套动作名
+    '环境自检（t79）：动作只有这三个 —— install-pnpm / install-dsh / update-pnpm（t81 新增最后一个）',
+    /export type EnvFixAction = 'install-pnpm' \| 'install-dsh' \| 'update-pnpm';/.test(flatIpc) &&
+      // 没有第二套"更新"动作名：更新 dsh 复用 install-dsh（带版本），更新 pnpm 用 update-pnpm
       !/install-dsh-update|install-update|update-dsh/.test(flatIpc + envPaneCode) &&
       // 回归：更新 dsh **不先停 dsh**（npm 换的是磁盘上的文件），界面也不许自己调停止
       !/stopDshForUpdate/.test(envPaneCode) &&
-      /await startFix\('install-dsh'\)/.test(envPaneCode),
+      /await startFix\('install-dsh'/.test(envPaneCode),
   );
   check(
     '环境自检（t79）：`env:pkg-updates` 在契约 / preload / 主进程三边都在，且不在自检报告里（门禁要离线读报告）',
@@ -1496,17 +1517,31 @@ export function runEnvDoctor(repo: Repo): void {
       /AbortSignal\.timeout\(/.test(registryCode),
   );
   check(
-    '环境自检（t79）：目标版本跟着 spec 走 —— 不带版本时取 latest 标签，`pnpm@10` 那条线按主版本挑',
-    // 判据在内核里（pickPackageUpdate 是纯函数），这里钉的是"调用方把两条线分开传了"
-    /allowMajor: pnpmSpec === PNPM_PURE_JS_SPEC \? '10' : null/.test(envMainCode) &&
-      /pnpmInstallSpec\(hasVcRuntime\(\)\)/.test(envMainCode) &&
-      // 安装源只从设置里取，且只用于这一次查询（不改用户的 .npmrc）
-      /normalizeRegistryBase\(settings\.all\(\)\.pluginRegistry\)/.test(envMainCode) &&
-      // 按需查 + 5 分钟内存缓存
-      /PKG_UPDATE_TTL_MS = 5 \* 60 \* 1000/.test(envMainCode) &&
-      // 渲染层那边只在详情层打开 / 重新检测 / 修复完成之后拉（不在启动时替用户发请求）
-      /envDetailOpen\.value/.test(envPaneCode) &&
-      /loadPkgUpdates\(true\)/.test(envPaneCode),
+    '环境自检（t79 + t81）：目标版本跟着"该装到哪条线"走 —— pnpm 更新看大版本线、安装看 vcRuntime',
+    // 判据在内核里（pickPackageUpdate 是纯函数），这里钉的是"调用方把两条线分开传了"。
+    // t81 起缓存与查询搬去 `pkg-updates.ts`（执行侧也要用同一份），于是这一条改读新家。
+    (() => {
+      const pkg = stripComments(
+        fs.readFileSync(path.join(srcDir, 'main', 'pkg-updates.ts'), 'utf8'),
+      );
+      return (
+        // ① 更新路径：目标钉在 profile 记的大版本线上（读不到才跟随当前那份）
+        /const pnpmMajor = input\.pnpmBinding\.file/.test(pkg) &&
+        /pnpmMajorForUpdates\(input\.pnpmBinding\)/.test(pkg) &&
+        /allowMajor: pnpmMajor,/.test(pkg) &&
+        // ② 安装路径（还没有 pnpm 时）：缺 VC++ 运行库就是纯 JS 那条 10.x 线（VM-09）
+        /pnpmInstallSpec\(hasVcRuntime\(\)\) === PNPM_PURE_JS_SPEC \? '10' : null/.test(
+          envMainCode,
+        ) &&
+        // 安装源只从设置里取，且只用于这一次查询（不改用户的 .npmrc）
+        /normalizeRegistryBase\(input\.settings\.pluginRegistry\)/.test(pkg) &&
+        // 按需查 + 5 分钟内存缓存
+        /PKG_UPDATE_TTL_MS = 5 \* 60 \* 1000/.test(pkg) &&
+        // 渲染层那边只在详情层打开 / 重新检测 / 修复完成之后拉（不在启动时替用户发请求）
+        /envDetailOpen\.value/.test(envPaneCode) &&
+        /loadPkgUpdates\(true\)/.test(envPaneCode)
+      );
+    })(),
   );
   check(
     '环境自检（t79）：版本比对的纯函数就是 semver 那一套（预发布序），不是 Console 自己更新那份',
@@ -1575,6 +1610,366 @@ export function runEnvDoctor(repo: Repo): void {
         Boolean(offline.error)
       );
     })(),
+  );
+
+  // ---------------------------------------------------------- t81. pnpm 的归属 + dsh 的版本选择
+  //    用户原话：「还需要支持选择 dsh 的更新版本，支持 pnpm 的更新，pnpm 要能识别原来是怎么安装的，
+  //    并且用对应的更新方法进行更新」。两条硬约定：
+  //      ① 更新对象是**插件页实际会用的那一份**（`findPnpmForProfile`），不是 PATH 上随便一份；
+  //      ② 目标版本钉在 profile 记的那个大版本线上（store 布局按大版本走）。
+  //    纯函数那几条的详细反例在 `scripts/env-doctor-cases.mjs` 的 O5 组（不碰磁盘、不联网）。
+  const processPnpmCode = stripComments(
+    fs.readFileSync(path.join(srcDir, 'main', 'process-pnpm.ts'), 'utf8'),
+  );
+  const fixPlanCode = stripComments(
+    fs.readFileSync(path.join(srcDir, 'main', 'env-fix-plan.ts'), 'utf8'),
+  );
+  const pkgUpdatesCode = stripComments(
+    fs.readFileSync(path.join(srcDir, 'main', 'pkg-updates.ts'), 'utf8'),
+  );
+  const probeCode = stripComments(
+    fs.readFileSync(path.join(srcDir, 'main', 'env-probe.ts'), 'utf8'),
+  );
+  // t83 起 picker 本体搬去了 `VersionPick.vue`（两档共用同一个子组件）。这一组断言**跨两个文件**读，
+  // 所以把两份源码拼起来喂给正则 —— 而不是把每条断言都拆成"到底读哪个文件"。
+  const confirmCode2 = [
+    stripComments(fs.readFileSync(repo.vuePath('EnvUpdateConfirm.vue'), 'utf8')),
+    stripComments(fs.readFileSync(repo.vuePath('VersionPick.vue'), 'utf8')),
+  ].join('\n');
+  check(
+    '环境自检（t81）：pnpm 归属四档 + unknown，判据收在纯函数里（realpath 是决定性的那条）',
+    /export type EnvPnpmOwner = 'standalone' \| 'corepack' \| 'npm-global' \| 'homebrew' \| 'unknown';/.test(
+      flatIpc,
+    ) &&
+      /export function detectPnpmOwner\(facts: PnpmOwnerFacts\): PnpmOwnerVerdict \{/.test(
+        processPnpmCode,
+      ) &&
+      /pathHasSegment\(realPath, '\/node_modules\/corepack\/'\)/.test(processPnpmCode) &&
+      /pathHasSegment\(realPath, '\/node_modules\/pnpm\/'\)/.test(processPnpmCode) &&
+      // standalone 必须是**普通文件**：符号链接说明那是别处 shim 过来的
+      /if \(samePath\(file, standalone\) && isFile && !isSymlink\) \{/.test(processPnpmCode) &&
+      /pathHasSegment\(file, '\/opt\/homebrew\/'\) \|\| pathHasSegment\(realPath, '\/Cellar\/'\)/.test(
+        processPnpmCode,
+      ),
+  );
+  check(
+    '环境自检（t81）：更新对象 = profile 匹配到的那份 + 目标钉在同一条大版本线上',
+    // ① 归属事实从 `findPnpmForProfile()` 出发（不是 findPnpm），并带出 expectedMajor / matched
+    /export function pnpmBindingForProfile\(profileDir: string\): EnvPnpmBinding \{/.test(
+      processPnpmCode,
+    ) &&
+      /const pick = findPnpmForProfile\(profileDir\);/.test(processPnpmCode) &&
+      // ② 目标大版本：profile 记的那条，读不到才跟随当前那份
+      /export function pnpmMajorForUpdates\(binding: EnvPnpmBinding\): string \| null \{/.test(
+        pkgUpdatesCode,
+      ) &&
+      /return binding\.expectedMajor \?\? majorOf\(binding\.version\);/.test(pkgUpdatesCode) &&
+      // 采集侧把归属算进 raw（同步、不起新探测路径），判定与报告只搬运
+      /const pnpmBinding = pnpmBindingForProfile\(pluginProfileDir\(\)\);/.test(probeCode) &&
+      /pnpmBinding,/.test(judgeCode) &&
+      /pnpmBinding: EnvPnpmBinding;/.test(flatIpc),
+  );
+  check(
+    '环境自检（t81）：`update-pnpm` 的 argv 随归属变化，且**一定钉版本**（裸跑会跨大版本）',
+    /if \(action === 'update-pnpm'\) \{/.test(fixPlanCode) &&
+      /const command = pnpmUpdateCommand\(\{/.test(fixPlanCode) &&
+      /return \{ file: binding\.file, args: \['self-update', target\] \};/.test(processPnpmCode) &&
+      /args: \['prepare', `pnpm@\$\{target\}`, '--activate'\]/.test(processPnpmCode) &&
+      /args: \['i', '-g', `pnpm@\$\{target\}`\]/.test(processPnpmCode) &&
+      /args: \['upgrade', 'pnpm'\]/.test(processPnpmCode) &&
+      // 拿不到目标版本 → 拒绝（不给一条会跳到最新的命令）
+      /if \(!target\) return null;/.test(processPnpmCode) &&
+      // Homebrew 钉不了版本：只有目标与当前同一条大版本线时才允许
+      /if \(!major \|\| !currentMajor \|\| major !== currentMajor\) return null;/.test(
+        processPnpmCode,
+      ) &&
+      // 界面那一侧只递 action（版本由主进程自己算，见 docs/env-doctor.md §3.6）；
+      // t84 起 pnpm 那一档**连版本参数都不递** —— 它不吃版本，递过去会被 IPC 正确地拒掉
+      /await startFix\('update-pnpm'\);/.test(envPaneCode),
+  );
+  check(
+    '环境自检（t81）：探 pnpm 版本要带中立 cwd + 关掉 Corepack 的项目绑定（否则自检会改用户的 package.json）',
+    // 两个纯函数在公开面上（反例脚本直接喂字面量）
+    /export function pnpmProbeEnv\(base: NodeJS\.ProcessEnv\): NodeJS\.ProcessEnv \{/.test(
+      processPnpmCode,
+    ) &&
+      /return \{ \.\.\.base, COREPACK_ENABLE_PROJECT_SPEC: '0' \};/.test(processPnpmCode) &&
+      /export function pnpmProbeCwd\(\): string \{/.test(processPnpmCode) &&
+      // spawnSync **必须**同时带这两个：不给就继承应用的 cwd，Corepack 的 shim 会替那个项目
+      // 钉一行 `packageManager`（真机实测复现：在仓库根跑一次核对脚本，package.json 就多一行）
+      /cwd: pnpmProbeCwd\(\),/.test(processPnpmCode) &&
+      /env: pnpmProbeEnv\(process\.env\),/.test(processPnpmCode),
+  );
+  check(
+    '环境自检（t81）：`unknown` / 缺工具 → 不给自动动作，改走诚实边界（与 Node 归属同构）',
+    /canAutoUpdate: boolean;/.test(flatIpc) &&
+      /blockedReason: string \| null;/.test(flatIpc) &&
+      /const canAutoUpdate = helper\.ok;/.test(processPnpmCode) &&
+      /function pnpmUpdateRefused\(check: EnvCheck\): boolean \{/.test(envPaneCode) &&
+      // 行上：拒绝时不给按钮、也不给读数，改在行下方写事实 + 手工步骤 + 重新检测
+      /if \(kind === 'pnpm' && pnpmUpdateRefused\(check\)\) return false;/.test(envPaneCode) &&
+      /pnpmRefusedNote/.test(envPaneCode) &&
+      /pnpmRefusedHint/.test(envPaneCode) &&
+      /正在检测|重新检测/.test(envPaneCode),
+  );
+  check(
+    '环境自检（t81）：dsh 的版本下拉 —— 列全部发行版 + 标 dist-tags + 默认落在目标 + 降级要说明',
+    /export interface EnvPkgUpdate \{/.test(flatIpc) &&
+      /versions: string\[\];/.test(flatIpc) &&
+      /tags: Record<string, string>;/.test(flatIpc) &&
+      // 下拉本身（确认区里）：v-for 版本列表 + tags 后缀 + 当前版标注
+      /v-for="one in options"/.test(confirmCode2) &&
+      /tagSuffix\(one\)/.test(confirmCode2) &&
+      // 降级必须明说（照 Node 换档那套说辞）
+      /这是一次<b>降级<\/b>/.test(confirmCode2) &&
+      /v-if="versionDowngrade"/.test(confirmCode2) &&
+      // 行上那个「选择版本…」ghost：与 Node 那一行的「换一档」完全同形，**不叫「更新」**
+      /选择版本…/.test(envPaneCode) &&
+      /v-if="canPickVersionOf\(check\)"/.test(envPaneCode) &&
+      /选择版本…/.test(envPaneCode) &&
+      // 尺寸必须与主按钮一致（`.btn.small`）：差 4px 会被真机一眼看出来
+      /class="btn small ghost"/.test(envPaneCode),
+  );
+  check(
+    '环境自检（t82）：版本下拉是**自绘浮层**（用户裁定 A）—— 触发器两态 + listbox + Teleport + 层号',
+    // 触发器：折叠 / 展开两态、aria 三件套、点它开关
+    /class="env-version-pick"/.test(confirmCode2) &&
+      /class="env-version-trigger"/.test(confirmCode2) &&
+      /:class="\{ 'is-open': versionOpen \}"/.test(confirmCode2) &&
+      /aria-haspopup="listbox"/.test(confirmCode2) &&
+      /:aria-expanded="versionOpen \? 'true' : 'false'"/.test(confirmCode2) &&
+      /:aria-controls="versionListId"/.test(confirmCode2) &&
+      /@click="toggleVersionPanel"/.test(confirmCode2) &&
+      // 浮层：Teleport 到 body + role=listbox + 每项 role=option + aria-selected +
+      // aria-activedescendant 指高亮项（原生 <select> 已被替掉：组件里不许再有它）
+      /<Teleport to="body">/.test(confirmCode2) &&
+      /class="env-version-pop"/.test(confirmCode2) &&
+      /:style="versionPanelStyle"/.test(confirmCode2) &&
+      /role="listbox"/.test(confirmCode2) &&
+      /tabindex="-1"/.test(confirmCode2) &&
+      /role="option"/.test(confirmCode2) &&
+      /:aria-selected="one === selected \? 'true' : 'false'"/.test(confirmCode2) &&
+      /:aria-activedescendant=/.test(confirmCode2) &&
+      !/<select/.test(confirmCode2) &&
+      // 定位：fixed + 视口坐标（留在卡片里会被裁），id 每个实例一份（多个确认区不会撞）
+      /function placeVersionPanel\(\): void \{/.test(confirmCode2) &&
+      /trigger\.getBoundingClientRect\(\)/.test(confirmCode2) &&
+      /const versionListId = `env-version-list-\$\{Math\.random\(\)/.test(confirmCode2) &&
+      // 样式与层号：--z-pop 必须高于 --z-env(30)、低于 --z-gate(58) 与启动锁(60)
+      /position: fixed;/.test(repo.css) &&
+      /z-index: var\(--z-pop\);/.test(repo.css) &&
+      /--z-pop: 45;/.test(repo.css) &&
+      /--z-env: 30;/.test(repo.css) &&
+      /--z-gate: 58;/.test(repo.css) &&
+      /\.env-version-trigger\.is-open \{/.test(repo.css) &&
+      /\.env-version-opt\.is-on \{/.test(repo.css) &&
+      // 「当前」那一行：右侧「当前」+ 版本号 accent（任务明确要求；与预览的有意差异写在样式注释里）
+      /'is-current': one === \(current \?\? ''\)/.test(confirmCode2) &&
+      /\.env-version-opt\.is-current \.env-version-opt-ver \{/.test(repo.css) &&
+      // tags 的 chip 只用既有语义色令牌（不许颜色字面量）
+      /\.env-version-tag\.is-latest \{[\s\S]*?var\(--run-soft\)/.test(repo.css) &&
+      /\.env-version-tag\.is-next \{[\s\S]*?var\(--sky-soft\)/.test(repo.css) &&
+      /\.env-version-tag\.is-alpha \{[\s\S]*?var\(--amber-soft\)/.test(repo.css),
+  );
+  check(
+    '环境自检（t82）：浮层的交互 —— 点外关（pointerdown）/ Esc 还焦点 / ↑↓·Enter / 滚动收口 / 只递版本字符串',
+    // 点外关闭用 pointerdown（click 会先落在选项上、先选中再关）
+    /document\.addEventListener\('pointerdown', onDocumentPointerDown, true\)/.test(confirmCode2) &&
+      /if \(versionTrigger\.value\?\.contains\(target\)\) return;/.test(confirmCode2) &&
+      /if \(versionPanel\.value\?\.contains\(target\)\) return;/.test(confirmCode2) &&
+      // Esc 关并把焦点还给触发器（鼠标点外面时不抢焦点）
+      /function closeVersionPanel\(restoreFocus = false\): void \{/.test(confirmCode2) &&
+      /if \(restoreFocus\) versionTrigger\.value\?\.focus\(\);/.test(confirmCode2) &&
+      /closeVersionPanel\(true\);\n\s+return;/.test(confirmCode2) &&
+      // 键盘：导航交给纯函数、Enter/Space 选中（折叠态 ↑↓/Enter/Space 打开）
+      /versionActive\.value = nextActiveIndex\(versionActive\.value, nav, props\.options\.length\)/.test(
+        confirmCode2,
+      ) &&
+      /event\.key === 'Enter' \|\| event\.key === ' '/.test(confirmCode2) &&
+      // 滚动/视口变化：收口**关闭**，但放过面板自己内部的滚动（否则列表一滚就关）
+      /window\.addEventListener\('scroll', onViewportMove, true\)/.test(confirmCode2) &&
+      /window\.addEventListener\('resize', onViewportMove\)/.test(confirmCode2) &&
+      // 组件拆掉时摘监听（不然监听会挂着一个已经不存在的面板）
+      /onBeforeUnmount\(\(\) => \{/.test(confirmCode2) &&
+      /window\.removeEventListener\('scroll', onViewportMove, true\)/.test(confirmCode2) &&
+      // 选中只有一条路：emit 版本字符串（命令与校验都在主进程）
+      /function emitPickedVersion\(version: string\): void \{/.test(confirmCode2) &&
+      /emit\('pick-version', version\);/.test(confirmCode2) &&
+      /'pick-version': \[version: string\];/.test(confirmCode2),
+  );
+  check(
+    '环境自检（t82）：版本下拉的键盘导航是**纯函数**（到边界停住、空列表 -1、无高亮时上下键落首尾）',
+    // 这一条直接调函数（与 env-detail / wizard-view 同一条路：test 侧 import renderer 的纯模块）
+    versionPick.nextActiveIndex(0, 'ArrowUp', 3) === 0 &&
+      versionPick.nextActiveIndex(2, 'ArrowDown', 3) === 2 &&
+      versionPick.nextActiveIndex(0, 'ArrowDown', 3) === 1 &&
+      versionPick.nextActiveIndex(-1, 'ArrowDown', 3) === 0 &&
+      versionPick.nextActiveIndex(-1, 'ArrowUp', 3) === 2 &&
+      versionPick.nextActiveIndex(1, 'Home', 5) === 0 &&
+      versionPick.nextActiveIndex(1, 'End', 5) === 4 &&
+      versionPick.nextActiveIndex(0, 'ArrowDown', 0) === -1 &&
+      versionPick.clampActive(9, 3) === 2 &&
+      versionPick.clampActive(-5, 3) === -1,
+  );
+  check(
+    '环境自检（t82）：列表按 **C 的时间轴**画 —— 轴 + 节点 + 当前/目标/区间三个状态',
+    // 每行自己一条轴 + 一个节点（轴在行内 stretch，行高变化不会把线画歪）
+    /class="env-version-axis"/.test(confirmCode2) &&
+      /class="env-version-node"/.test(confirmCode2) &&
+      /\.env-version-axis \{[\s\S]*?align-self: stretch;/.test(repo.css) &&
+      // 首尾收口：第一行从节点起、最后一行到节点止（别在列表头尾画出悬空的线）
+      /\.env-version-opt:first-child \.env-version-axis::before \{[\s\S]*?top: 50%;/.test(
+        repo.css,
+      ) &&
+      /\.env-version-opt:last-child \.env-version-axis::before \{[\s\S]*?bottom: 50%;/.test(
+        repo.css,
+      ) &&
+      // 当前 = 实心绿点（--run）；目标 = 空心 accent 环 + accent-soft 光晕
+      /\.env-version-opt\.is-current \.env-version-node \{[\s\S]*?var\(--run\)/.test(repo.css) &&
+      /\.env-version-opt\.is-target \.env-version-node \{[\s\S]*?var\(--accent\)[\s\S]*?box-shadow: 0 0 0 3px var\(--accent-soft\)/.test(
+        repo.css,
+      ) &&
+      // 区间：下标集合（`betweenIndexes`）算出来，**不用 :nth-child 猜**；升 accent、降 amber
+      /'is-between': betweenIndexSet\.has\(versionIndexOf\(one\)\)/.test(confirmCode2) &&
+      /'is-down': direction === 'down'/.test(confirmCode2) &&
+      /'is-up': direction === 'up'/.test(confirmCode2) &&
+      /\.env-version-opt\.is-between\.is-up \.env-version-axis::before \{[\s\S]*?var\(--accent\)/.test(
+        repo.css,
+      ) &&
+      /\.env-version-opt\.is-between\.is-down \.env-version-axis::before \{[\s\S]*?var\(--amber\)/.test(
+        repo.css,
+      ) &&
+      // 两个端点行各补"朝目标的那半行"：不然线段与节点之间会留一截发丝线的缝
+      /\.env-version-opt\.is-current\.is-up \.env-version-axis::before \{[\s\S]*?bottom: 50%;/.test(
+        repo.css,
+      ) &&
+      /\.env-version-opt\.is-target\.is-up \.env-version-axis::before \{[\s\S]*?top: 50%;/.test(
+        repo.css,
+      ) &&
+      /\.env-version-opt\.is-current\.is-down \.env-version-axis::before \{[\s\S]*?top: 50%;/.test(
+        repo.css,
+      ) &&
+      /\.env-version-opt\.is-target\.is-down \.env-version-axis::before \{[\s\S]*?bottom: 50%;/.test(
+        repo.css,
+      ) &&
+      !/\.env-version-opt:nth-child/.test(repo.css),
+  );
+  check(
+    '环境自检（t82）：浮层顶部的**粘性摘要行**（限高会滚，方向信息不能跟着滚走）',
+    // 摘要在浮层里、而且是 sticky：浮层没滚动时它也在（它是摘要，不是"滚动才出现"的东西）
+    /class="env-version-head"/.test(confirmCode2) &&
+      /\.env-version-head \{[\s\S]*?position: sticky;[\s\S]*?top: 0;/.test(repo.css) &&
+      // 背景必须自己给（不然文字与下面的节点叠在一起）+ 下边一条发丝线
+      /\.env-version-head \{[\s\S]*?background: var\(--surface-2\);[\s\S]*?border-bottom: 1px solid var\(--hairline\);/.test(
+        repo.css,
+      ) &&
+      // 色调按方向：升 accent、降 amber（色调就是"升/降"本身）
+      /\.env-version-head\.is-up \{[\s\S]*?var\(--accent\)/.test(repo.css) &&
+      /\.env-version-head\.is-down \{[\s\S]*?var\(--amber\)/.test(repo.css) &&
+      // 三种文案分支：升（→ … · 升级）/ 降（↓ 降级）/ 相等（当前就是这一版）；缺当前版本不编"从哪来"
+      /const headText = computed\(\(\) => \{/.test(confirmCode2) &&
+      /· \$\{direction\.value === 'down' \? '↓ 降级' : '升级'\}/.test(confirmCode2) &&
+      /（当前就是这一版）/.test(confirmCode2) &&
+      /if \(!current\) return target;/.test(confirmCode2) &&
+      // 限高与滚动保持 232px（滚动条仍由全局那一套管）
+      /\.env-version-pop \{[\s\S]*?max-height: 232px;[\s\S]*?overflow: auto;/.test(repo.css),
+  );
+  check(
+    '环境自检（t82）：键盘高亮与「当前/目标」是**两套独立状态**（同一行两件事都看得见）',
+    // 高亮 = 底色 + 字色；当前/目标 = 节点 + 右侧标签 —— 四个 class 各自独立挂
+    /'is-on': versionIndexOf\(one\) === versionActive/.test(confirmCode2) &&
+      /'is-current': one === \(current \?\? ''\)/.test(confirmCode2) &&
+      /'is-target': isTargetRow\(one\)/.test(confirmCode2) &&
+      /class="env-version-opt-right is-cur"/.test(confirmCode2) &&
+      /class="env-version-opt-right is-target"/.test(confirmCode2) &&
+      /\.env-version-opt-right\.is-cur \{[\s\S]*?var\(--run\)/.test(repo.css) &&
+      /\.env-version-opt-right\.is-target \{[\s\S]*?var\(--accent\)/.test(repo.css) &&
+      // 高亮那条规则写在「当前/目标」之后：两者同占时字色给高亮，节点与标签仍然说身份
+      repo.css.indexOf('.env-version-opt.is-on .env-version-opt-ver') >
+        repo.css.indexOf('.env-version-opt.is-current .env-version-opt-ver') &&
+      // 两个真源确实不同：高亮是 versionActive（鼠标 hover 也写它），目标是父级传的 dshSelected
+      /function isTargetRow\(one: string\): boolean \{/.test(confirmCode2) &&
+      /one === \(props\.selected \?\? ''\) && one !== \(props\.current \?\? ''\)/.test(
+        confirmCode2,
+      ),
+  );
+  check(
+    '环境自检（t82）：方向与区间是纯函数（倒序列表里"下标更小 = 升"；界面不比版本号字符串）',
+    // 这一条直接调函数：`rc.9` 与 `rc.10` 按字典序比会得出相反的方向，所以方向不许在界面里判
+    versionPick.pickDirection(3, 0) === 'up' &&
+      versionPick.pickDirection(0, 3) === 'down' &&
+      versionPick.pickDirection(2, 2) === 'same' &&
+      versionPick.pickDirection(-1, 2) === 'unknown' &&
+      versionPick.pickDirection(2, -1) === 'unknown' &&
+      JSON.stringify(versionPick.betweenIndexes(0, 3)) === JSON.stringify([1, 2, 3]) &&
+      JSON.stringify(versionPick.betweenIndexes(3, 1)) === JSON.stringify([2, 3]) &&
+      versionPick.betweenIndexes(2, 2).length === 0 &&
+      versionPick.betweenIndexes(-1, 2).length === 0,
+  );
+  check(
+    '环境自检（t81 + t84）：渲染层递回来的版本号**必须校验**（形状 + 只在 dsh 那一档 + 落在这一轮的列表里）',
+    // 形状 + **只有 `install-dsh` 有意义**（t84 回退：pnpm 不做选版本）+ 必须命中列表（拿不到列表时拒绝）
+    /async function resolveFixVersion\(/.test(envMainCode) &&
+      /\^\\d\+\\.\\d\+\\.\\d\+\(\?:-\[0-9A-Za-z\.-\]\+\)\?\$/.test(envMainCode) &&
+      /if \(request\.action !== 'install-dsh'\) \{/.test(envMainCode) &&
+      /pnpm 那一档不选版本/.test(envMainCode) &&
+      // 白名单就是 dsh 那一份（pnpm 恒为空，见 t84 那条）
+      /const list = updates\.dsh\.versions;/.test(envMainCode) &&
+      /if \(!list\.includes\(wanted\)\) \{/.test(envMainCode) &&
+      /if \(list\.length === 0\) \{/.test(envMainCode) &&
+      // 递回来的东西一律不采信：命令由主进程现场重算
+      /return await envFixRunner\.run\(action, checked\.version\);/.test(envMainCode),
+  );
+  check(
+    '环境自检（t81）：确认区那一份定向计划走新通道（显示 == 执行）',
+    /envFixPlan: \(request: \{ action: EnvFixAction; version\?: string \}\) => Promise<EnvFixPlan \| null>;/.test(
+      flatIpc,
+    ) &&
+      /ipcRenderer\.invoke\('env:fix-plan'/.test(preloadCode) &&
+      /ipcMain\.handle\(\s*'env:fix-plan'/.test(envMainCode) &&
+      // 确认区用它而不是报告里那份（报告那份是"没选版本"的版本）
+      /:open-fix-plan="openFixPlan"/.test(envPaneCode) &&
+      /openFixPlan\?\.display/.test(confirmCode2) &&
+      // 版本参数**按档位给**：只有 dsh 那一档带选中的版本（t84 —— pnpm 不吃版本，递过去会被主进程拒）
+      /await loadEnvFixPlan\(\s*kind === 'dsh' \? 'install-dsh' : 'update-pnpm',\s*kind === 'dsh' \? \(versionPick\.value \?\? undefined\) : undefined,/.test(
+        envPaneCode,
+      ) &&
+      // 执行那条路同样分档：pnpm 那一档不带版本
+      /await startFix\('update-pnpm'\);/.test(envPaneCode) &&
+      /await startFix\('install-dsh', versionPick\.value \?\? undefined\);/.test(envPaneCode),
+  );
+  check(
+    '环境自检（t84 回退）：只有 dsh 能选版本 —— pnpm 固定在线内最新，带版本的 pnpm 请求被明确拒绝',
+    // ① 主进程给 pnpm 的"可挑列表"恒为空（判据是 `allowMajor`：有它就说明是 pnpm 那一档）；
+    //    **只为此存在**的过滤函数已经删掉 —— 别留死代码
+    /const selectable = allowMajor === null \? versions : \[\];/.test(registryCode) &&
+      /versions: selectable,/.test(registryCode) &&
+      /major: allowMajor,/.test(registryCode) &&
+      !/versionsOfMajor/.test(registryCode) &&
+      // ② 校验只认 dsh；`update-pnpm` 带版本要给**明确说法**（收下再悄悄忽略就是"显示 A、执行 B"）
+      /if \(request\.action !== 'install-dsh'\) \{/.test(envMainCode) &&
+      /pnpm 那一档不选版本/.test(envMainCode) &&
+      /const list = updates\.dsh\.versions;/.test(envMainCode) &&
+      // ③ 计划里不再吃版本参数（chosen 只用算出来的目标）；但 **homebrew 那条"同一条大版本线才允许"
+      //    的守卫要留着** —— 它防的是 `brew upgrade pnpm` 把大版本换掉，与"选版本"无关
+      /const chosen = pnpm\.target;/.test(fixPlanCode) &&
+      /if \(!major \|\| !currentMajor \|\| major !== currentMajor\) return null;/.test(
+        processPnpmCode,
+      ) &&
+      // ④ 界面：那个自绘控件只剩 dsh 一处；pnpm 那一档不再渲染它、行上也不给「选择版本…」
+      (confirmCode2.match(/<VersionPick/g) ?? []).length === 1 &&
+      /if \(updateKindOf\(check\) !== 'dsh'\) return false;/.test(envPaneCode) &&
+      // ⑤ 那句解释留着，并改写成用户那个问题的答案（跨大版本是一次**单独的迁移动作**）
+      /目标钉在/.test(confirmCode2) &&
+      /大版本线内/.test(confirmCode2) &&
+      /不在这里做/.test(confirmCode2),
+  );
+  check(
+    '环境自检（t83）：同一行里两个按钮必须**同高**（真机抓到的 4px 错位）',
+    // 根因：`.env-actions` 没写 align-items（flex 默认 stretch，而按钮是固定高）→ 按顶边对齐
+    /\.env-actions \{[\s\S]*?align-items: center;/.test(repo.css) &&
+      // 「选择版本…」与主按钮同尺寸（`.btn.small`），层级只由 ghost 的配色表达
+      /v-if="canPickVersionOf\(check\)"[\s\S]{0,220}class="btn small ghost"/.test(envPaneCode),
   );
 
   // ---------------------------------------------------------- t80. 修复子进程的 env 清洗（根因修复）
@@ -1657,5 +2052,39 @@ export function runEnvDoctor(repo: Repo): void {
     `typeof=${typeof processUtils.cleanNpmEnv}；清洗后只剩 ${Object.keys(
       processUtils.cleanNpmEnv({ npm_config_prefix: 'x', PATH: '/bin' }),
     ).join(',')}`,
+  );
+
+  // ---------------------------------------------------------- t85. 更新完 dsh 的"重启提示"由事实决定
+  //    真机反馈：更新完 dsh、**自己重启过 dsh**，之后再点任何更新入口，那条「新版本的 dsh 要重新
+  //    启动之后才会生效」又冒出来了。根因是判据里带着一个会话内的布尔（`restartDismissed`），而
+  //    `openUpdate()` 每次打开更新入口都把它复位 —— 一次早已生效的更新被反复提示。
+  //    修法：**比事实**（`dsh.startedAt` vs `EnvFixState.finishedAt`），并删掉那个复位。
+  check(
+    '环境自检（t85）：`EnvFixState` 带上"这一轮跑完的时刻"，且只在终态有值',
+    /finishedAt: number \| null;/.test(flatIpc) &&
+      // 一轮只打一次戳：终态补上、新一轮开头清掉（每次终态都取 Date.now() 会让时间戳往后漂，
+      // 而界面拿它判"运行中的 dsh 是不是更新之后起来的" —— 漂晚一点就会把已生效的又提示一遍）
+      /if \(terminal && this\.finishedAt === null\) this\.finishedAt = Date\.now\(\);/.test(
+        doctorSource,
+      ) &&
+      /finishedAt: terminal \? this\.finishedAt : null/.test(doctorSource) &&
+      /this\.finishedAt = null;/.test(doctorSource),
+  );
+  check(
+    '环境自检（t85）："要不要提示重启 dsh"比的是事实，不是"用户有没有关过提示"',
+    /import \{ shouldAskRestartDsh \} from '\.\/restart-ask\.js';/.test(envPaneCode) &&
+      /return shouldAskRestartDsh\(\{/.test(envPaneCode) &&
+      /startedAt: dsh\.value\?\.startedAt \?\? null,/.test(envPaneCode) &&
+      /finishedAt: state\.finishedAt \?\? null,/.test(envPaneCode) &&
+      // 纯函数本身要能被独立加载（反例脚本直接喂字面量；这条同时保证它进了编译产物）
+      typeof restartAsk.shouldAskRestartDsh === 'function',
+  );
+  check(
+    '环境自检（t85）：`openUpdate` 里不许再复位那个布尔（那正是"重启完还会冒出来"的直接原因）',
+    // 反例：`openUpdate` 每次打开更新入口都 `restartDismissed.value = false` —— 它把"用户已经
+    // 自己重启过 dsh"这个事实抹掉了。整份源码里都不许再出现这个复位。
+    !/restartDismissed\.value = false/.test(envPaneCode) &&
+      // 但「先不用」与两个重启动作仍然要能置真（那是用户明确的"别再问我"）
+      /restartDismissed\.value = true;/.test(envPaneCode),
   );
 }

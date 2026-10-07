@@ -296,9 +296,23 @@ export function pickPackageUpdate(input: PickPackageUpdateInput): EnvPkgUpdate {
       newer: false,
       ahead: false,
       error: '这一轮没能从安装源取到版本',
+      versions: [],
+      tags: {},
+      major: input.allowMajor ?? null,
     };
   }
+  // 版本表给界面那个「选择版本」下拉用：**倒序**（最新在前），顺手滤掉 registry 上真有的非 semver 项
+  // （不去重排序的话下拉里会混进 `0.0.1-rc.5` 这种中间产物与垃圾字符串，用户没法选）
+  const versions = [
+    ...new Set(metadata.versions.filter((one) => parsePackageVersion(one) !== null)),
+  ].sort((one, two) => comparePackageVersions(two, one));
+  const tags = metadata.distTags;
   const allowMajor = input.allowMajor ?? null;
+  // **只有 dsh 那一档给"可挑的版本列表"**（它的更新入口带版本下拉）。pnpm 那一档不做选版本
+  // （t84 用户裁定）：它的目标固定在 profile 那条大版本线内的最新版，跨大版本要连同 profile 的依赖
+  // 一起迁移、是一次单独的迁移动作 —— 所以这里给空数组，界面据此不渲染下拉。
+  // 判据用 `allowMajor`：有它就说明是 pnpm 那一档（dsh 不带这条约束）。
+  const selectable = allowMajor === null ? versions : [];
   const target =
     allowMajor !== null
       ? pickTargetVersion(metadata.versions, {
@@ -309,13 +323,40 @@ export function pickPackageUpdate(input: PickPackageUpdateInput): EnvPkgUpdate {
   if (!target) {
     // 源上有这个包，但没有可用的目标（没有 latest 标签 / 这个主版本一个都没发过）：
     // 与"查不到"一样降级成朴素入口，只是不必再说"连不上"（error 仍为 null）
-    return { current, target: null, newer: false, ahead: false, error: null };
+    return {
+      current,
+      target: null,
+      newer: false,
+      ahead: false,
+      error: null,
+      versions: selectable,
+      tags,
+      major: allowMajor,
+    };
   }
   if (!current) {
     // 本机版本没测出来（例如 dsh 走的是不报版本的那条解释器组合）：能说清目标的还是说清楚，
     // 但不给"有没有新版"的结论 —— 那是拿不到事实时唯一诚实的选择
-    return { current: null, target, newer: false, ahead: false, error: null };
+    return {
+      current: null,
+      target,
+      newer: false,
+      ahead: false,
+      error: null,
+      versions: selectable,
+      tags,
+      major: allowMajor,
+    };
   }
   const order = comparePackageVersions(current, target);
-  return { current, target, newer: order < 0, ahead: order > 0, error: null };
+  return {
+    current,
+    target,
+    newer: order < 0,
+    ahead: order > 0,
+    error: null,
+    versions: selectable,
+    tags,
+    major: allowMajor,
+  };
 }
