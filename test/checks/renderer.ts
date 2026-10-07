@@ -125,25 +125,30 @@ export function runRenderer(repo: Repo): void {
       ? `未放行：${noShortcutPassthrough.join(', ')}`
       : `${terminalUsers.length} 个页面`,
   );
-  // dsh 终端要能复制。xterm 把内容画在 canvas 上，剪贴板得自己接 —— 而这个视图里
-  // 唯一的复制手势是"选中文字后 Ctrl+C"（不另加按钮）。
+  // 两条终端都要能复制（用户 2026-09-30："自建终端还是不支持复制"）。xterm 把内容画在 canvas 上，
+  // 剪贴板得自己接 —— 手势是"有选中时 Ctrl+C"（macOS 上是 Ctrl+Shift+C），不另加按钮。
   //
-  // 三条一起看，缺一条就不是那个行为：
+  // 四条一起看，缺一条就不是那个行为：
   //   1. 判断依据必须是纯函数 `shouldCopySelection`，且它同时看**平台**与**有没有选中**。
   //      只看选中会让 macOS 上按 Ctrl+C 变成复制（那儿的中断键才是 Ctrl+C，复制是 ⌘C）；
-  //      只看平台则等于永远复制，把"用 Ctrl+C 停 dsh"这条路堵死。
+  //      只看平台则等于永远复制，把"用 Ctrl+C 停当前命令"这条路堵死。Shift 键位也得判 ——
+  //      非 macOS 是 Ctrl+C / Ctrl+Shift+C，macOS 只认后者。
   //   2. 命中时要真的调用 copyToClipboard 并 return false —— return true 的话 xterm
-  //      仍会把 \x03 发给 dsh，等于复制与"空转的中断"同时发生。
-  //   3. 用终端的页面里只有 dsh 终端打开这个开关：本地 Shell 是交互式终端，
-  //      Ctrl+C 在那儿是正经的中断（还能打断正在跑的命令），抢过来会出事。
+  //      仍会把 \x03 发下去，等于复制与"空转的中断"同时发生。
+  //   3. 顺序必须是"取文字 → 清选中 → 复制"：清早了复制到空串，不清则第二下 Ctrl+C 还是复制，
+  //      于是"选中着还想中断"永远中断不了（本地 Shell 里中断是真要用的）。
+  //   4. 用终端的两个页面**都**打开这个开关（dsh 终端 + 本地 Shell）；而 Ctrl+R 只许 dsh 终端
+  //      抢走 —— 本地 Shell 的 Ctrl+R 是它自己的反向历史搜索。
   const xtermSource = fs.readFileSync(repo.tsPath('xterm.ts'), 'utf8');
   const copyPredicateBody = blockOf(xtermSource, 'export function shouldCopySelection(');
   check(
-    '渲染层：终端的"选中后 Ctrl+C 复制"由纯函数判定，且平台与选中都判',
+    '渲染层：终端的"选中后复制"由纯函数判定，且平台、选中、Shift 键位都判',
     copyPredicateBody.length > 0 &&
       /isMac\.value/.test(copyPredicateBody) &&
       /hasSelection/.test(copyPredicateBody) &&
-      /=== 'c'/.test(copyPredicateBody),
+      // 键名判据（实现里是否定式 `!== 'c'`，所以只钉"判了 c 这个键"，不钉等号在哪一侧）
+      /['"]c['"]/.test(copyPredicateBody) &&
+      /shiftKey/.test(copyPredicateBody),
     copyPredicateBody.length === 0
       ? 'xterm.ts 里找不到 shouldCopySelection'
       : `判定体 ${copyPredicateBody.split('\n').length} 行`,
@@ -152,23 +157,41 @@ export function runRenderer(repo: Repo): void {
   // 那个函数的签名里就有 `{ includeReload … } = {}`，`blockOf` 取的是锚点之后第一个 `{`
   // 的配对块，于是切到的是**选项参数对象**而不是函数体（写这条断言时踩过：报"没有复制分支"，
   // 实际实现是对的）。所以这几条对着整个文件的调用链断言。
+  const selectionAt = xtermSource.indexOf('term.getSelection()');
+  const clearAt = xtermSource.indexOf('term.clearSelection()');
+  const copyAt = xtermSource.indexOf('void copyToClipboard(text)');
   check(
-    '渲染层：终端的复制分支真的调了剪贴板并拦住 xterm',
+    '渲染层：终端的复制分支真的调了剪贴板、拦住 xterm，并把选中清掉',
     /shouldCopySelection\(event, term\.hasSelection\(\)\)/.test(xtermSource) &&
-      /void copyToClipboard\(term\.getSelection\(\)\)/.test(xtermSource),
-    /copyToClipboard\(term\.getSelection\(\)\)/.test(xtermSource)
-      ? '已接上'
-      : 'xterm.ts 里没有"取选中 → 复制"这条链',
+      selectionAt !== -1 &&
+      clearAt !== -1 &&
+      copyAt !== -1 &&
+      // 取文字 → 清选中 → 复制，三步的顺序反了就复制到空串
+      selectionAt < clearAt &&
+      clearAt < copyAt &&
+      // 复制完必须拦住 xterm（否则 \x03 还是会发下去）
+      /void copyToClipboard\(text\);\s*return false;/.test(xtermSource),
+    copyAt === -1
+      ? 'xterm.ts 里没有"取选中 → 复制"这条链'
+      : `取=${String(selectionAt)} 清=${String(clearAt)} 复制=${String(copyAt)}`,
   );
   const copyOnSelectionUsers = vueFiles
     .filter((file) => /copyOnSelection:\s*true/.test(readVue(file.path)))
-    .map((file) => file.name);
+    .map((file) => file.name)
+    .sort();
   check(
-    '渲染层：只有 dsh 终端打开选中复制（本地 Shell 的 Ctrl+C 留给 shell）',
-    copyOnSelectionUsers.length === 1 && copyOnSelectionUsers[0] === 'DshTerminal.vue',
-    copyOnSelectionUsers.length
-      ? `打开的有：${copyOnSelectionUsers.join(', ')}`
-      : '没有任何页面打开',
+    '渲染层：两条终端都打开选中复制（dsh 终端与本地 Shell 都要能复制）',
+    copyOnSelectionUsers.join(', ') === 'DshTerminal.vue, TerminalPane.vue',
+    `打开的有：${copyOnSelectionUsers.length > 0 ? copyOnSelectionUsers.join(', ') : '（没有）'}`,
+  );
+  const reloadUsers = vueFiles
+    .filter((file) => /includeReload:\s*true/.test(readVue(file.path)))
+    .map((file) => file.name)
+    .sort();
+  check(
+    '渲染层：Ctrl+R 只给 dsh 终端抢走（本地 Shell 的反向历史搜索要留着）',
+    reloadUsers.join(', ') === 'DshTerminal.vue',
+    `抢走的有：${reloadUsers.length > 0 ? reloadUsers.join(', ') : '（没有）'}`,
   );
   // 挂载点必须是"布局透明"的（display: contents）：否则组件渲染出的内容会多包一层块级元素，
   // 把父级的 flex/grid 链断掉 —— 症状是内嵌页只剩顶上一条（webview 退回默认高度）。

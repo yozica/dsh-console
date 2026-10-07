@@ -415,9 +415,10 @@ codesign --verify --deep --strict "release/mac-arm64/DSH Console.app"   # 期望
 - 页面上方常驻一句说明；没有进程时显示空状态并直接给「启动 dsh」按钮。唯一有意义的键盘输入是 **Ctrl+C**（往 PTY 写 `\x03`）。退出时终端里补一行灰字（`── dsh 已退出（退出码 0）──`），本地 Shell 同样。
 - 两个按钮用用户语言：「清空显示」只清当前画面（输出仍在主进程缓冲里）；「重新显示历史」把缓冲（最近 512 KB）重画一遍。
 - 尺寸自动跟随容器（`ResizeObserver` + 切页时 fit），没有「自适应」按钮；拖动窗口时会逐帧触发 `ResizeObserver`，所以加了道闸：**只在行列数真的变了才通知主进程**，避免刷爆 IPC。
-- **复制只走「选中后 Ctrl+C」这一个手势，不加按钮**（用户的裁定）。xterm 把内容画在 canvas 上，剪贴板得自己接：判定收在 `pages/terminal/xterm.ts` 的纯函数 `shouldCopySelection(event, hasSelection)` 里，命中时 `passAppShortcutsThrough` 取 `term.getSelection()` 交给 `utils/clipboard.ts` 并 **return false**（返回 true 的话 xterm 仍会把 `\x03` 发出去，等于复制与空转的中断同时发生）。
-  两个条件缺一不可：**有选中**（否则 Ctrl+C 的"停 dsh"语义就没了）、**非 macOS**（那儿的 Ctrl+C 是中断键，复制是 ⌘C）。本地 Shell **不打开**这个开关 —— 它的 Ctrl+C 是正经中断，还能打断正在跑的命令。
-  自检三条钉着「纯函数同时判平台与选中」「真调剪贴板并拦住 xterm」「只有 DshTerminal 打开」；`copyToClipboard` 自己说的话走状态栏那套 `say()`（`layout/StatusBar.vue` 在听），复制成功与失败都看得见。
+- **复制只走「选中后复制」这一个手势，不加按钮**（用户的裁定）。xterm 把内容画在 canvas 上，剪贴板得自己接：判定收在 `pages/terminal/xterm.ts` 的纯函数 `shouldCopySelection(event, hasSelection)` 里，命中时 `passAppShortcutsThrough` 取 `term.getSelection()` 交给 `utils/clipboard.ts` 并 **return false**（返回 true 的话 xterm 仍会把 `\x03` 发出去，等于复制与空转的中断同时发生）。
+  键位分平台：**非 macOS** 是 `Ctrl+C`（有选中时）与 `Ctrl+Shift+C`；**macOS** 只认 `Ctrl+Shift+C` —— 那儿的 Ctrl+C 是中断键，复制是 ⌘C（走原生菜单）。**没有选中时一律不是复制**，原样落回"把 \x03 发下去"。
+  **两条终端都打开这个开关**（`DshTerminal.vue` 与 `TerminalPane.vue`）。这里踩过一次：本地 Shell 原先**不打开**，理由是"它的 Ctrl+C 是正经中断，抢过来会出事"—— 2026-09-30 用户的反馈是「自建终端还是不支持复制」，于是改成 Windows Terminal 的分法：**有选中 → 复制；没选中 → 中断**，并且复制时把选中**清掉**，所以"选中着还想中断"按第二下就是 \x03（不清选中就永远中断不了，这一步在 `passAppShortcutsThrough` 里，顺序必须是"取文字 → 清选中 → 复制"，反了会复制到空串）。
+  自检四条钉着「纯函数同时判平台 / 选中 / Shift 键位」「三步顺序对、真调剪贴板、复制完 return false」「**两条**终端都打开（集合相等）」「`includeReload` 只有 dsh 终端（本地 Shell 的 Ctrl+R 是它自己的反向历史搜索）」；`copyToClipboard` 自己说的话走状态栏那套 `say()`（`layout/StatusBar.vue` 在听），复制成功与失败都看得见。
   工具条那句提示**只留「dsh web 不读键盘输入」** —— 曾经写过「选中文字后 Ctrl+C 是复制，没选中时 Ctrl+C 会让它退出」，用户看后裁定删掉：有选中就复制是终端的通用习惯，界面上不必教；而"不读键盘输入"是反直觉的，不说明才像坏了。**别把复制那句加回去**。
 
 ### 7.8 共享状态、挂载与 xterm

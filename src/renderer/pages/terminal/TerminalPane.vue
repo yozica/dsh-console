@@ -123,8 +123,10 @@ async function attachSession(session: ShellSession): Promise<void> {
   // 按存下的行列建终端：尺寸一致时第一次 fit 就是空操作，不会白白触发一次 PTY resize
   const { cols, rows } = session;
   if (cols && cols > 0 && rows && rows > 0) entry.term.resize(cols, rows);
-  // Ctrl+1~9 / ⌘1~9 交给应用；Ctrl+R 留给 shell —— 那是它的反向历史搜索
-  passAppShortcutsThrough(entry.term);
+  // Ctrl+1~9 / ⌘1~9 交给应用；Ctrl+R 留给 shell —— 那是它的反向历史搜索（所以**不传**
+  // includeReload）。复制：**有选中时 Ctrl+C**（用户的裁定，2026-09-30："自建终端还是不支持复制"）——
+  // 没选中时 Ctrl+C 照旧是中断，命中复制时那一下会把选中清掉，所以"选中着要中断"再按一下就是 \x03。
+  passAppShortcutsThrough(entry.term, { copyOnSelection: true });
   entry.term.onData((data) => api.sessionInput(session.id, data));
   entry.term.onResize(({ cols, rows }) => api.sessionResize(session.id, cols, rows));
   entry.term.writeln(`\u001b[90m[${session.label}] ${session.command || ''}\u001b[0m`);
