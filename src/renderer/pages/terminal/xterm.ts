@@ -109,20 +109,31 @@ export function attachTerminal(host: HTMLElement, resolved: ResolvedTheme): Term
 }
 
 /**
- * 这一次 Ctrl+C 该不该被当成"复制"（而不是发给 dsh 的控制字符）。
+ * 这一次按键该不该被当成"复制"（而不是发给终端的控制字符）。
  *
  * 单独做成纯函数是为了能被自检直接断言：判断依据只有两个 —— **平台**与**有没有选中文字**。
  * 两个都不要漏：
- *  - macOS 上复制键是 ⌘C，Ctrl+C 在那儿仍是"中断"；不判平台的话，mac 用户选中文字后
- *    按 Ctrl+C 会得到一个"复制"而不是他要的中断。
- *  - 没有选中时必须落回原语义（把 \x03 发给 dsh），否则"用 Ctrl+C 停 dsh"这条路就没了。
+ *  - 没有选中时必须落回原语义（把 \x03 发下去），否则"用 Ctrl+C 停当前命令"这条路就没了。
+ *  - macOS **一条都不拦**：那儿复制是 ⌘C（走原生菜单 + xterm 自己挂在元素上的 `copy` 监听），
+ *    中断是 ⌃C —— 两个键本来就不冲突，我们插进去只会平白多一条"会吞按键"的路径
+ *    （用户的裁定，2026-09-30）。所以这条里的平台判据，作用是**排除 mac**。
  *
- * 只有 Ctrl+C，**不拦 Ctrl+Shift+C**（那是 GNOME 系终端的复制键位，留给 xterm 自己）。
+ * 于是非 macOS 上只剩两个键位，都是有选中才成立：
+ *  - `Ctrl+C`（Windows Terminal 这么做，VS Code 的 Windows 绑定 `copyAndClearSelection` 也是）；
+ *  - `Ctrl+Shift+C`（GNOME 系终端的复制键位，VS Code 在 Win/Linux 上也是这个）。
+ *
+ * ⚠️ 复制之后必须把选中**清掉**（在 `passAppShortcutsThrough` 里做）：不清的话第二下 Ctrl+C
+ * 还是命中这一条、还是复制 —— 于是"选中着还想中断"就永远中断不了。清掉之后是
+ * **第一下复制、第二下 \x03**（VS Code 那条命令的名字就叫 Copy and Clear Selection）。
  */
 export function shouldCopySelection(event: KeyboardEvent, hasSelection: boolean): boolean {
-  if (event.type !== 'keydown' || isMac.value) return false;
-  if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return false;
-  return String(event.key).toLowerCase() === 'c' && hasSelection;
+  if (event.type !== 'keydown' || !hasSelection) return false;
+  // macOS：⌘C 复制、⌃C 中断，两个键不冲突 —— 一条都不拦，交回给原生与 xterm 自己
+  if (isMac.value) return false;
+  if (String(event.key).toLowerCase() !== 'c') return false;
+  // AltGr 在 Windows 上是 Ctrl+Alt（Alt+Ctrl+字母是输符号的手势）；Win 键也不该当复制
+  if (!event.ctrlKey || event.altKey || event.metaKey) return false;
+  return true;
 }
 
 /**
@@ -137,13 +148,19 @@ export function shouldCopySelection(event: KeyboardEvent, hasSelection: boolean)
  * `includeReload` 用来决定 Ctrl+R / ⌘R 归谁：dsh 终端里输入本来就没用，交给应用重载；
  * 本地 Shell 里 Ctrl+R 是它自己的反向历史搜索，得留给 shell。
  *
- * `copyOnSelection` 打开后（目前只有 dsh 终端用）多一条：**有选中文字时 Ctrl+C 变成复制**。
+ * `copyOnSelection` 打开后（**两条终端都开**，见下）多一条：**有选中文字时 Ctrl+C（或
+ * Ctrl+Shift+C）变成复制**。macOS 上这一条不生效 —— 那儿的复制是 ⌘C，见 `shouldCopySelection`。
  * 复制走 `copyToClipboard`，它自己会说一句状态栏回话、失败也不抛。
  * 这里**不 await**：按键处理器必须是同步的，而复制是异步的 ——
  * 好在这条路径是用户手势的直接续写，剪贴板的写权限拿得到。
  *
- * 为什么是「选中即复制」而不是加个复制按钮：这个视图里能复制的东西就是屏幕上那段文字，
- * 而用户为了复制已经在拖选了 —— 再让他把手移到工具栏点一下是多余的一步（用户的裁定）。
+ * ⚠️ 复制前先 `clearSelection()`。用户的裁定（2026-09-30："自建终端还是不支持复制"）是
+ * **本地 Shell 也要能复制**，而它的 Ctrl+C 同时是"停当前命令" —— 两个语义只能靠"选中在不在"
+ * 分开。所以命中时把选中清掉：第一下复制、第二下才是 \x03（Windows Terminal 就是这么分的，
+ * 界面上不用教）。不清选中就等于"只要有选中，中断就永远按不出来"。
+ *
+ * 为什么是「选中即复制」而不是加个复制按钮：能复制的东西就是屏幕上那段文字，而用户为了复制
+ * 已经在拖选了 —— 再让他把手移到工具栏点一下是多余的一步（用户的裁定）。
  */
 export function passAppShortcutsThrough(
   term: Terminal,
@@ -155,7 +172,10 @@ export function passAppShortcutsThrough(
   term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     if (event.type !== 'keydown') return true;
     if (copyOnSelection && shouldCopySelection(event, term.hasSelection())) {
-      void copyToClipboard(term.getSelection());
+      const text = term.getSelection();
+      // 顺序要紧：先取文字、再清选中、最后复制（清了选中之后 getSelection 就是空串了）
+      term.clearSelection();
+      void copyToClipboard(text);
       return false;
     }
     if (!isAppModifier(event) || event.shiftKey || event.altKey) return true;
